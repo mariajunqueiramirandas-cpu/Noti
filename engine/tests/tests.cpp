@@ -9,6 +9,7 @@
 
 #include "noti/clock.h"
 #include "noti/cpu_renderer.h"
+#include "noti/display_timing.h"
 #include "noti/engine.h"
 #include "noti/geometry.h"
 #include "noti/latency_probe.h"
@@ -555,6 +556,127 @@ TEST(engine_predictor_switch_mid_stroke_applies_next_stroke) {
   fx.engine->push(&d2, 1);
   fx.engine->pump();
   CHECK(fx.engine->predictor().config().model == PredictorModel::kPolynomial);
+}
+
+TEST(scan_wait_math) {
+  const int64_t P = 6'944'444;  // 144 Hz
+  // Ready exactly at vsync: row 0 is being scanned now, row 1.0 at 0.95 P.
+  CHECK(scan_wait_ns(1'000'000, 1'000'000, P, 0.95f, 0.0f) == 0);
+  CHECK_NEAR(double(scan_wait_ns(1'000'000, 1'000'000, P, 0.95f, 1.0f)), 0.95 * P, 2);
+  // Just missed the row: wait almost a full period.
+  const int64_t row_t = int64_t(0.95 * P * 0.5);
+  CHECK_NEAR(double(scan_wait_ns(row_t + 1, 0, P, 0.95f, 0.5f)), double(P - 1), 2);
+  // Phase computed modulo the period, also for vsync timestamps in the future.
+  CHECK(scan_wait_ns(10 * P + 5, 0, P, 0.95f, 0.0f) == P - 5);
+  CHECK(scan_wait_ns(5, 3 * P, P, 0.95f, 0.0f) == P - 5);
+  for (int64_t t = 0; t < 3 * P; t += 12345) {
+    const int64_t w = scan_wait_ns(t, 0, P, 0.95f, 0.3f);
+    CHECK(w >= 0 && w < P);
+  }
+}
+
+TEST(visible_horizon) {
+  DisplayTiming d;
+  d.axis = ScanAxis::kY;
+  d.gpu_ms = 0.5f;
+  d.panel_ms = 5.0f;
+  const int64_t P = 6'944'444;
+  // No vsync yet → fallback.
+  CHECK_NEAR(visible_horizon_ms(d, 100'000'000, 98'000'000, 0, 0, 0, 0, 1000, 1000, 12.0f), 12.0, 1e-6);
+  // Stale vsync → fallback.
+  CHECK_NEAR(visible_horizon_ms(d, 2'000'000'000, 1'999'000'000, 0, P, 0, 0, 1000, 1000, 12.0f), 12.0, 1e-6);
+  // Sample 2 ms old, ready 0.5 ms later exactly at a vsync, ink at the top row:
+  // visible immediately → 2 + 0.5 + 0 + 5 = 7.5 ms.
+  const int64_t now = 100'000'000, vs = now + 500'000;
+  CHECK_NEAR(visible_horizon_ms(d, now, now - 2'000'000, vs, P, 0, 0.0f, 1000, 1000, 12.0f), 7.5, 1e-3);
+  // Same, ink at the bottom row: + 0.95 P.
+  CHECK_NEAR(visible_horizon_ms(d, now, now - 2'000'000, vs, P, 0, 1000.0f, 1000, 1000, 12.0f), 7.5 + 0.95 * 6.944444, 1e-3);
+  // Reversed scan flips that.
+  d.reversed = true;
+  CHECK_NEAR(visible_horizon_ms(d, now, now - 2'000'000, vs, P, 0, 1000.0f, 1000, 1000, 12.0f), 7.5, 1e-3);
+  // Unknown geometry: average wait of half a period.
+  d.axis = ScanAxis::kUnknown;
+  CHECK_NEAR(visible_horizon_ms(d, now, now - 2'000'000, vs, P, 0, 0, 1000, 1000, 12.0f), 7.5 + 6.944444 / 2, 1e-3);
+}
+
+TEST(engine_inline_mode_and_vsync_horizon) {
+  CpuRenderer r(400, 400);
+  EngineConfig cfg;
+  cfg.surface_w = cfg.surface_h = 400;
+  cfg.store_max_strokes = 16;
+  cfg.store_max_capsules = 1 << 12;
+  InkEngine e(cfg, r);
+  CHECK(e.attach_inline());
+  Command w{CommandType::kSetWidth};
+  w.f[0] = 4;
+  e.post(w);  // UI thread path: applied by the next process()
+  Command disp{CommandType::kSetDisplay};
+  disp.f[0] = 5.0f; disp.f[1] = 0.3f; disp.i0 = int32_t(ScanAxis::kY);
+  e.execute(disp);
+  Command vs{CommandType::kVsync};
+  vs.t = now_ns();
+  vs.i0 = 6'944'444;
+  e.execute(vs);
+  // Real-time replay at 240 Hz; each sample is 1 ms old when processed.
+  int64_t t = 0;
+  for (int k = 0; k < 30; ++k) {
+    std::this_thread::sleep_for(std::chrono::microseconds(4166));
+    InkSample smp = sample(k == 0 ? Action::kDown : Action::kMove, 0, 50.0f + 4.0f * k, 200.0f);
+    t = now_ns() - 1'000'000;
+    smp.t_ns = smp.t_recv_ns = t;
+    e.process(&smp, 1);
+  }
+  // Horizons were computed per frame from vsync timing: within
+  // [elapsed + gpu + panel, + one period].
+  const LatencyProbe& p = e.probe();
+  CHECK(p.horizon_us.count() == 30);
+  // ≥ 1 ms elapsed + 0.3 ms GPU + 5 ms panel; ≤ that + one period + scheduling slack.
+  CHECK(p.horizon_us.percentile(1) >= 6000);
+  CHECK(p.horizon_us.percentile(50) <= 15000);
+  CHECK(p.horizon_us.max() <= uint64_t(25'000));
+  CHECK(nonzero(r.front()) > 0);
+  InkSample up = sample(Action::kUp, 0, 170, 200);
+  up.t_ns = t + 4'166'666;
+  e.process(&up, 1);
+  CHECK(e.store().stroke_count() == 1);
+  CHECK(nonzero(r.front()) == 0);
+  e.detach_inline();
+}
+
+TEST(recorder_exports_predictor_bench_csv) {
+  CpuRenderer r(200, 200);
+  EngineConfig cfg;
+  cfg.surface_w = cfg.surface_h = 200;
+  cfg.store_max_strokes = 16;
+  cfg.store_max_capsules = 1 << 12;
+  InkEngine e(cfg, r);
+  Command rec{CommandType::kSetRecording};
+  rec.i0 = 1;
+  e.execute(rec);
+  for (int s = 0; s < 3; ++s) {
+    std::vector<InkSample> v{sample(Action::kDown, s * 100000, 10, 10.0f + s)};
+    for (int k = 1; k < 5; ++k) v.push_back(sample(Action::kMove, s * 100000 + k * 4167, 10.0f + k, 10.0f + s));
+    v.push_back(sample(Action::kUp, s * 100000 + 5 * 4167, 15, 10.0f + s));
+    e.process(v.data(), uint32_t(v.size()));
+  }
+  const char* path = "noti_recorder_test.csv";
+  CHECK(e.export_recording(path) == 18);
+  FILE* f = std::fopen(path, "r");
+  CHECK(f != nullptr);
+  if (f) {
+    char line[256];
+    int lines = 0, strokes_seen = 0;
+    unsigned last = ~0u;
+    while (std::fgets(line, sizeof(line), f)) {
+      ++lines;
+      unsigned id;
+      if (std::sscanf(line, "%u,", &id) == 1 && id != last) { ++strokes_seen; last = id; }
+    }
+    std::fclose(f);
+    std::remove(path);
+    CHECK(lines == 19);  // header + 18 samples
+    CHECK(strokes_seen == 3);
+  }
 }
 
 TEST(engine_hover_reaches_renderer) {

@@ -1,18 +1,25 @@
-// JNI surface of libnoti_ink.so. Kotlin counterpart: android/kotlin/app/noti/ink/NotiInk.kt
+// JNI surface of libnoti_ink.so. Kotlin side: android/kotlin/app/noti/ink/
 //
-// Input path (per MotionEvent, on the UI thread):
-//   Kotlin writes N InkSample records (40 B each, native byte order) into a
-//   direct ByteBuffer that *is* native memory, then calls
-//   @CriticalNative nativePush(handle, N): no JNIEnv, no object marshalling,
-//   no array pinning: a plain C call into InkEngine::push (memcpy into the
-//   SPSC ring + one release store + one fence).
+// Threading model (inline mode):
+//   ink thread  (Kotlin "noti-ink" HandlerThread, URGENT_DISPLAY + ADPF):
+//     owns the input window, the EGL context and the engine loop.
+//     nativeAttach / nativeProcess / nativeIdle / nativeVsync /
+//     nativeSurfaceChanged / nativeSurfaceDestroyed / nativeExportRecording /
+//     nativeDetach must be called here.
+//   UI thread: setters only (nativeSet*, nativeResetStats). They go through a
+//     lock-free command ring (single producer = the UI thread) and take effect
+//     at the next nativeProcess/nativeIdle on the ink thread.
 //
-// All natives are bound with RegisterNatives in JNI_OnLoad (required for
-// @CriticalNative, and avoids symbol lookup).
+// Per MotionEvent the ink thread writes N InkSample records (40 B, native byte
+// order) into a direct ByteBuffer that *is* native memory and calls
+// @CriticalNative nativeProcess(handle, N): a plain C call (no JNIEnv, no
+// marshalling, no pinning) that predicts and draws before returning.
+// All natives are bound with RegisterNatives (required for @CriticalNative).
 #include <android/log.h>
 #include <android/native_window_jni.h>
 #include <jni.h>
 
+#include <algorithm>
 #include <new>
 
 #include "gl_renderer.h"
@@ -36,49 +43,47 @@ struct Instance {
 
 inline Instance* inst(jlong h) { return reinterpret_cast<Instance*>(h); }
 
-// ---- regular JNI ----
+// ---- lifecycle (regular JNI) ----
 
 jlong nativeCreate(JNIEnv*, jclass, jfloat horizon_ms, jboolean gpu_timing, jboolean flip_y) {
   noti::EngineConfig cfg;
-  cfg.predictor.horizon_ms = horizon_ms;
+  cfg.predictor.horizon_ms = horizon_ms;  // used until vsync timing arrives
   noti::android::GlRendererOptions opt;
   opt.gpu_timing = gpu_timing;
   opt.flip_y = flip_y;
-  auto* i = new (std::nothrow) Instance(cfg, opt);
-  if (!i) return 0;
-  i->engine.start();
-  return reinterpret_cast<jlong>(i);
+  return reinterpret_cast<jlong>(new (std::nothrow) Instance(cfg, opt));
 }
 
-void nativeDestroy(JNIEnv*, jclass, jlong h) {
-  Instance* i = inst(h);
-  if (!i) return;
-  i->engine.stop();
-  delete i;
-}
+jboolean nativeAttach(JNIEnv*, jclass, jlong h) { return inst(h)->engine.attach_inline() ? JNI_TRUE : JNI_FALSE; }
+void nativeDetach(JNIEnv*, jclass, jlong h) { inst(h)->engine.detach_inline(); }
+void nativeDestroy(JNIEnv*, jclass, jlong h) { delete inst(h); }
 
 jobject nativeStaging(JNIEnv* env, jclass, jlong h) {
   return env->NewDirectByteBuffer(inst(h)->staging, jlong(sizeof(inst(h)->staging)));
 }
 
 void nativeSurfaceChanged(JNIEnv* env, jclass, jlong h, jobject surface, jint w, jint hh) {
-  ANativeWindow* win = surface ? ANativeWindow_fromSurface(env, surface) : nullptr;  // ref passed to renderer
   Command c{CommandType::kSurfaceChanged};
-  c.ptr = win;
+  c.ptr = surface ? ANativeWindow_fromSurface(env, surface) : nullptr;  // reference passed to the renderer
   c.i0 = w;
   c.i1 = hh;
-  inst(h)->engine.post_sync(c);
+  inst(h)->engine.execute(c);
 }
 
 void nativeSurfaceDestroyed(JNIEnv*, jclass, jlong h) {
-  // Synchronous: SurfaceHolder.Callback.surfaceDestroyed must not return
-  // while we still use the surface.
-  inst(h)->engine.post_sync(Command{CommandType::kSurfaceDestroyed});
+  inst(h)->engine.execute(Command{CommandType::kSurfaceDestroyed});
+}
+
+jlong nativeExportRecording(JNIEnv* env, jclass, jlong h, jstring path) {
+  const char* p = env->GetStringUTFChars(path, nullptr);
+  const jlong n = inst(h)->engine.export_recording(p);
+  env->ReleaseStringUTFChars(path, p);
+  return n;
 }
 
 // out: [samples, frames, strokes, dropped,
-//       in→recv p50, p99, recv→submit p50, p99, in→submit p50, p99, gpu p50, p99, frame-cpu p50, p99,
-//       pred-error p50 (1/100 px), p99]
+//       in→recv p50, p99, recv→submit p50, p99, in→submit p50, p99, gpu p50, p99,
+//       frame-cpu p50, p99, pred-error p50 (1/100 px), p99, horizon p50 (µs), p99]
 void nativeStats(JNIEnv* env, jclass, jlong h, jlongArray out) {
   const noti::InkEngine& e = inst(h)->engine;
   const noti::LatencyProbe& p = e.probe();
@@ -91,73 +96,100 @@ void nativeStats(JNIEnv* env, jclass, jlong h, jlongArray out) {
       jlong(p.submit_to_gpu.percentile(50)), jlong(p.submit_to_gpu.percentile(99)),
       jlong(p.frame_cpu.percentile(50)), jlong(p.frame_cpu.percentile(99)),
       jlong(p.pred_error_cpx.percentile(50)), jlong(p.pred_error_cpx.percentile(99)),
+      jlong(p.horizon_us.percentile(50)), jlong(p.horizon_us.percentile(99)),
   };
   const jsize n = std::min<jsize>(env->GetArrayLength(out), jsize(sizeof(v) / sizeof(v[0])));
   env->SetLongArrayRegion(out, 0, n, v);
 }
 
-// ---- @CriticalNative (no JNIEnv / jclass) ----
+// ---- ink thread hot path (@CriticalNative: no JNIEnv / jclass) ----
 
-jint nativePush(jlong h, jint count) {
+jlong nativeProcess(jlong h, jint count) {
   Instance* i = inst(h);
-  const uint32_t n = count < 0 ? 0u : (uint32_t(count) > kStagingSamples ? kStagingSamples : uint32_t(count));
-  return jint(i->engine.push(i->staging, n));
+  const uint32_t n = count < 0 ? 0u : std::min(uint32_t(count), kStagingSamples);
+  return i->engine.process(i->staging, n);
 }
+
+jlong nativeIdle(jlong h) { return inst(h)->engine.idle(); }
+
+void nativeVsync(jlong h, jlong present_ns, jlong period_ns) {
+  Command c{CommandType::kVsync};
+  c.t = present_ns;
+  c.i0 = jint(period_ns);
+  inst(h)->engine.execute(c);
+}
+
+// ---- UI thread setters (@CriticalNative, lock-free command ring) ----
+
+void post(jlong h, const Command& c) { inst(h)->engine.post(c); }
 
 void nativeSetColor(jlong h, jfloat r, jfloat g, jfloat b, jfloat a) {
   Command c{CommandType::kSetColor};
   c.f[0] = r; c.f[1] = g; c.f[2] = b; c.f[3] = a;
-  inst(h)->engine.post(c);
+  post(h, c);
 }
-
 void nativeSetWidth(jlong h, jfloat width_px) {
   Command c{CommandType::kSetWidth};
   c.f[0] = width_px;
-  inst(h)->engine.post(c);
+  post(h, c);
 }
-
 void nativeSetPressureCurve(jlong h, jfloat gamma, jfloat floor) {
   Command c{CommandType::kSetPressureGamma};
   c.f[0] = gamma; c.f[1] = floor;
-  inst(h)->engine.post(c);
+  post(h, c);
 }
-
 void nativeSetHorizon(jlong h, jfloat ms) {
   Command c{CommandType::kSetHorizon};
   c.f[0] = ms;
-  inst(h)->engine.post(c);
+  post(h, c);
 }
-
 void nativeSetPredictor(jlong h, jint model) {
   Command c{CommandType::kSetPredictor};
   c.i0 = model;
-  inst(h)->engine.post(c);
+  post(h, c);
 }
-
 void nativeSetTransform(jlong h, jfloat a, jfloat b, jfloat tx, jfloat c_, jfloat d, jfloat ty) {
   Command c{CommandType::kSetTransform};
   c.f[0] = a; c.f[1] = b; c.f[2] = tx; c.f[3] = c_; c.f[4] = d; c.f[5] = ty;
-  inst(h)->engine.post(c);
+  post(h, c);
 }
+void nativeSetDisplay(jlong h, jfloat panel_ms, jfloat gpu_ms, jint scan_axis, jboolean reversed) {
+  Command c{CommandType::kSetDisplay};
+  c.f[0] = panel_ms; c.f[1] = gpu_ms; c.i0 = scan_axis; c.i1 = reversed ? 1 : 0;
+  post(h, c);
+}
+void nativeSetRecording(jlong h, jboolean on) {
+  Command c{CommandType::kSetRecording};
+  c.i0 = on ? 1 : 0;
+  post(h, c);
+}
+void nativeResetStats(jlong h) { post(h, Command{CommandType::kResetProbe}); }
 
-void nativeResetStats(jlong h) { inst(h)->engine.post(Command{CommandType::kResetProbe}); }
-
+#define M(name, sig) {#name, sig, reinterpret_cast<void*>(name)}
 const JNINativeMethod kMethods[] = {
-    {"nativeCreate", "(FZZ)J", reinterpret_cast<void*>(nativeCreate)},
-    {"nativeDestroy", "(J)V", reinterpret_cast<void*>(nativeDestroy)},
-    {"nativeStaging", "(J)Ljava/nio/ByteBuffer;", reinterpret_cast<void*>(nativeStaging)},
-    {"nativeSurfaceChanged", "(JLandroid/view/Surface;II)V", reinterpret_cast<void*>(nativeSurfaceChanged)},
-    {"nativeSurfaceDestroyed", "(J)V", reinterpret_cast<void*>(nativeSurfaceDestroyed)},
-    {"nativeStats", "(J[J)V", reinterpret_cast<void*>(nativeStats)},
-    {"nativePush", "(JI)I", reinterpret_cast<void*>(nativePush)},
-    {"nativeSetColor", "(JFFFF)V", reinterpret_cast<void*>(nativeSetColor)},
-    {"nativeSetWidth", "(JF)V", reinterpret_cast<void*>(nativeSetWidth)},
-    {"nativeSetPressureCurve", "(JFF)V", reinterpret_cast<void*>(nativeSetPressureCurve)},
-    {"nativeSetHorizon", "(JF)V", reinterpret_cast<void*>(nativeSetHorizon)},
-    {"nativeSetPredictor", "(JI)V", reinterpret_cast<void*>(nativeSetPredictor)},
-    {"nativeSetTransform", "(JFFFFFF)V", reinterpret_cast<void*>(nativeSetTransform)},
-    {"nativeResetStats", "(J)V", reinterpret_cast<void*>(nativeResetStats)},
+    M(nativeCreate, "(FZZ)J"),
+    M(nativeAttach, "(J)Z"),
+    M(nativeDetach, "(J)V"),
+    M(nativeDestroy, "(J)V"),
+    M(nativeStaging, "(J)Ljava/nio/ByteBuffer;"),
+    M(nativeSurfaceChanged, "(JLandroid/view/Surface;II)V"),
+    M(nativeSurfaceDestroyed, "(J)V"),
+    M(nativeExportRecording, "(JLjava/lang/String;)J"),
+    M(nativeStats, "(J[J)V"),
+    M(nativeProcess, "(JI)J"),
+    M(nativeIdle, "(J)J"),
+    M(nativeVsync, "(JJJ)V"),
+    M(nativeSetColor, "(JFFFF)V"),
+    M(nativeSetWidth, "(JF)V"),
+    M(nativeSetPressureCurve, "(JFF)V"),
+    M(nativeSetHorizon, "(JF)V"),
+    M(nativeSetPredictor, "(JI)V"),
+    M(nativeSetTransform, "(JFFFFFF)V"),
+    M(nativeSetDisplay, "(JFFIZ)V"),
+    M(nativeSetRecording, "(JZ)V"),
+    M(nativeResetStats, "(J)V"),
 };
+#undef M
 
 }  // namespace
 

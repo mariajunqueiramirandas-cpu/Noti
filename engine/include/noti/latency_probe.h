@@ -65,6 +65,7 @@ struct LatencyProbe {
   Histogram submit_to_gpu;    // GPU fence signal − t_submit (filled by the GL renderer)
   Histogram frame_cpu;        // CPU time per render batch
   Histogram pred_error_cpx;   // prediction end-point error, in 1/100 px
+  Histogram horizon_us;       // per-frame prediction horizon requested (µs)
   std::atomic<uint64_t> dropped_samples{0};
 
   void reset() noexcept;

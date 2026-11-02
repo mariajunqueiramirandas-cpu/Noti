@@ -52,7 +52,8 @@ add_library(noti_core STATIC
   src/predictor.cpp
   src/latency_probe.cpp
   src/stroke_store.cpp
-  src/cpu_renderer.cpp)
+  src/cpu_renderer.cpp
+  src/stroke_recorder.cpp)
 target_include_directories(noti_core PUBLIC include)
 target_link_libraries(noti_core PUBLIC noti_flags Threads::Threads)
 

@@ -72,6 +72,29 @@ void InkEngine::post_sync(const Command& c) noexcept {
 }
 
 // ---------------------------------------------------------------------------
+// Inline mode
+// ---------------------------------------------------------------------------
+
+bool InkEngine::attach_inline() { return renderer_.thread_init(); }
+
+void InkEngine::detach_inline() { renderer_.thread_shutdown(); }
+
+int64_t InkEngine::process(const InkSample* s, uint32_t n) noexcept {
+  Command cmd;
+  while (commands_.pop(&cmd, 1) == 1) handle_command(cmd);
+  if (n) process_samples(s, n, now_ns());
+  return renderer_.idle();
+}
+
+void InkEngine::execute(const Command& c) noexcept { handle_command(c); }
+
+int64_t InkEngine::idle() noexcept {
+  Command cmd;
+  while (commands_.pop(&cmd, 1) == 1) handle_command(cmd);
+  return renderer_.idle();
+}
+
+// ---------------------------------------------------------------------------
 // Render thread
 // ---------------------------------------------------------------------------
 
@@ -190,6 +213,19 @@ void InkEngine::handle_command(const Command& c) noexcept {
     case CommandType::kResetProbe:
       probe_.reset();
       break;
+    case CommandType::kVsync:
+      vsync_ns_ = c.t;
+      vsync_period_ns_ = c.i0;
+      break;
+    case CommandType::kSetDisplay:
+      cfg_.display.panel_ms = c.f[0];
+      cfg_.display.gpu_ms = c.f[1];
+      cfg_.display.axis = static_cast<ScanAxis>(c.i0);
+      cfg_.display.reversed = c.i1 != 0;
+      break;
+    case CommandType::kSetRecording:
+      if (!active_) recorder_.enable(c.i0 != 0);  // allocation never happens mid-stroke
+      break;
   }
   // Every command completes a ticket; post_sync() waits for its own.
   sync_done_.fetch_add(1, std::memory_order_release);
@@ -284,6 +320,8 @@ void InkEngine::begin_stroke(const InkSample& s) noexcept {
   else stats_.store_full.fetch_add(1, std::memory_order_relaxed);
   last_x_ = x; last_y_ = y; last_r_ = r; last_t_ = s.t_ns;
   predictor_.add(s.t_ns, x, y, s.pressure);
+  recorder_.begin_stroke();
+  recorder_.add(s.t_ns, x, y, s.pressure);
 }
 
 void InkEngine::extend_stroke(const InkSample& s) noexcept {
@@ -305,6 +343,7 @@ void InkEngine::extend_stroke(const InkSample& s) noexcept {
     track_prediction_error(last_t_, last_x_, last_y_, s.t_ns, x, y);
   last_x_ = x; last_y_ = y; last_r_ = r; last_t_ = s.t_ns;
   predictor_.add(s.t_ns, x, y, s.pressure);
+  recorder_.add(s.t_ns, x, y, s.pressure);
 }
 
 void InkEngine::flush_frame(bool with_prediction) noexcept {
@@ -320,7 +359,15 @@ void InkEngine::flush_frame(bool with_prediction) noexcept {
   }
 
   pred_.count = 0;
-  if (with_prediction && predictor_.predict(&pred_) > 0) {
+  float horizon = 0.0f;
+  if (with_prediction) {
+    // When will ink drawn *now* be visible? Exact elapsed time since the
+    // sample + GPU + wait for the scan line at the ink's row + LCD response.
+    horizon = visible_horizon_ms(cfg_.display, now_ns(), last_t_, vsync_ns_, vsync_period_ns_, last_x_, last_y_,
+                                 surface_w_, surface_h_, cfg_.predictor.horizon_ms);
+    if (cfg_.probe) probe_.horizon_us.record(uint64_t(horizon * 1000.0f));
+  }
+  if (with_prediction && predictor_.predict(&pred_, horizon) > 0) {
     RectF b;
     float px = last_x_, py = last_y_, pr = last_r_;
     for (uint32_t i = 0; i < pred_.count; ++i) {

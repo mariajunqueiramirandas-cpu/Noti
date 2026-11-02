@@ -1,109 +1,128 @@
 # Noti ink engine (C++20)
 
 The native ink engine and stroke predictor from [the low-latency plan](../docs/LOW_LATENCY_PLAN.md)
-(Phase 1 + Phase 2). There's no allocation, lock, log or syscall on the per-sample path, and the
+(Phase 1 + Phase 2). Nothing on the per-sample path allocates, takes a lock, logs, or makes a binder call. The
 portable core builds and is tested on any Linux host.
 
+## The ink path
+
 ```
-UI thread (Kotlin)                         ink render thread (C++, nice −8, ADPF session)
-──────────────────                         ───────────────────────────────────────────────
-onTouchEvent                               wake: predictive (spin just before the next
- ├ every historical sample,                       240 Hz sample is due) or futex
- │ hardware timestamps                      drain ALL pending samples
- ├ write 40 B records into a direct        ├ predictor.add()       ~110 ns/sample
- │ ByteBuffer (= native memory)            ├ tapered capsules → stroke store (zero-copy)
- └ @CriticalNative nativePush(h, n) ──┐    ├ predicted tail (≤ 8 capsules)
-                                      │    └ ONE renderer call, scissored:
-   InkEngine::push                    │        draw ink → backing + front buffer
-   memcpy → SPSC ring, 1 release      └──►     blit backing → front (erase old tail)
-   store, 1 fence, futex only if               draw new tail → front buffer
-   the render thread sleeps                    glFlush (never glFinish)
+            ┌──────────────────────── "noti-ink" thread ────────────────────────┐
+ digitizer  │ URGENT_DISPLAY + ADPF session · owns: input window, EGL context,  │
+ 240 Hz ───►│ engine (inline mode), its own Choreographer                       │
+            │                                                                   │
+            │ InkWindow.onTouchEvent       every historical sample, hw time     │
+            │  └ 40 B records → direct ByteBuffer (= native memory)             │
+            │  └ @CriticalNative nativeProcess(h, n)  ── plain C call ──┐       │
+            │                                                           ▼       │
+            │ InkEngine::process   predictor (~120 ns/sample)                   │
+            │                      horizon = exact time-to-photon for THIS      │
+            │                        frame (sample age + GPU + scan line        │
+            │                        reaching the ink's row + LCD)              │
+            │                      tapered capsules → stroke store (0-copy)     │
+            │ GL renderer          blit (erase old tail) + ink + tail           │
+            │                        → FRONT BUFFER → glFlush   ◄── visible     │
+            │                      ink → backing texture → glFlush (off-path)   │
+            └───────────────────────────────────────────────────────────────────┘
+ UI thread: setters only (lock-free command ring)    tx thread: every ASurfaceTransaction
 ```
+
+**Why a separate thread with its own window:** a window added from a Looper thread has its `ViewRootImpl`, and
+therefore its input dispatch, on that thread. The UI thread (Compose, layout, GC: the 0–20+ ms spikes in plan §2,
+stage 4) is not on the ink path at all. Because the same thread renders, there's also no hand-off between "input
+thread" and "render thread". The input event is drawn before `onTouchEvent` returns.
 
 ## Layout
 
 | Path | What |
 |---|---|
-| `include/noti/spsc_ring.h` | Wait-free SPSC ring: cache-line-separated indices with cached copies, batch push/pop with one release store. |
-| `include/noti/wake_event.h` | Futex sleep/wake with a Dekker handshake: the producer makes a syscall only if the consumer is asleep. Also has a timed wait. |
+| `include/noti/engine.h`, `src/engine.cpp` | Engine loop. **Inline mode** (production): the input thread processes and draws. **Threaded mode** (benchmarks, fallback): SPSC ring + render thread with predictive wake. |
 | `include/noti/predictor.h`, `src/predictor.cpp` | Kalman / polynomial / linear predictor, confidence gating, optional One-Euro on the tail. |
+| `include/noti/display_timing.h` | Scan-out-aware horizon: when will ink drawn *now* be visible? |
 | `include/noti/geometry.h` | Exact SDF of a tapered capsule, pressure curve LUT, rects, view→surface affine. |
-| `include/noti/engine.h`, `src/engine.cpp` | Render thread, stroke lifecycle, prediction erase/redraw, probe, predictive wake. |
-| `include/noti/stroke_store.h` | Append-only stroke arena. The active stroke writes into it directly, so commit copies nothing. |
-| `include/noti/latency_probe.h` | Lock-free log-linear histograms (§5.1): in→recv, recv→submit, in→submit, submit→GPU, frame CPU, prediction error. |
-| `include/noti/renderer.h` | Renderer contract (front-buffer model, MAX-union blending, commit/cancel). |
-| `src/cpu_renderer.cpp` | Reference software renderer with identical semantics, used by tests for pixel-exact invariants. |
+| `include/noti/spsc_ring.h`, `wake_event.h` | Wait-free SPSC ring; futex sleep/wake (syscall only if the consumer sleeps), timed wait. |
+| `include/noti/stroke_store.h` | Append-only stroke arena; the active stroke writes into it directly (commit copies nothing). |
+| `include/noti/stroke_recorder.h` | Raw stroke recorder → CSV for `predictor_bench --csv`. |
+| `include/noti/latency_probe.h` | Lock-free histograms (§5.1): in→recv, recv→submit, in→submit, submit→GPU, frame CPU, prediction error, horizon. |
+| `include/noti/renderer.h`, `src/cpu_renderer.cpp` | Renderer contract and the reference software renderer used by the pixel tests. |
 | `src/android/gl_renderer.*` | GLES 3 front-buffer renderer on `AHardwareBuffer` + `ASurfaceControl`. |
-| `src/android/perf_session.*` | Thread priority, ADPF session, API 35 power-efficiency toggle. |
+| `src/android/perf_session.*` | nice −8, ADPF session, API 35 power-efficiency toggle. |
 | `src/android/jni_bridge.cpp` | JNI (`RegisterNatives`, `@CriticalNative`). |
-| `android/kotlin/app/noti/ink/` | Kotlin side: `NotiInk` (natives) and `InkSurfaceView` (input forwarding). |
-| `tools/predictor_bench.cpp` | Offline predictor harness: model × horizon comparison, tuner, CI gate, `--csv` for recorded Pad 7 strokes. |
-| `tools/engine_bench.cpp` | End-to-end benchmark: real-time 240 Hz replay into a running engine, plus burst throughput and gates. |
-| `tests/tests.cpp` | 25 unit tests (no framework dependency). |
+| `android/kotlin/app/noti/ink/` | `InkLayer` (public API), `InkWindow` (ink-thread input window), `NotiInk` (natives). |
+| `tools/predictor_bench.cpp` | Predictor harness: models × horizons, display-pipeline simulation, tuner, CI gate, `--csv`. |
+| `tools/engine_bench.cpp` | Real-time 240 Hz replay (threaded and inline), burst throughput, gates. |
+| `tests/tests.cpp` | 29 unit tests (no framework dependency). |
 
-## Renderer design (Android)
+## Latency techniques, by pipeline stage
 
-- **Wet layer:** two `AHardwareBuffer`s with `USAGE_FRONT_BUFFER` (API 33), drawn into while they're scanned out. On commit, the
-  renderer switches to the other, already-cleared buffer in the **same** `ASurfaceTransaction` that shows the new dry
-  buffer. The stroke moves from wet to dry in one frame, with no flicker and no hide/show gap.
-- **Backing texture** holds the real wet ink. The previous predicted tail is erased with one small
-  `glBlitFramebuffer` of its rectangle, then the new tail is drawn. Every operation is scissored to a few thousand pixels.
-- **Ink = union of tapered capsules** via `GL_MAX` blending: joints are never double-blended, and redraws are idempotent.
-  On commit, each stroke is union-rendered into a scratch texture, then composited src-over into the dry layer, so
-  translucent ink looks identical wet and dry (pixel-tested by `engine_wet_equals_dry`).
-- **Dry layer** is triple-buffered and incremental: each buffer draws only the strokes it is missing.
-- **High-priority EGL context** (`EGL_IMG_context_priority`, supported on Adreno), so ink preempts page/PDF GPU work.
-- Instance data goes through a 64 K-capsule ring VBO with unsynchronised maps. Quads come from
-  `gl_VertexID`, so each update is one instanced draw call.
-- Release fences from transaction callbacks are waited on the **GPU** (`eglWaitSyncKHR`); the CPU never blocks.
-- Hover enter switches to 144 Hz (`FIXED_SOURCE`, `CHANGE_FRAME_RATE_ALWAYS`) and turns off ADPF power-efficiency.
-  "Pen away" is applied only after 1.5 s, because `HOVER_EXIT` also precedes every pen-down.
+| Stage (plan §2) | Technique |
+|---|---|
+| 3 · vsync batching | `requestUnbufferedDispatch`; all historical samples with hardware timestamps |
+| 4 · UI thread | **Input window on the ink thread**: the UI thread never sees pen events |
+| hand-off | **Inline mode**: the input thread is the render thread (threaded mode: SPSC ring + predictive wake) |
+| 5 · render | One scissored instanced draw per update, SDF capsules (no tessellation), persistent coherent instance ring (`GL_EXT_buffer_storage`), **visible work submitted first**, backing update after, high-priority EGL context (`EGL_IMG_context_priority`) |
+| 5 · cold GPU | **GPU keep-alive** every 40 ms while the pen is near: no wake-from-low-power on the first sample after a pause |
+| 5 · binder | **Transaction thread**: commit, front-buffer resubmit (with damage region) and frame-rate changes never block the ink thread |
+| 6 · composition | `USAGE_FRONT_BUFFER` wet layer; atomic wet→dry commit with ping-ponged wet buffers |
+| 7 · scan-out | Front buffer: ink is visible the moment the scan line passes its row |
+| 1, 7, 8 · physics | **Predictor with a per-frame, scan-out-aware horizon** |
+| clocks | nice −8 + ADPF session reporting each batch; 144 Hz `FIXED_SOURCE` while the pen is near |
 
 ## Predictor
 
-Every model produces {velocity, acceleration} at the newest sample. The tail is
-`p + v·t + ½·g·a·t²`, drawn from the **raw** newest point so there's no kink where real ink ends. Gates can only
-**shorten** the horizon:
+Every model produces {velocity, acceleration} at the newest sample. The tail is `p + v·t + ½·g·a·t²`, drawn from the
+**raw** newest point so there's no kink where real ink ends. Gates can only **shorten** the horizon: speed ramp, turn
+cap, braking (never past the stop point), pen lift, jerk truncation error (|j|·h³/6 ≤ 0.72 px), Kalman innovation
+(manoeuvre), and a distance cap. Confidence (gated ÷ requested horizon) drops instantly and recovers at a bounded
+rate, so the tail never flickers.
 
-| Gate | Rule |
-|---|---|
-| speed ramp | no prediction below ~1 cm/s (lag < 2 px anyway) |
-| turn cap | heading change over the tail ≤ 0.95 rad |
-| braking | h ≤ 0.9 × time-to-stop: never extrapolate past where the pen stops |
-| pen lift | low and falling pressure: h ≤ 0.5 × time-to-lift |
-| jerk (truncation) cap | \|j\|·h³/6 ≤ 0.72 px: prediction shortens when motion stops being smooth |
-| manoeuvre | Kalman innovation NIS > 18 scales h down |
-| distance cap | tail ≤ 90 px |
-| fast attack / slow release | the horizon shrinks instantly but grows ≤ 1 ms per ms, so the tail length never flickers |
+### The horizon is computed per frame
 
-Defaults were tuned with `predictor_bench --tune` to minimise the mean ink-to-nib gap, subject to fewer than 1% of
-frames showing more than 4 px (≈ 0.3 mm) of overshoot. Results on 1,500 synthetic 240 Hz strokes (cursive, lines,
-zigzags, loops, signatures; σ = 0.2 px noise, ±0.15 ms jitter) at a 12 ms horizon:
+With a front buffer, ink becomes visible when the scan line next passes its row, not at a vsync. That wait alone
+swings by a full refresh period (0–6.9 ms at 144 Hz) from frame to frame. So for every frame the engine computes:
 
-| model | mean gap | p95 | gain vs. no prediction | p99 overshoot | frames with visible overshoot | cost |
-|---|---|---|---|---|---|---|
-| linear | 4.44 px | 14.4 px | 72% | 12.35 px | 8.20% | 60 ns |
-| polynomial | 2.76 px | 9.2 px | 82% | 4.17 px | 1.23% | 160 ns |
-| **Kalman (default)** | 3.14 px | 10.3 px | 80% | **2.68 px** | **0.15%** | 110 ns |
-| Kalman + One-Euro | 4.39 px | 13.8 px | 72% | 5.27 px | 2.31% | — |
+```
+horizon = (now − t_sample)  +  GPU  +  wait for the scan line at the ink's row  +  LCD response
+          exact                ~0.35 ms  vsync phase (ink thread's Choreographer)   feel-calibrated
+                                         + panel scan geometry
+```
 
-The Kalman model with gating gives up about 0.4 px of mean gap compared with the polynomial model, in exchange for 8×
-less visible overshoot ("a wrong prediction is worse than latency"). One-Euro smoothing of the tail made every metric
-worse, so it's off by default. **These defaults come from synthetic strokes.** Record real strokes on the Pad 7 and
-re-tune with `predictor_bench --csv strokes.csv --tune 500` (CSV columns: `stroke_id,t_ns,x,y,pressure`).
+`predictor_bench --display-sim` simulates the pipeline (dispatch 0.6 ms + exponential tail, 144 Hz scan-out, 5 ms LCD)
+on 1,500 synthetic strokes:
 
-## Measured (this repo's CI host: 4-vCPU x86-64 VM, clang 18, -O3)
-
-| | p50 | p90 | p99 |
+| horizon policy | mean gap | p99 overshoot | frames with visible (>4 px) overshoot |
 |---|---|---|---|
-| input → render thread hand-off, **predictive wake** | **1.7 µs** | 24 µs | 168 µs |
-| input → render thread hand-off, futex only | 100 µs | 160 µs | 303 µs |
-| sample received → renderer call returned (null renderer) | 6.3 µs | 32 µs | 168 µs |
-| engine CPU per batch | 4.7 µs | 6.5 µs | 19 µs |
+| fixed (the best constant) | 3.22 px | 9.33 px | 10.33% |
+| sample age only | 3.18 px | 9.00 px | 9.67% |
+| **scan-out-aware** | **2.31 px** | **3.49 px** | **0.54%** |
 
-Burst throughput is about 280 ns per sample end to end (ring + predictor + geometry + frame, one frame per sample). On
-the VM, predictive wake caught 88% of samples without a futex wake-up; the p99/max values are the VM's scheduler. On the
-Pad 7 the hand-off runs under ADPF on a big core, so expect better numbers; the on-device probe reports the real ones.
+A fixed horizon overshoots visibly in one frame out of ten under realistic jitter. The scan-aware horizon cuts the
+mean gap by 28% and visible overshoot by about 19×. Until the panel's scan direction is known (`ScanAxis::kUnknown`),
+the engine uses the exact sample age plus the average scan wait.
+
+### Models at a fixed 12 ms horizon (`predictor_bench`)
+
+| model | mean gap | gain vs. no prediction | p99 overshoot | visible overshoot | cost |
+|---|---|---|---|---|---|
+| linear | 4.44 px | 72% | 12.35 px | 8.20% | 60 ns |
+| polynomial | 2.76 px | 82% | 4.17 px | 1.23% | 160 ns |
+| **Kalman (default)** | 3.14 px | 80% | **2.68 px** | **0.15%** | 120 ns |
+| Kalman + One-Euro | 4.39 px | 72% | 5.27 px | 2.31% | — |
+
+The defaults were tuned with `predictor_bench --tune` on synthetic strokes. **Re-tune on real Pad 7 strokes:**
+`InkLayer.setRecording(true)`, write for a while, `exportRecording(path)`, `adb pull`, then
+`predictor_bench --csv strokes.csv --tune 500`.
+
+## Measured (CI host: 4-vCPU x86-64 VM, clang 18, -O3, null renderer)
+
+| sample received → draw submitted | p50 | p90 | p99 | max |
+|---|---|---|---|---|
+| **inline mode (production path)** | **5.8 µs** | **7.8 µs** | **26 µs** | **37 µs** |
+| threaded, predictive wake | 6.3 µs | 32 µs | 160 µs | 1.85 ms |
+
+Other numbers: the predictor costs about 120 ns per sample; burst throughput is about 300–370 ns per sample end to end;
+and engine CPU per batch is about 5 µs p50 (cold caches after the 4 ms gap between samples). On the device, the GPU
+time and the scan-out wait dominate. The on-device probe and `latencyStats()` report the real numbers.
 
 ## Build
 
@@ -112,10 +131,11 @@ Host (core, tests, tools):
 ```sh
 cmake -S engine -B engine/build -G Ninja && cmake --build engine/build
 engine/build/noti_tests
-engine/build/predictor_bench               # model × horizon table
-engine/build/predictor_bench --by-kind     # per stroke type
-engine/build/engine_bench --seconds 5      # real-time 240 Hz replay
-(cd engine/build && ctest)                 # unit tests + predictor quality gate + engine cost gate
+engine/build/predictor_bench                 # models × horizons
+engine/build/predictor_bench --display-sim   # horizon policies under realistic display timing
+engine/build/predictor_bench --by-kind       # per stroke type
+engine/build/engine_bench --seconds 5        # threaded vs. inline, real-time 240 Hz replay
+(cd engine/build && ctest)                   # unit tests + predictor quality gate + engine cost gate
 ```
 
 Sanitizers: `-DNOTI_TSAN=ON` or `-DNOTI_SANITIZE=ON` (ASan+UBSan). The suite is clean under both (GCC 13).
@@ -126,24 +146,33 @@ Android (arm64, minSdk 33):
 cmake -S engine -B engine/build-android -G Ninja \
   -DCMAKE_TOOLCHAIN_FILE=$ANDROID_NDK/build/cmake/android.toolchain.cmake \
   -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-33 -DANDROID_STL=c++_static
-cmake --build engine/build-android        # → libnoti_ink.so (~280 KB stripped, 16 KB-page aligned)
+cmake --build engine/build-android        # → libnoti_ink.so (16 KB-page aligned, exports only JNI_OnLoad)
 ```
 
-From Gradle, point `externalNativeBuild.cmake.path` at `engine/CMakeLists.txt` and add
-`engine/android/kotlin` as a source directory. `@CriticalNative` needs `compileSdk >= 34`.
+From Gradle, point `externalNativeBuild.cmake.path` at `engine/CMakeLists.txt` and add `engine/android/kotlin` as a
+source directory (`compileSdk >= 34` for `@CriticalNative`). Usage:
+
+```kotlin
+val ink = InkLayer(canvasView)            // after setContentView; attaches when the view does
+ink.setColor(0.1f, 0.1f, 0.12f); ink.setWidth(5f)
+ink.setDisplayTiming(panelMs = 5f)        // feel slider (plan §5.4)
+// onDestroy: ink.release()
+```
 
 ## Verification status
 
 | | Status |
 |---|---|
-| Portable core (ring, wake, predictor, geometry, engine, probe, store) | Unit-tested, including pixel-exact invariants against the reference renderer: the predicted tail leaves no residue, wet = dry, and cancel erases. Clean under TSan, ASan+UBSan, clang and GCC. |
-| Android layer (`src/android`) | **Compiles warning-free with NDK r27c for arm64 / API 33. Not yet run on a device.** |
-| Kotlin binding | **Not compiled here (no Android SDK in this environment).** |
+| Portable core | 29 unit tests, including pixel-exact invariants against the reference renderer: no tail residue, wet = dry, cancel erases, a long stroke is never split. Also covered: scan-timing math, inline mode with real-time vsync, recorder round trip. Clean under TSan, ASan+UBSan, clang and GCC. |
+| Android native layer | Compiles warning-free with NDK r27c for arm64 / API 33. **Not yet run on a device.** |
+| Kotlin | Type-checked against the API 35 `android.jar` with kotlinc. **Not yet run on a device.** |
 
-The Phase 0 device checks from the plan apply to the Android layer before relying on it:
+Phase 0 device checks before relying on it:
 
-1. Ink orientation: if strokes appear vertically mirrored, set `GlRendererOptions::flip_y`.
-2. `dumpsys SurfaceFlinger`: the `noti-wet` layer must be **DEVICE** (overlay) composited and the panel must stay at 144 Hz.
-   If it's DEVICE, set `resubmit_front_buffer = false`. That removes a rate-limited `setBuffer` transaction that
-   exists only to cover CLIENT (GPU) composition.
-3. `GlRendererOptions::gpu_timing = true` fills `submit_to_gpu` in the probe (adds a native fence per frame: debug only).
+1. Ink orientation: if strokes appear vertically mirrored, pass `flipY = true`.
+2. The input window sits over the canvas and receives the pen (`adb shell dumpsys window | grep noti-ink`).
+3. `dumpsys SurfaceFlinger`: the `noti-wet` layer must be **DEVICE** (overlay) composited, and the panel must stay
+   at 144 Hz. If it's DEVICE, set `resubmit_front_buffer = false` (it only covers CLIENT composition).
+4. Panel scan geometry for `setDisplayTiming(scanAxis=…)`: until known, leave it at 0 (unknown).
+5. `gpuTiming = true` fills `submit_to_gpu` (adds a native fence per frame: debug only). Feed its p50 into
+   `setDisplayTiming(gpuMs=…)`.

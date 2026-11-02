@@ -71,7 +71,7 @@ struct PredictorConfig {
   float jerk_error_px = 0.72f;     // 0 disables
   float jerk_smoothing = 0.3f;     // EMA factor for the jerk estimate
   float max_distance_px = 90.0f;   // hard cap on tail length (~6.6 mm at 345 ppi)
-  float horizon_rise_rate = 1.0f;  // ms of horizon regained per ms of stroke (shrinks instantly)
+  float horizon_rise_rate = 1.0f;  // ms of (nominal) horizon regained per ms of stroke; shrinks instantly
 
   // One-Euro filter on the tail end-point offset (§4.8: smoothing only on the tail).
   bool smooth_tail = false;
@@ -110,6 +110,10 @@ class StrokePredictor {
   NOTI_HOT void add(int64_t t_ns, float x, float y, float pressure) noexcept;
 
   // Predict the tail from the newest sample. Returns out->count.
+  // `horizon_ms` is how far past the newest sample's hardware time the ink
+  // will actually become visible; the engine computes it per frame. The
+  // overload without it uses config().horizon_ms.
+  NOTI_HOT uint32_t predict(Prediction* out, float horizon_ms) noexcept;
   NOTI_HOT uint32_t predict(Prediction* out) noexcept;
 
   uint32_t samples() const noexcept { return n_; }
@@ -123,7 +127,7 @@ class StrokePredictor {
  private:
   void update_kalman(double dt, double x, double y) noexcept;
   void update_poly() noexcept;
-  float gate_horizon(double dt_since_prev) noexcept;
+  float gate_horizon(float target_ms) noexcept;
 
   PredictorConfig cfg_;
 
@@ -151,9 +155,9 @@ class StrokePredictor {
   double ring_t_[kMaxPolyWindow] = {}, ring_x_[kMaxPolyWindow] = {}, ring_y_[kMaxPolyWindow] = {};
   uint32_t ring_pos_ = 0;
 
-  // Gated horizon state (fast attack, slow release).
-  float h_state_ = 0;
-  double h_state_t_ = 0;
+  // Confidence (gated / requested horizon) with fast attack, slow release.
+  float conf_ = 0;
+  double conf_t_ = 0;
 
   // One-Euro state on tail end offset.
   bool euro_init_ = false;

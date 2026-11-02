@@ -145,7 +145,17 @@ bool GlFrontBufferRenderer::thread_init() {
 
   glGenBuffers(1, &vbo_);
   glBindBuffer(GL_ARRAY_BUFFER, vbo_);  // stays bound for the context's lifetime
-  glBufferData(GL_ARRAY_BUFFER, GLsizeiptr(kRingCapsules * sizeof(Capsule)), nullptr, GL_STREAM_DRAW);
+  const GLsizeiptr ring_bytes = GLsizeiptr(kRingCapsules * sizeof(Capsule));
+  const char* gl_exts = reinterpret_cast<const char*>(glGetString(GL_EXTENSIONS));
+  auto buffer_storage = reinterpret_cast<PFNGLBUFFERSTORAGEEXTPROC>(eglGetProcAddress("glBufferStorageEXT"));
+  if (has_ext(gl_exts, "GL_EXT_buffer_storage") && buffer_storage) {
+    // Persistent + coherent: map once, then every frame is a plain memcpy
+    // into GPU-visible memory. No per-frame map/unmap driver round trips.
+    const GLbitfield f = GL_MAP_WRITE_BIT | GL_MAP_PERSISTENT_BIT_EXT | GL_MAP_COHERENT_BIT_EXT;
+    buffer_storage(GL_ARRAY_BUFFER, ring_bytes, nullptr, f);
+    ring_ptr_ = static_cast<Capsule*>(glMapBufferRange(GL_ARRAY_BUFFER, 0, ring_bytes, f));
+  }
+  if (!ring_ptr_) glBufferData(GL_ARRAY_BUFFER, ring_bytes, nullptr, GL_STREAM_DRAW);
   glGenVertexArrays(1, &vao_);
   glBindVertexArray(vao_);
   glEnableVertexAttribArray(0);
@@ -164,8 +174,10 @@ bool GlFrontBufferRenderer::thread_init() {
     fence_stop_.store(false);
     fence_thread_ = std::thread([this] { fence_watcher_main(); });
   }
-  LOGI("ink renderer ready (high-priority ctx: %s, native fences: %s)", ctx_attrs[2] != EGL_NONE ? "yes" : "no",
-       egl_dup_fence_ ? "yes" : "no");
+  tx_stop_.store(false);
+  tx_thread_ = std::thread([this] { tx_thread_main(); });
+  LOGI("ink renderer ready (high-priority ctx: %s, native fences: %s, persistent ring: %s)",
+       ctx_attrs[2] != EGL_NONE ? "yes" : "no", egl_dup_fence_ ? "yes" : "no", ring_ptr_ ? "yes" : "no");
   return true;
 }
 
@@ -176,7 +188,18 @@ void GlFrontBufferRenderer::thread_shutdown() {
     fence_wake_.notify();
     fence_thread_.join();
   }
+  if (tx_thread_.joinable()) {
+    tx_stop_.store(true, std::memory_order_release);
+    tx_wake_.notify();
+    tx_thread_.join();
+  }
   if (ctx_ != EGL_NO_CONTEXT) {
+    for (GLsync& f : half_fence_) {
+      if (f) glDeleteSync(f);
+      f = nullptr;
+    }
+    if (ring_ptr_) glUnmapBuffer(GL_ARRAY_BUFFER);
+    ring_ptr_ = nullptr;
     glDeleteProgram(capsule_prog_);
     glDeleteProgram(composite_prog_);
     glDeleteBuffers(1, &vbo_);
@@ -269,21 +292,47 @@ NOTI_INLINE void GlFrontBufferRenderer::set_color(const float* c) {
   }
 }
 
-// Ring-buffered instance upload. Unsynchronised maps never stall on the GPU:
-// by the time the ring wraps (65 536 capsules) those draws are long done, and
-// the wrap itself orphans the buffer.
+// Ring-buffered instance upload; n ≤ kRingHalf.
+//  * Persistent path: write straight into the coherent mapping. The ring is
+//    split in two halves; leaving a half drops a GPU fence, and re-entering it
+//    waits on that fence (in practice long signalled: a half holds 32 768
+//    capsules, hundreds of frames).
+//  * Fallback: unsynchronised map of a fresh range; orphan on wrap.
 uint32_t GlFrontBufferRenderer::upload(const Capsule* c, uint32_t n) {
-  GLbitfield flags = GL_MAP_WRITE_BIT | GL_MAP_UNSYNCHRONIZED_BIT;
-  if (ring_pos_ + n > kRingCapsules) {
-    ring_pos_ = 0;
-    flags |= GL_MAP_INVALIDATE_BUFFER_BIT;
+  if (NOTI_LIKELY(ring_ptr_ != nullptr)) {
+    auto fence_half = [this](int h) {
+      if (half_fence_[h]) glDeleteSync(half_fence_[h]);
+      half_fence_[h] = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+    };
+    auto wait_half = [this](int h) {
+      if (!half_fence_[h]) return;
+      glClientWaitSync(half_fence_[h], GL_SYNC_FLUSH_COMMANDS_BIT, 100'000'000);
+      glDeleteSync(half_fence_[h]);
+      half_fence_[h] = nullptr;
+    };
+    if (ring_pos_ + n > kRingCapsules) {
+      fence_half(1);
+      wait_half(0);
+      ring_pos_ = 0;
+    } else if (ring_pos_ < kRingHalf && ring_pos_ + n > kRingHalf) {
+      fence_half(0);
+      wait_half(1);
+      ring_pos_ = kRingHalf;
+    }
+    std::memcpy(ring_ptr_ + ring_pos_, c, n * sizeof(Capsule));
   } else {
-    flags |= GL_MAP_INVALIDATE_RANGE_BIT;
-  }
-  void* p = glMapBufferRange(GL_ARRAY_BUFFER, GLintptr(ring_pos_ * sizeof(Capsule)), GLsizeiptr(n * sizeof(Capsule)), flags);
-  if (NOTI_LIKELY(p)) {
-    std::memcpy(p, c, n * sizeof(Capsule));
-    glUnmapBuffer(GL_ARRAY_BUFFER);
+    GLbitfield flags = GL_MAP_WRITE_BIT | GL_MAP_UNSYNCHRONIZED_BIT;
+    if (ring_pos_ + n > kRingCapsules) {
+      ring_pos_ = 0;
+      flags |= GL_MAP_INVALIDATE_BUFFER_BIT;
+    } else {
+      flags |= GL_MAP_INVALIDATE_RANGE_BIT;
+    }
+    void* p = glMapBufferRange(GL_ARRAY_BUFFER, GLintptr(ring_pos_ * sizeof(Capsule)), GLsizeiptr(n * sizeof(Capsule)), flags);
+    if (NOTI_LIKELY(p)) {
+      std::memcpy(p, c, n * sizeof(Capsule));
+      glUnmapBuffer(GL_ARRAY_BUFFER);
+    }
   }
   const uint32_t first = ring_pos_;
   ring_pos_ += n;
@@ -368,6 +417,77 @@ void GlFrontBufferRenderer::fence_watcher_main() {
       close(items[i].fd);
     }
   }
+}
+
+// ---------------------------------------------------------------------------
+// Transaction thread: every per-stroke binder call happens here, never on the
+// ink thread. Jobs are applied in order.
+// ---------------------------------------------------------------------------
+
+void GlFrontBufferRenderer::post_tx(const TxJob& job) {
+  while (!tx_jobs_.try_push(job)) std::this_thread::yield();  // 64 deep: never full in practice
+  ++tx_posted_;
+  tx_wake_.notify();
+}
+
+void GlFrontBufferRenderer::drain_tx() {
+  while (tx_done_.load(std::memory_order_acquire) != tx_posted_) std::this_thread::yield();
+}
+
+void GlFrontBufferRenderer::tx_thread_main() {
+  TxJob jobs[16];
+  for (;;) {
+    const size_t n = tx_jobs_.pop(jobs, 16);
+    if (n == 0) {
+      if (tx_stop_.load(std::memory_order_acquire)) break;
+      tx_wake_.prepare_wait();
+      if (!tx_jobs_.empty_acquire() || tx_stop_.load(std::memory_order_acquire)) {
+        tx_wake_.cancel_wait();
+        continue;
+      }
+      tx_wake_.wait();
+      continue;
+    }
+    for (size_t i = 0; i < n; ++i) {
+      const TxJob& j = jobs[i];
+      ASurfaceTransaction* tx = ASurfaceTransaction_create();
+      switch (j.kind) {
+        case TxJob::kResubmit:
+          ASurfaceTransaction_setBuffer(tx, wet_sc_, j.wet, -1);
+          if (j.damage.right > j.damage.left) ASurfaceTransaction_setDamageRegion(tx, wet_sc_, &j.damage, 1);
+          break;
+        case TxJob::kCommit:
+          ASurfaceTransaction_setBuffer(tx, dry_sc_, j.dry, j.fence >= 0 ? dup(j.fence) : -1);
+          ASurfaceTransaction_setBuffer(tx, wet_sc_, j.wet, j.fence);
+          ASurfaceTransaction_setOnComplete(tx, j.ctx, &GlFrontBufferRenderer::on_tx_complete);
+          break;
+        case TxJob::kFrameRate:
+          for (ASurfaceControl* sc : {wet_sc_, dry_sc_}) {
+            // Pen near: demand the panel's max rate even if the switch isn't
+            // seamless (HyperOS may otherwise drop to 60 Hz with the stylus).
+            ASurfaceTransaction_setFrameRateWithChangeStrategy(
+                tx, sc, j.near ? opt_.pen_frame_rate : 0.0f,
+                j.near ? ANATIVEWINDOW_FRAME_RATE_COMPATIBILITY_FIXED_SOURCE
+                       : ANATIVEWINDOW_FRAME_RATE_COMPATIBILITY_DEFAULT,
+                j.near ? ANATIVEWINDOW_CHANGE_FRAME_RATE_ALWAYS : ANATIVEWINDOW_CHANGE_FRAME_RATE_ONLY_IF_SEAMLESS);
+          }
+          break;
+      }
+      ASurfaceTransaction_apply(tx);
+      ASurfaceTransaction_delete(tx);
+    }
+    tx_done_.fetch_add(uint32_t(n), std::memory_order_release);
+  }
+}
+
+// A trivial GPU submission: keeps the GPU out of its low-power states while
+// the pen is near, so the next stroke's first draw doesn't pay the wake-up.
+void GlFrontBufferRenderer::keep_gpu_awake(int64_t now) {
+  scissor(RectI{0, 0, 1, 1});
+  bind_target(scratch_);
+  glClear(GL_COLOR_BUFFER_BIT);
+  glFlush();
+  last_gpu_ns_ = now;
 }
 
 // ---------------------------------------------------------------------------
@@ -467,6 +587,7 @@ void GlFrontBufferRenderer::surface_changed(void* native_window, int32_t w, int3
 }
 
 void GlFrontBufferRenderer::surface_destroyed() {
+  drain_tx();  // queued transactions reference our layers and buffers
   if (wet_sc_ || dry_sc_) {
     ASurfaceTransaction* tx = ASurfaceTransaction_create();
     if (wet_sc_) ASurfaceTransaction_reparent(tx, wet_sc_, nullptr);
@@ -482,17 +603,10 @@ void GlFrontBufferRenderer::surface_destroyed() {
 
 void GlFrontBufferRenderer::apply_frame_rate(bool near) {
   if (!wet_sc_ || !dry_sc_) return;
-  ASurfaceTransaction* tx = ASurfaceTransaction_create();
-  for (ASurfaceControl* sc : {wet_sc_, dry_sc_}) {
-    // Pen near: demand the panel's max rate, even if the switch isn't seamless
-    // (HyperOS may otherwise drop to 60 Hz while the stylus is in use).
-    ASurfaceTransaction_setFrameRateWithChangeStrategy(
-        tx, sc, near ? opt_.pen_frame_rate : 0.0f,
-        near ? ANATIVEWINDOW_FRAME_RATE_COMPATIBILITY_FIXED_SOURCE : ANATIVEWINDOW_FRAME_RATE_COMPATIBILITY_DEFAULT,
-        near ? ANATIVEWINDOW_CHANGE_FRAME_RATE_ALWAYS : ANATIVEWINDOW_CHANGE_FRAME_RATE_ONLY_IF_SEAMLESS);
-  }
-  ASurfaceTransaction_apply(tx);
-  ASurfaceTransaction_delete(tx);
+  TxJob j{};
+  j.kind = TxJob::kFrameRate;
+  j.near = near;
+  post_tx(j);
 }
 
 void GlFrontBufferRenderer::hover(bool near) {
@@ -523,17 +637,15 @@ void GlFrontBufferRenderer::render(const FrameUpdate& f) {
   glBindVertexArray(vao_);
   glBlendEquation(GL_MAX);  // union of capsules: no double-blended joints
   set_color(f.color);
+  const bool ink = f.ink_count && !f.ink_rect.empty();
+  const bool pred = f.pred_count && !f.pred_rect.empty();
+  const uint32_t ink_first = ink ? upload(f.ink, std::min<uint32_t>(f.ink_count, kRingHalf)) : 0;
+  const uint32_t pred_first = pred ? upload(f.pred, f.pred_count) : 0;
 
-  if (f.ink_count && !f.ink_rect.empty()) {
-    const uint32_t first = upload(f.ink, std::min<uint32_t>(f.ink_count, kRingCapsules));
-    scissor(f.ink_rect);
-    bind_target(backing_);
-    draw_capsules(first, f.ink_count);
-    bind_target(wet);
-    draw_capsules(first, f.ink_count);
-  }
+  // ---- 1. everything the user sees: front buffer only, then submit ----
   if (!f.restore_rect.empty()) {
-    // Erase the previous predicted tail: wet ← backing in its rect.
+    // Erase the previous tail: front ← backing (which lacks this frame's ink;
+    // the ink is drawn on top next).
     const RectI& r = f.restore_rect;
     const int32_t y0 = opt_.flip_y ? h_ - r.y1 : r.y0, y1 = opt_.flip_y ? h_ - r.y0 : r.y1;
     scissor(r);
@@ -541,12 +653,16 @@ void GlFrontBufferRenderer::render(const FrameUpdate& f) {
     glBindFramebuffer(GL_DRAW_FRAMEBUFFER, wet.fbo);
     glBlitFramebuffer(r.x0, y0, r.x1, y1, r.x0, y0, r.x1, y1, GL_COLOR_BUFFER_BIT, GL_NEAREST);
   }
-  if (f.pred_count && !f.pred_rect.empty()) {
-    const uint32_t first = upload(f.pred, f.pred_count);
-    scissor(f.pred_rect);
-    bind_target(wet);
-    draw_capsules(first, f.pred_count);
+  bind_target(wet);
+  if (ink) {
+    scissor(f.ink_rect);
+    draw_capsules(ink_first, f.ink_count);
   }
+  if (pred) {
+    scissor(f.pred_rect);
+    draw_capsules(pred_first, f.pred_count);
+  }
+  const RectI frame_dirty = f.ink_rect.united(f.pred_rect).united(f.restore_rect);
   wet.dirty = wet.dirty.united(f.ink_rect).united(f.pred_rect);
 
   if (NOTI_UNLIKELY(probe_ && opt_.gpu_timing && egl_dup_fence_)) {
@@ -556,9 +672,21 @@ void GlFrontBufferRenderer::render(const FrameUpdate& f) {
       else close(fd);
     }
   } else {
-    glFlush();  // submit now; never glFinish
+    glFlush();  // submit the visible work now; never glFinish
   }
-  if (opt_.resubmit_front_buffer) resubmit_front();
+
+  // ---- 2. bookkeeping the user doesn't see: backing gets the real ink ----
+  if (ink) {
+    scissor(f.ink_rect);
+    bind_target(backing_);
+    draw_capsules(ink_first, f.ink_count);
+    glFlush();  // runs on the GPU while we wait for the next sample
+  }
+  last_gpu_ns_ = now_ns();
+  if (opt_.resubmit_front_buffer) {
+    resubmit_damage_ = resubmit_damage_.united(frame_dirty);
+    resubmit_front();
+  }
 }
 
 void GlFrontBufferRenderer::resubmit_front() {
@@ -567,10 +695,13 @@ void GlFrontBufferRenderer::resubmit_front() {
     resubmit_pending_ = true;
     return;
   }
-  ASurfaceTransaction* tx = ASurfaceTransaction_create();
-  ASurfaceTransaction_setBuffer(tx, wet_sc_, wet_[cur_wet_].ahb, -1);
-  ASurfaceTransaction_apply(tx);
-  ASurfaceTransaction_delete(tx);
+  TxJob j{};
+  j.kind = TxJob::kResubmit;
+  j.wet = wet_[cur_wet_].ahb;
+  const RectI& d = resubmit_damage_;
+  j.damage = ARect{d.x0, opt_.flip_y ? h_ - d.y1 : d.y0, d.x1, opt_.flip_y ? h_ - d.y0 : d.y1};
+  post_tx(j);
+  resubmit_damage_ = {};
   last_resubmit_ns_ = now;
   resubmit_pending_ = false;
 }
@@ -578,16 +709,27 @@ void GlFrontBufferRenderer::resubmit_front() {
 void GlFrontBufferRenderer::batch_done(int64_t cpu_ns) { perf_.report(cpu_ns); }
 
 int64_t GlFrontBufferRenderer::idle() {
-  if (resubmit_pending_ && wet_sc_) resubmit_front();
+  if (!wet_sc_) return -1;
+  const int64_t now = now_ns();
+  if (resubmit_pending_) resubmit_front();
+  int64_t next = -1;
   if (far_since_ns_ > 0) {
-    const int64_t remaining = far_since_ns_ + kFarDelayNs - now_ns();
-    if (remaining > 0) return remaining;  // wake us when it is time
-    far_since_ns_ = 0;
-    pen_near_ = false;
-    perf_.set_pen_near(false);
-    apply_frame_rate(false);
+    const int64_t remaining = far_since_ns_ + kFarDelayNs - now;
+    if (remaining <= 0) {
+      far_since_ns_ = 0;
+      pen_near_ = false;
+      perf_.set_pen_near(false);
+      apply_frame_rate(false);
+    } else {
+      next = remaining;
+    }
   }
-  return -1;
+  if (pen_near_ && opt_.gpu_keepalive_ns > 0) {
+    if (now - last_gpu_ns_ >= opt_.gpu_keepalive_ns) keep_gpu_awake(now);
+    const int64_t k = last_gpu_ns_ + opt_.gpu_keepalive_ns - now;
+    next = next < 0 ? k : std::min(next, k);
+  }
+  return next;
 }
 
 // ---------------------------------------------------------------------------
@@ -608,7 +750,7 @@ void GlFrontBufferRenderer::draw_stroke_into_dry(Target& dry, const StrokeStore&
   set_color(s.color);
   const Capsule* caps = store.capsules(id);
   for (uint32_t done = 0; done < s.capsule_count;) {
-    const uint32_t n = std::min(s.capsule_count - done, kRingCapsules);
+    const uint32_t n = std::min(s.capsule_count - done, kRingHalf);
     draw_capsules(upload(caps + done, n), n);
     done += n;
   }
@@ -645,21 +787,24 @@ void GlFrontBufferRenderer::commit(const StrokeStore& store, uint32_t id, const 
   clear_rect(backing_, wet_rect);
   const int fence = native_fence();
 
-  // One atomic transaction: new dry content appears in the same frame the
-  // wet stroke disappears. No flicker, no gap, no hide/show of the wet layer.
-  ASurfaceTransaction* tx = ASurfaceTransaction_create();
-  ASurfaceTransaction_setBuffer(tx, dry_sc_, nd.ahb, fence >= 0 ? dup(fence) : -1);
-  ASurfaceTransaction_setBuffer(tx, wet_sc_, nw.ahb, fence);
+  // One atomic transaction (applied by the transaction thread): new dry
+  // content appears in the same frame the wet stroke disappears. No flicker,
+  // no gap, no hide/show of the wet layer, no binder call on this thread.
   TxContext& c = tx_ctx_[tx_next_++ % (sizeof(tx_ctx_) / sizeof(tx_ctx_[0]))];
   c = {this, int8_t(cur_wet_), int8_t(cur_dry_)};
   tx_pending_.fetch_add(1, std::memory_order_acq_rel);
-  ASurfaceTransaction_setOnComplete(tx, &c, &GlFrontBufferRenderer::on_tx_complete);
-  ASurfaceTransaction_apply(tx);
-  ASurfaceTransaction_delete(tx);
+  TxJob j{};
+  j.kind = TxJob::kCommit;
+  j.fence = fence;
+  j.wet = nw.ahb;
+  j.dry = nd.ahb;
+  j.ctx = &c;
+  post_tx(j);
   cur_wet_ = next_wet;
   cur_dry_ = next_dry;
-  last_resubmit_ns_ = now_ns();
+  last_gpu_ns_ = last_resubmit_ns_ = now_ns();
   resubmit_pending_ = false;
+  resubmit_damage_ = {};
 }
 
 void GlFrontBufferRenderer::cancel(const RectI& wet_rect) {
@@ -667,7 +812,10 @@ void GlFrontBufferRenderer::cancel(const RectI& wet_rect) {
   clear_rect(backing_, wet_rect);
   clear_rect(wet_[cur_wet_], wet_rect);
   glFlush();
-  if (opt_.resubmit_front_buffer) resubmit_front();
+  if (opt_.resubmit_front_buffer) {
+    resubmit_damage_ = resubmit_damage_.united(wet_rect);
+    resubmit_front();
+  }
 }
 
 }  // namespace noti::android

@@ -105,6 +105,115 @@ Metrics evaluate(const std::vector<Stroke>& strokes, PredictorConfig cfg, double
   return m;
 }
 
+// ---------------------------------------------------------------------------
+// Display pipeline simulation: when does the ink for sample k become visible?
+//   dispatch delay d_k (kernel → app; 0.6 ms + exponential tail)
+//   → engine + GPU (0.35 ms) → scan line reaches the ink's row (144 Hz, the
+//   panel scans along y) → LCD response (5 ms).
+// Compares horizon policies:
+//   fixed      one constant: the best possible constant (mean latency)
+//   age        exact time already elapsed since the sample + average scan wait
+//   scan       exact elapsed + exact wait for the scan line at the ink's row
+// ---------------------------------------------------------------------------
+struct DisplaySim {
+  double period_ms = 1000.0 / 144.0;
+  double active = 0.95;  // fraction of the period spent scanning
+  double gpu_ms = 0.35;
+  double panel_ms = 5.0;
+  double screen_h = 2136.0;
+};
+
+void print_header();
+void print_row(const char* name, double H, const Metrics& m);
+
+double scan_wait(const DisplaySim& d, double t_ready, double vsync0, double row01) {
+  const double row_t = d.active * d.period_ms * std::clamp(row01, 0.0, 1.0);
+  double phase = std::fmod(t_ready - vsync0, d.period_ms);
+  if (phase < 0) phase += d.period_ms;
+  return phase <= row_t ? row_t - phase : d.period_ms - phase + row_t;
+}
+
+void display_sim(const std::vector<Stroke>& strokes, uint32_t seed) {
+  DisplaySim d;
+  std::mt19937 rng(seed);
+  std::exponential_distribution<double> tail(1.0 / 0.6);
+  std::uniform_real_distribution<double> uni(0.0, 1.0);
+  // Pre-draw per-sample dispatch delays and per-stroke vsync phase, so all
+  // policies see identical conditions.
+  std::vector<std::vector<double>> delay(strokes.size());
+  std::vector<double> phase(strokes.size());
+  double lat_sum = 0;
+  size_t lat_n = 0;
+  for (size_t i = 0; i < strokes.size(); ++i) {
+    phase[i] = uni(rng) * d.period_ms;
+    for (size_t k = 0; k < strokes[i].size(); ++k) delay[i].push_back(0.6 + std::min(4.0, tail(rng)));
+  }
+  auto latency = [&](size_t i, size_t k, double t_k) {
+    const double ready = t_k + delay[i][k] + d.gpu_ms;
+    return ready + scan_wait(d, ready, phase[i], strokes[i].y[k] / d.screen_h) + d.panel_ms - t_k;
+  };
+  for (size_t i = 0; i < strokes.size(); ++i)
+    for (size_t k = 0; k < strokes[i].size(); ++k) {
+      lat_sum += latency(i, k, double(strokes[i].t_ns[k] - strokes[i].t0_ns) * 1e-6);
+      ++lat_n;
+    }
+  const double mean_lat = lat_sum / double(lat_n);
+  std::printf("display sim: 144 Hz scan-out, dispatch 0.6 ms + exp(0.6 ms), GPU %.2f ms, LCD %.1f ms; mean sample→photon %.2f ms\n\n",
+              d.gpu_ms, d.panel_ms, mean_lat);
+
+  print_header();
+  for (int policy = 0; policy < 3; ++policy) {
+    StrokePredictor pr{PredictorConfig{}};
+    Prediction pred;
+    std::vector<double> err, over;
+    double base = 0;
+    size_t over_n = 0;
+    double hsum = 0;
+    for (size_t i = 0; i < strokes.size(); ++i) {
+      const Stroke& s = strokes[i];
+      pr.reset();
+      for (size_t k = 0; k < s.size(); ++k) {
+        pr.add(s.t_ns[k], s.x[k], s.y[k], s.p[k]);
+        const double tk = double(s.t_ns[k] - s.t0_ns) * 1e-6;
+        const double L = latency(i, k, tk);
+        double H = mean_lat;
+        if (policy == 1) H = delay[i][k] + d.gpu_ms + 0.5 * d.period_ms + d.panel_ms;
+        if (policy == 2) H = L;
+        pr.predict(&pred, float(H));
+        if (tk + L > s.duration_ms()) break;
+        const TruthPoint truth = s.at(tk + L);
+        double px = s.x[k], py = s.y[k];
+        if (pred.count) {
+          px = pred.points[pred.count - 1].x;
+          py = pred.points[pred.count - 1].y;
+        }
+        const double ex = px - truth.x, ey = py - truth.y;
+        err.push_back(std::hypot(ex, ey));
+        base += std::hypot(s.x[k] - truth.x, s.y[k] - truth.y);
+        hsum += pred.horizon_ms;
+        const TruthPoint now = s.at(tk);
+        const double mx = truth.x - now.x, my = truth.y - now.y, ml = std::hypot(mx, my);
+        const double o = ml < 0.5 ? std::hypot(px - s.x[k], py - s.y[k]) : std::max(0.0, (ex * mx + ey * my) / ml);
+        over.push_back(o);
+        if (o > g_visible_px) ++over_n;
+      }
+    }
+    Metrics m;
+    m.n = err.size();
+    double sum = 0;
+    for (double e : err) sum += e;
+    m.mean = sum / double(m.n);
+    m.base_mean = base / double(m.n);
+    m.mean_h = hsum / double(m.n);
+    m.p50 = pct(err, 50);
+    m.p95 = pct(err, 95);
+    m.p99 = pct(err, 99);
+    m.over_p99 = pct(over, 99);
+    m.over_rate = double(over_n) / double(m.n);
+    print_row(policy == 0 ? "fixed" : policy == 1 ? "age" : "scan", mean_lat, m);
+  }
+}
+
 double ns_per_sample(const std::vector<Stroke>& strokes, const PredictorConfig& cfg) {
   StrokePredictor pr(cfg);
   Prediction pred;
@@ -196,6 +305,7 @@ int main(int argc, char** argv) {
   int tune_iters = 0;
   bool gate = false;
   bool by_kind = false;
+  bool display = false;
   std::vector<double> horizons = {4, 8, 12, 16};
   for (int i = 1; i < argc; ++i) {
     std::string a = argv[i];
@@ -206,13 +316,14 @@ int main(int argc, char** argv) {
     else if (a == "--tune") tune_iters = std::atoi(next());
     else if (a == "--gate") gate = true;
     else if (a == "--by-kind") by_kind = true;
+    else if (a == "--display-sim") display = true;
     else if (a == "--visible-px") g_visible_px = std::atof(next());
     else if (a == "--horizons") {
       horizons.clear();
       std::string list = next();
       for (char* tok = std::strtok(list.data(), ","); tok; tok = std::strtok(nullptr, ",")) horizons.push_back(std::atof(tok));
     } else {
-      std::fprintf(stderr, "usage: %s [--strokes N] [--seed S] [--csv file] [--horizons 4,8,12] [--tune iters] [--visible-px 4] [--by-kind] [--gate]\n", argv[0]);
+      std::fprintf(stderr, "usage: %s [--strokes N] [--seed S] [--csv file] [--horizons 4,8,12] [--tune iters] [--visible-px 4] [--by-kind] [--display-sim] [--gate]\n", argv[0]);
       return 2;
     }
   }
@@ -257,6 +368,11 @@ int main(int argc, char** argv) {
     if (ns > 2000) { std::printf("GATE FAIL: %.0f ns per sample > 2000 ns\n", ns); ok = false; }
     if (ok) std::printf("GATE PASS\n");
     return ok ? 0 : 1;
+  }
+
+  if (display) {
+    display_sim(strokes, seed);
+    return 0;
   }
 
   if (by_kind) {

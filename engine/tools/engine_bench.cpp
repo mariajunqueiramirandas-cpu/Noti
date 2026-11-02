@@ -161,6 +161,37 @@ int main(int argc, char** argv) {
     }
   }
 
+  // ---- inline mode: the input thread renders (production path on Android) ----
+  {
+    InkEngine engine(cfg, r);
+    Command c{CommandType::kSetWidth};
+    c.f[0] = 6.0f;
+    engine.post(c);
+    engine.attach_inline();
+    const int64_t start = now_ns() + 20'000'000;
+    const int64_t limit = int64_t(seconds * 1e9);
+    size_t pushed = 0;
+    for (InkSample s : samples) {
+      if (s.t_ns > limit) {
+        if (s.action == Action::kUp || !pushed) break;
+        s.action = Action::kUp;
+        s.t_ns = limit;
+      }
+      const int64_t due = start + s.t_ns;
+      sleep_until(due);
+      s.t_ns = due;
+      s.t_recv_ns = now_ns();
+      engine.process(&s, 1);
+      ++pushed;
+      if (s.t_ns - start >= limit) break;
+    }
+    engine.detach_inline();
+    const LatencyProbe& p = engine.probe();
+    std::printf("\ninline (input thread draws, no hand-off): %zu samples\n", pushed);
+    print_hist("recv→submit", p.recv_to_submit);
+    print_hist("frame cpu", p.frame_cpu);
+  }
+
   // ---- burst throughput (synchronous, no thread hand-off) ----
   {
     NullRenderer nr;

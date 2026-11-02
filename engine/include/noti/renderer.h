@@ -4,9 +4,14 @@
 // Contract (front-buffer model, plan §3 / §4.3):
 //   * The renderer keeps a private "backing" image holding the real wet ink
 //     (no prediction) and the on-screen "front" image = backing + prediction.
-//   * render():  1. draw `ink` into backing and front           (scissor: ink_rect)
-//                2. front[restore_rect] = backing[restore_rect]   (erase old tail)
-//                3. draw `pred` into front only                   (scissor: pred_rect)
+//   * render(), visible work first:
+//                1. front[restore_rect] = backing[restore_rect]   (erase old tail)
+//                2. draw `ink` into front                         (scissor: ink_rect)
+//                3. draw `pred` into front                        (scissor: pred_rect)
+//                   → submit: this is everything the user sees
+//                4. draw `ink` into backing                       (off the critical path)
+//     Step 1 uses the backing *before* this frame's ink, which is fine because
+//     step 2 redraws that ink on top.
 //     Ink coverage is combined with MAX blending (per-channel max of
 //     premultiplied colour), i.e. the stroke is the union of its capsules: no
 //     double-blended joints and idempotent redraws.

@@ -6,14 +6,19 @@
 //                          drawn into *while scanned out*; ping-ponged on commit
 //   private: backing texture (real wet ink, no prediction) + scratch texture
 //
-// Hot path (render): ≤ 2 instanced draws + 1 small blit, all scissored to a
-// few thousand pixels, then glFlush. No CPU wait, no allocation, no binder call
-// before the flush.
+// Hot path (render), visible work first:
+//   blit (erase old tail) + ink draw + tail draw into the front buffer → glFlush
+//   then ink into the backing texture → glFlush (GPU does it while we wait for
+//   the next sample). All scissored to a few thousand pixels; instance data is
+//   written straight into a persistently mapped ring. No CPU wait, no
+//   allocation, and no binder call on this thread during or after a stroke:
+//   every ASurfaceTransaction is applied by a separate transaction thread.
 #pragma once
 
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
 #include <GLES3/gl3.h>
+#include <GLES2/gl2ext.h>
 #include <android/hardware_buffer.h>
 #include <android/native_window.h>
 #include <android/surface_control.h>
@@ -37,6 +42,9 @@ struct GlRendererOptions {
   // GPU (CLIENT); turn off once Phase 0 confirms DEVICE (overlay) composition.
   bool resubmit_front_buffer = true;
   int64_t adpf_target_ns = 1'000'000;
+  // While the pen is near, touch the GPU this often so it never drops into a
+  // low-power state it must wake from on the next stroke's first sample.
+  int64_t gpu_keepalive_ns = 40'000'000;
 };
 
 class GlFrontBufferRenderer final : public InkRenderer {
@@ -70,6 +78,16 @@ class GlFrontBufferRenderer final : public InkRenderer {
     GlFrontBufferRenderer* self;
     int8_t prev_wet, prev_dry;
   };
+  // Work for the transaction thread (POD: travels through an SPSC ring).
+  struct TxJob {
+    enum Kind : uint8_t { kResubmit, kCommit, kFrameRate } kind;
+    bool near;
+    int fence;
+    AHardwareBuffer* wet;
+    AHardwareBuffer* dry;
+    TxContext* ctx;
+    ARect damage;
+  };
 
   bool create_target(Target& t, bool ahb_backed, bool front_buffer);
   void destroy_target(Target& t);
@@ -85,8 +103,12 @@ class GlFrontBufferRenderer final : public InkRenderer {
   void draw_stroke_into_dry(Target& dry, const StrokeStore& store, uint32_t id);
   void apply_frame_rate(bool near);
   void resubmit_front();
+  void post_tx(const TxJob& job);
+  void drain_tx();
+  void tx_thread_main();
   static void on_tx_complete(void* ctx, ASurfaceTransactionStats* stats);
   void fence_watcher_main();
+  void keep_gpu_awake(int64_t now);
 
   GlRendererOptions opt_;
   PerfSession perf_;
@@ -100,6 +122,10 @@ class GlFrontBufferRenderer final : public InkRenderer {
   GLint u_comp_rect_ = -1, u_comp_inv_size_ = -1, u_comp_flip_ = -1, u_comp_tex_ = -1;
   uint32_t ring_pos_ = 0;
   static constexpr uint32_t kRingCapsules = 1u << 16;
+  static constexpr uint32_t kRingHalf = kRingCapsules / 2;
+  Capsule* ring_ptr_ = nullptr;  // persistent coherent mapping (GL_EXT_buffer_storage), or null
+  GLsync half_fence_[2] = {nullptr, nullptr};
+  int64_t last_gpu_ns_ = 0;
   float color_[4] = {-1, -1, -1, -1};
 
   PFNEGLGETNATIVECLIENTBUFFERANDROIDPROC egl_get_native_client_buffer_ = nullptr;
@@ -131,9 +157,18 @@ class GlFrontBufferRenderer final : public InkRenderer {
   uint32_t tx_next_ = 0;
   std::atomic<int32_t> tx_pending_{0};
 
-  // Front-buffer resubmission (rate limited).
+  // Front-buffer resubmission (rate limited), damage accumulated in between.
   int64_t last_resubmit_ns_ = 0;
   bool resubmit_pending_ = false;
+  RectI resubmit_damage_;
+
+  // Transaction thread: the only thread that makes binder calls after setup.
+  SpscRing<TxJob, 64> tx_jobs_;
+  WakeEvent tx_wake_;
+  std::atomic<bool> tx_stop_{false};
+  std::atomic<uint32_t> tx_done_{0};
+  uint32_t tx_posted_ = 0;
+  std::thread tx_thread_;
 
   // GPU completion timing (debug).
   struct FenceItem { int fd; int64_t t_submit; };

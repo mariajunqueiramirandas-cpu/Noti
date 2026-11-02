@@ -73,12 +73,11 @@ uint64_t CpuRenderer::draw_max(ImageRGBA8& img, const Capsule* caps, uint32_t n,
 }
 
 void CpuRenderer::render(const FrameUpdate& f) {
-  if (f.ink_count) {
-    pixels_touched_ += draw_max(backing_, f.ink, f.ink_count, f.color, f.ink_rect);
-    pixels_touched_ += draw_max(front_, f.ink, f.ink_count, f.color, f.ink_rect);
-  }
+  // Same order as the GL renderer: everything visible first, backing last.
   if (!f.restore_rect.empty()) front_.copy_from(backing_, f.restore_rect);
+  if (f.ink_count) pixels_touched_ += draw_max(front_, f.ink, f.ink_count, f.color, f.ink_rect);
   if (f.pred_count) pixels_touched_ += draw_max(front_, f.pred, f.pred_count, f.color, f.pred_rect);
+  if (f.ink_count) pixels_touched_ += draw_max(backing_, f.ink, f.ink_count, f.color, f.ink_rect);
 }
 
 void CpuRenderer::commit(const StrokeStore& store, uint32_t id, const RectI& wet_rect) {

@@ -49,6 +49,7 @@ void LatencyProbe::reset() noexcept {
   submit_to_gpu.reset();
   frame_cpu.reset();
   pred_error_cpx.reset();
+  horizon_us.reset();
   dropped_samples.store(0, std::memory_order_relaxed);
 }
 

@@ -33,7 +33,7 @@ void StrokePredictor::reset() noexcept {
   dpdt_ = 0;
   nis_ = 0;
   ring_pos_ = 0;
-  h_state_ = 0;
+  conf_ = 0;
   euro_init_ = false;
 }
 
@@ -148,7 +148,7 @@ void StrokePredictor::add(int64_t t_ns, float x, float y, float pressure) noexce
     last_y_ = prev_y_ = y;
     last_p_ = prev_p_ = pressure;
     prev_t_ms_ = 0;
-    h_state_t_ = 0;
+    conf_t_ = 0;
     kx_[0] = x; kx_[1] = 0; kx_[2] = 0;
     ky_[0] = y; ky_[1] = 0; ky_[2] = 0;
     P_[0] = cfg_.kalman_meas_r; P_[1] = 0; P_[2] = 0;
@@ -204,13 +204,13 @@ void StrokePredictor::add(int64_t t_ns, float x, float y, float pressure) noexce
   prev_ay_ = ay_;
 }
 
-float StrokePredictor::gate_horizon(double) noexcept {
+float StrokePredictor::gate_horizon(float target) noexcept {
   float h = 0.0f;
   const double speed = std::sqrt(vx_ * vx_ + vy_ * vy_);
   if (n_ >= uint32_t(cfg_.warmup_samples) && cfg_.model != PredictorModel::kNone &&
-      speed >= cfg_.min_speed && cfg_.horizon_ms > 0.0f) {
+      speed >= cfg_.min_speed && target > 0.0f) {
     const double span = std::max(1e-6, double(cfg_.full_speed - cfg_.min_speed));
-    double hd = cfg_.horizon_ms * std::min(1.0, (speed - cfg_.min_speed) / span);
+    double hd = target * std::min(1.0, (speed - cfg_.min_speed) / span);
     const double g = cfg_.accel_gain;
     const double ax = ax_ * g, ay = ay_ * g;
 
@@ -247,22 +247,29 @@ float StrokePredictor::gate_horizon(double) noexcept {
     h = float(std::max(0.0, hd));
   }
 
-  // Fast attack (shrink immediately), slow release (grow at a bounded rate),
-  // so the tail never flickers in length between frames.
-  const double elapsed = std::max(0.0, t_ms_ - h_state_t_);
-  h_state_t_ = t_ms_;
-  if (h <= h_state_) {
-    h_state_ = h;
+  // Confidence = gated / requested horizon. It drops instantly (fast attack)
+  // and recovers at a bounded rate (slow release), so the tail never flickers.
+  // Smoothing the *ratio* (not the horizon) lets the requested horizon change
+  // every frame (scan-out-aware timing) without fighting the smoother; at a
+  // constant horizon it is identical to smoothing the horizon itself.
+  const float c = target > 0.0f ? h / target : 0.0f;
+  const double elapsed = std::max(0.0, t_ms_ - conf_t_);
+  conf_t_ = t_ms_;
+  if (c <= conf_) {
+    conf_ = c;
   } else {
-    h_state_ = std::min(h, h_state_ + float(cfg_.horizon_rise_rate * elapsed));
+    const double nominal = std::max(1e-3f, cfg_.horizon_ms);
+    conf_ = std::min(c, conf_ + float(cfg_.horizon_rise_rate * elapsed / nominal));
   }
-  return h_state_;
+  return target * conf_;
 }
 
-uint32_t StrokePredictor::predict(Prediction* out) noexcept {
-  const float h = gate_horizon(0);
+uint32_t StrokePredictor::predict(Prediction* out) noexcept { return predict(out, cfg_.horizon_ms); }
+
+uint32_t StrokePredictor::predict(Prediction* out, float horizon_ms) noexcept {
+  const float h = gate_horizon(horizon_ms);
   out->horizon_ms = h;
-  out->confidence = cfg_.horizon_ms > 0 ? h / cfg_.horizon_ms : 0.0f;
+  out->confidence = horizon_ms > 0 ? h / horizon_ms : 0.0f;
   if (h < 0.25f) {
     out->count = 0;
     euro_init_ = false;

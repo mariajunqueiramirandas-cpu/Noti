@@ -1,4 +1,18 @@
-// InkEngine: owns the ink render thread (plan §3).
+// InkEngine: the ink render loop (plan §3). Two ways to run it:
+//
+// INLINE (production on Android): the thread that receives pen input *is* the
+// render thread. On the device that is a dedicated high-priority Looper thread
+// that owns its own input window, so neither the UI thread nor any thread
+// hand-off sits between a MotionEvent and its draw call:
+//
+//   attach_inline()                 once, on the ink thread
+//   process(samples, n)             per MotionEvent: predict + draw, synchronously
+//   execute(cmd)                    surface / vsync events raised on the ink thread
+//   idle()                          housekeeping timer (returns next deadline)
+//   post(cmd)                       from the UI thread (lock-free, applied at next process())
+//
+// THREADED (benchmarks, platforms without an input thread): start() spawns a
+// render thread fed through the SPSC ring:
 //
 //   input thread ──push()──► SPSC sample ring ──► render thread
 //   (JNI, wait-free:          (4096 × 40 B)         drain all pending samples
@@ -17,19 +31,22 @@
 #include <memory>
 #include <thread>
 
+#include "noti/display_timing.h"
 #include "noti/geometry.h"
 #include "noti/latency_probe.h"
 #include "noti/predictor.h"
 #include "noti/renderer.h"
 #include "noti/sample.h"
 #include "noti/spsc_ring.h"
+#include "noti/stroke_recorder.h"
 #include "noti/stroke_store.h"
 #include "noti/wake_event.h"
 
 namespace noti {
 
 struct EngineConfig {
-  PredictorConfig predictor;
+  PredictorConfig predictor;      // predictor.horizon_ms = fixed horizon used until vsync timing arrives
+  DisplayTiming display;          // per-frame scan-out-aware horizon (needs kVsync commands)
   Affine2 input_to_surface;          // view px → surface px
   int32_t surface_w = 0, surface_h = 0;
   int64_t spin_ns = 50'000;          // busy-wait after a batch before sleeping (0 = never spin)
@@ -58,11 +75,15 @@ enum class CommandType : uint32_t {
   kSurfaceChanged,     // ptr = native window, i0 = w, i1 = h
   kSurfaceDestroyed,
   kResetProbe,
+  kVsync,              // t = a vsync (scan-out start) time, CLOCK_MONOTONIC; i0 = period ns
+  kSetDisplay,         // f[0] = panel ms, f[1] = gpu ms, i0 = ScanAxis, i1 = reversed
+  kSetRecording,       // i0 = 1 on / 0 off (raw stroke recorder for predictor tuning)
 };
 
 struct Command {
   CommandType type;
   int32_t i0 = 0, i1 = 0;
+  int64_t t = 0;
   float f[6] = {};
   void* ptr = nullptr;
 };
@@ -88,10 +109,26 @@ class InkEngine {
   InkEngine(const InkEngine&) = delete;
   InkEngine& operator=(const InkEngine&) = delete;
 
+  // ---- threaded mode ----
   // Start/stop the dedicated render thread. Without start(), call pump().
   bool start();
   void stop();
   bool running() const noexcept { return thread_.joinable(); }
+
+  // ---- inline mode: every call below on the same (ink) thread ----
+  bool attach_inline();  // renderer.thread_init() on the calling thread
+  void detach_inline();  // renderer.thread_shutdown()
+  // Processes pending UI commands, then these samples, and draws. Returns the
+  // renderer's next housekeeping deadline in ns from now (-1 = none).
+  NOTI_HOT int64_t process(const InkSample* samples, uint32_t n) noexcept;
+  // Executes a command raised on the render thread itself (surface, vsync):
+  // bypasses the command ring, whose single producer is the UI thread.
+  void execute(const Command& c) noexcept;
+  // Renderer housekeeping (GPU keep-alive, deferred power changes). Returns
+  // the next deadline in ns from now, or -1.
+  int64_t idle() noexcept;
+  // Raw-stroke recorder export (render thread, or engine stopped).
+  int64_t export_recording(const char* path) const { return recorder_.export_csv(path); }
 
   // ---- producer side: exactly one producer thread for samples+commands ----
   // Wait-free. Returns the number of samples accepted (rest are dropped and
@@ -164,6 +201,7 @@ class InkEngine {
   uint32_t frame_samples_ = 0;
   int64_t batch_t_start_ = 0;
   int64_t sample_period_ns_ = 0;  // EMA of the pen report interval (hardware clock)
+  int64_t vsync_ns_ = 0, vsync_period_ns_ = 0;  // display scan-out timing (kVsync)
   // Lower envelope of (render-thread pickup time − hardware time): the
   // fastest the platform has delivered a sample recently. Next sample's
   // earliest arrival ≈ last hardware time + period + this.
@@ -176,6 +214,7 @@ class InkEngine {
   uint32_t pending_head_ = 0, pending_tail_ = 0;
 
   StrokeStore store_;
+  StrokeRecorder recorder_;
   LatencyProbe probe_;
   EngineStats stats_;
   InkSample scratch_[kMaxBatch];
