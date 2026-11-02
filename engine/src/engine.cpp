@@ -115,6 +115,23 @@ void InkEngine::thread_main() {
   while (!stop_.load(std::memory_order_acquire)) {
     if (pump()) continue;
 
+    if (cfg_.spin_ns < 0) {
+      // Never sleep: poll the rings until work or stop. Renderer housekeeping
+      // (GPU keep-alive) still runs on its own deadlines.
+      int64_t next_idle = renderer_.idle();
+      int64_t idle_at = next_idle >= 0 ? now_ns() + next_idle : INT64_MAX;
+      for (uint32_t i = 0; !stop_.load(std::memory_order_relaxed); ++i) {
+        if (has_pending()) break;
+        cpu_relax();
+        if ((i & 255) == 255 && idle_at != INT64_MAX && now_ns() >= idle_at) {
+          next_idle = renderer_.idle();
+          idle_at = next_idle >= 0 ? now_ns() + next_idle : INT64_MAX;
+        }
+      }
+      stats_.spin_hits.fetch_add(1, std::memory_order_relaxed);
+      continue;
+    }
+
     // Short spin: catches samples that arrive back to back.
     if (cfg_.spin_ns > 0 && spin_until(now_ns() + cfg_.spin_ns)) {
       stats_.spin_hits.fetch_add(1, std::memory_order_relaxed);

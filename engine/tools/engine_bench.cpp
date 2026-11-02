@@ -80,7 +80,7 @@ int main(int argc, char** argv) {
     if (a == "--seconds") seconds = std::atof(next());
     else if (a == "--renderer") renderer_name = next();
     else if (a == "--no-predictive") predictive = false;
-    else if (a == "--spin-us") spin_us = std::atol(next());
+    else if (a == "--spin-us") spin_us = std::atol(next());  // -1 = never sleep (default)
     else if (a == "--gate-p99-us") gate_p99_us = std::atof(next());
     else if (a == "--gate-cpu-us") gate_cpu_us = std::atof(next());
     else {
@@ -136,8 +136,13 @@ int main(int argc, char** argv) {
 
     const LatencyProbe& p = engine.probe();
     const EngineStats& st = engine.stats();
-    std::printf("realtime: %zu samples at 240 Hz over %.1f s, renderer=%s, predictive_wake=%s, spin=%lld µs\n", pushed,
-                seconds, renderer_name.c_str(), predictive ? "on" : "off", (long long)(cfg.spin_ns / 1000));
+      if (cfg.spin_ns < 0) {
+      std::printf("threaded: %zu samples at 240 Hz over %.1f s, renderer=%s, render thread never sleeps\n", pushed,
+                  seconds, renderer_name.c_str());
+    } else {
+      std::printf("threaded: %zu samples at 240 Hz over %.1f s, renderer=%s, predictive_wake=%s, spin=%lld µs\n",
+                  pushed, seconds, renderer_name.c_str(), predictive ? "on" : "off", (long long)(cfg.spin_ns / 1000));
+    }
     print_hist("recv→start", p.recv_to_start);
     print_hist("recv→submit", p.recv_to_submit);
     print_hist("frame cpu", p.frame_cpu);

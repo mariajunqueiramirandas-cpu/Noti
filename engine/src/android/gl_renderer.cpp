@@ -19,6 +19,9 @@
 #define EGL_CONTEXT_PRIORITY_LEVEL_IMG 0x3100
 #define EGL_CONTEXT_PRIORITY_HIGH_IMG 0x3101
 #endif
+#ifndef EGL_CONTEXT_PRIORITY_REALTIME_NV
+#define EGL_CONTEXT_PRIORITY_REALTIME_NV 0x3357
+#endif
 
 namespace noti::android {
 namespace {
@@ -78,7 +81,7 @@ GlFrontBufferRenderer::~GlFrontBufferRenderer() = default;
 // ---------------------------------------------------------------------------
 
 bool GlFrontBufferRenderer::thread_init() {
-  perf_.init(opt_.adpf_target_ns);
+  perf_.init(opt_.adpf_target_ns, opt_.pin_and_heat_core);
 
   dpy_ = eglGetDisplay(EGL_DEFAULT_DISPLAY);
   if (dpy_ == EGL_NO_DISPLAY || !eglInitialize(dpy_, nullptr, nullptr)) {
@@ -111,13 +114,32 @@ bool GlFrontBufferRenderer::thread_init() {
     LOGE("eglChooseConfig failed");
     return false;
   }
-  // High-priority GPU context: our tiny ink draws preempt page/PDF rendering.
+  // Highest GPU context priority the driver grants: our tiny ink draws
+  // preempt everything else on the GPU (page/PDF rendering, other apps).
+  // Realtime (EGL_NV_context_priority_realtime) may be refused for apps; then
+  // high (EGL_IMG_context_priority); then default.
   EGLint ctx_attrs[] = {EGL_CONTEXT_CLIENT_VERSION, 3, EGL_NONE, EGL_NONE, EGL_NONE};
+  const char* priority = "default";
   if (has_ext(exts, "EGL_IMG_context_priority")) {
     ctx_attrs[2] = EGL_CONTEXT_PRIORITY_LEVEL_IMG;
-    ctx_attrs[3] = EGL_CONTEXT_PRIORITY_HIGH_IMG;
+    if (has_ext(exts, "EGL_NV_context_priority_realtime")) {
+      ctx_attrs[3] = EGL_CONTEXT_PRIORITY_REALTIME_NV;
+      ctx_ = eglCreateContext(dpy_, cfg, EGL_NO_CONTEXT, ctx_attrs);
+      EGLint got = 0;
+      if (ctx_ != EGL_NO_CONTEXT && eglQueryContext(dpy_, ctx_, EGL_CONTEXT_PRIORITY_LEVEL_IMG, &got) &&
+          got == EGL_CONTEXT_PRIORITY_REALTIME_NV) {
+        priority = "realtime";
+      } else if (ctx_ != EGL_NO_CONTEXT) {
+        eglDestroyContext(dpy_, ctx_);
+        ctx_ = EGL_NO_CONTEXT;
+      }
+    }
+    if (ctx_ == EGL_NO_CONTEXT) {
+      ctx_attrs[3] = EGL_CONTEXT_PRIORITY_HIGH_IMG;
+      priority = "high";
+    }
   }
-  ctx_ = eglCreateContext(dpy_, cfg, EGL_NO_CONTEXT, ctx_attrs);
+  if (ctx_ == EGL_NO_CONTEXT) ctx_ = eglCreateContext(dpy_, cfg, EGL_NO_CONTEXT, ctx_attrs);
   if (ctx_ == EGL_NO_CONTEXT) {
     LOGE("eglCreateContext failed");
     return false;
@@ -176,8 +198,8 @@ bool GlFrontBufferRenderer::thread_init() {
   }
   tx_stop_.store(false);
   tx_thread_ = std::thread([this] { tx_thread_main(); });
-  LOGI("ink renderer ready (high-priority ctx: %s, native fences: %s, persistent ring: %s)",
-       ctx_attrs[2] != EGL_NONE ? "yes" : "no", egl_dup_fence_ ? "yes" : "no", ring_ptr_ ? "yes" : "no");
+  LOGI("ink renderer ready (gpu priority: %s, native fences: %s, persistent ring: %s, cpu: %d)", priority,
+       egl_dup_fence_ ? "yes" : "no", ring_ptr_ ? "yes" : "no", perf_.core());
   return true;
 }
 
@@ -463,13 +485,11 @@ void GlFrontBufferRenderer::tx_thread_main() {
           break;
         case TxJob::kFrameRate:
           for (ASurfaceControl* sc : {wet_sc_, dry_sc_}) {
-            // Pen near: demand the panel's max rate even if the switch isn't
-            // seamless (HyperOS may otherwise drop to 60 Hz with the stylus).
-            ASurfaceTransaction_setFrameRateWithChangeStrategy(
-                tx, sc, j.near ? opt_.pen_frame_rate : 0.0f,
-                j.near ? ANATIVEWINDOW_FRAME_RATE_COMPATIBILITY_FIXED_SOURCE
-                       : ANATIVEWINDOW_FRAME_RATE_COMPATIBILITY_DEFAULT,
-                j.near ? ANATIVEWINDOW_CHANGE_FRAME_RATE_ALWAYS : ANATIVEWINDOW_CHANGE_FRAME_RATE_ONLY_IF_SEAMLESS);
+            // Demand the panel's max rate even if the switch isn't seamless
+            // (HyperOS may otherwise drop to 60 Hz while the stylus is in use).
+            ASurfaceTransaction_setFrameRateWithChangeStrategy(tx, sc, opt_.frame_rate,
+                                                               ANATIVEWINDOW_FRAME_RATE_COMPATIBILITY_FIXED_SOURCE,
+                                                               ANATIVEWINDOW_CHANGE_FRAME_RATE_ALWAYS);
           }
           break;
       }
@@ -480,14 +500,15 @@ void GlFrontBufferRenderer::tx_thread_main() {
   }
 }
 
-// A trivial GPU submission: keeps the GPU out of its low-power states while
-// the pen is near, so the next stroke's first draw doesn't pay the wake-up.
+// A trivial GPU submission every few ms, always: the GPU never drops into a
+// low-power state, so no draw ever pays a GPU wake-up.
 void GlFrontBufferRenderer::keep_gpu_awake(int64_t now) {
   scissor(RectI{0, 0, 1, 1});
   bind_target(scratch_);
   glClear(GL_COLOR_BUFFER_BIT);
   glFlush();
   last_gpu_ns_ = now;
+  perf_.report(0);  // keep the ADPF boost from decaying between strokes
 }
 
 // ---------------------------------------------------------------------------
@@ -582,7 +603,7 @@ void GlFrontBufferRenderer::surface_changed(void* native_window, int32_t w, int3
   ASurfaceTransaction_delete(tx);
   cur_wet_ = 0;
   cur_dry_ = 0;
-  apply_frame_rate(pen_near_);
+  apply_frame_rate();  // max refresh, always
   LOGI("surface %dx%d attached (front buffer: %s)", w_, h_, front_buffer_supported_ ? "yes" : "no");
 }
 
@@ -601,26 +622,11 @@ void GlFrontBufferRenderer::surface_destroyed() {
   destroy_surface_resources();
 }
 
-void GlFrontBufferRenderer::apply_frame_rate(bool near) {
+void GlFrontBufferRenderer::apply_frame_rate() {
   if (!wet_sc_ || !dry_sc_) return;
   TxJob j{};
   j.kind = TxJob::kFrameRate;
-  j.near = near;
   post_tx(j);
-}
-
-void GlFrontBufferRenderer::hover(bool near) {
-  // HOVER_EXIT also precedes every pen-down, so "far" is deferred (see idle()).
-  if (near) {
-    far_since_ns_ = 0;
-    if (!pen_near_) {
-      pen_near_ = true;
-      perf_.set_pen_near(true);
-      apply_frame_rate(true);
-    }
-  } else {
-    far_since_ns_ = now_ns();
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -629,8 +635,6 @@ void GlFrontBufferRenderer::hover(bool near) {
 
 void GlFrontBufferRenderer::render(const FrameUpdate& f) {
   if (NOTI_UNLIKELY(!wet_sc_)) return;
-  far_since_ns_ = 0;  // drawing: the pen is on the glass
-  if (NOTI_UNLIKELY(!pen_near_)) hover(true);
 
   Target& wet = wet_[cur_wet_];
   glUseProgram(capsule_prog_);
@@ -712,24 +716,9 @@ int64_t GlFrontBufferRenderer::idle() {
   if (!wet_sc_) return -1;
   const int64_t now = now_ns();
   if (resubmit_pending_) resubmit_front();
-  int64_t next = -1;
-  if (far_since_ns_ > 0) {
-    const int64_t remaining = far_since_ns_ + kFarDelayNs - now;
-    if (remaining <= 0) {
-      far_since_ns_ = 0;
-      pen_near_ = false;
-      perf_.set_pen_near(false);
-      apply_frame_rate(false);
-    } else {
-      next = remaining;
-    }
-  }
-  if (pen_near_ && opt_.gpu_keepalive_ns > 0) {
-    if (now - last_gpu_ns_ >= opt_.gpu_keepalive_ns) keep_gpu_awake(now);
-    const int64_t k = last_gpu_ns_ + opt_.gpu_keepalive_ns - now;
-    next = next < 0 ? k : std::min(next, k);
-  }
-  return next;
+  if (opt_.gpu_keepalive_ns <= 0) return -1;
+  if (now - last_gpu_ns_ >= opt_.gpu_keepalive_ns) keep_gpu_awake(now);
+  return last_gpu_ns_ + opt_.gpu_keepalive_ns - now;
 }
 
 // ---------------------------------------------------------------------------

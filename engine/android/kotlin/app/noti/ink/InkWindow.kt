@@ -8,6 +8,7 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.SystemClock
 import android.view.Choreographer
+import android.view.Display
 import android.view.Gravity
 import android.view.InputDevice
 import android.view.MotionEvent
@@ -24,11 +25,14 @@ import java.nio.ByteOrder
  *
  * Constructed, added, used and removed on the ink thread only. Input forwarding
  * allocates nothing:
+ *  - earliest View-level hook: dispatchTouchEvent / dispatchGenericMotionEvent
+ *    on the window root (no listener, touch-delegate or focus machinery)
  *  - unbuffered dispatch: each pen sample arrives as soon as it exists
  *  - every historical sample, with hardware timestamps (API 34 nanos)
  *  - stylus/eraser → ink; fingers → [onFinger] (palm rejection for ink)
  *  - FLAG_CANCELED / ACTION_CANCEL roll the stroke back
- *  - hover enter/exit pre-warm / relax the pipeline (144 Hz, ADPF, GPU keep-alive)
+ *  - the window pins the display's highest refresh mode and asks for minimal
+ *    post-processing; vsync timing is fed continuously (power is not a constraint)
  */
 internal class InkWindow(
     context: Context,
@@ -49,9 +53,8 @@ internal class InkWindow(
         schedule(NotiInk.nativeIdle(handle))
     }
 
-    // Vsync feed for the scan-out-aware horizon, active while the pen is around.
+    // Vsync feed for the scan-out-aware horizon: every frame, always.
     private val choreographer = Choreographer.getInstance()  // the ink thread's own
-    private var lastPenMs = 0L
     private var vsyncActive = false
     private val vsync: Choreographer.VsyncCallback = Choreographer.VsyncCallback { data ->
         val timelines = data.frameTimelines
@@ -62,7 +65,7 @@ internal class InkWindow(
             (1e9 / display.refreshRate).toLong()
         }
         NotiInk.nativeVsync(handle, present, period)
-        if (SystemClock.uptimeMillis() - lastPenMs < 2_000) postVsync() else vsyncActive = false
+        if (vsyncActive) postVsync()
     }
 
     init {
@@ -85,9 +88,14 @@ internal class InkWindow(
             x = bounds.left
             y = bounds.top
             title = "noti-ink"
+            preferMinimalPostProcessing = true
+            fastestMode(context.display)?.let { preferredDisplayModeId = it.modeId }
         }
         params = lp
         wm.addView(this, lp)  // ViewRootImpl (and input dispatch) bound to this thread
+        vsyncActive = true
+        postVsync()
+        schedule(NotiInk.nativeIdle(handle))  // start GPU keep-alive
     }
 
     fun updateBounds(bounds: Rect) {
@@ -102,7 +110,8 @@ internal class InkWindow(
 
     fun remove() {
         ink.removeCallbacks(idleTick)
-        if (vsyncActive) choreographer.removeVsyncCallback(vsync)
+        vsyncActive = false
+        choreographer.removeVsyncCallback(vsync)
         if (isAttachedToWindow) wm.removeViewImmediate(this)
     }
 
@@ -120,7 +129,7 @@ internal class InkWindow(
 
     // ---- input (ink thread) ----
 
-    override fun onTouchEvent(e: MotionEvent): Boolean {
+    override fun dispatchTouchEvent(e: MotionEvent): Boolean {
         val tool = e.getToolType(0)
         if (tool != MotionEvent.TOOL_TYPE_STYLUS && tool != MotionEvent.TOOL_TYPE_ERASER) {
             return onFinger(e)
@@ -146,31 +155,19 @@ internal class InkWindow(
             else -> return true
         }
         process()
-        penActivity()
         return true
     }
 
-    override fun onHoverEvent(e: MotionEvent): Boolean {
+    override fun dispatchGenericMotionEvent(e: MotionEvent): Boolean {
         val action = when (e.actionMasked) {
             MotionEvent.ACTION_HOVER_ENTER -> NotiInk.ACTION_HOVER_ENTER
             MotionEvent.ACTION_HOVER_EXIT -> NotiInk.ACTION_HOVER_EXIT
-            else -> {
-                penActivity()
-                return true  // hover moves: nothing to draw yet (cursor preview is Phase 4)
-            }
+            MotionEvent.ACTION_HOVER_MOVE -> return true  // nothing to draw yet (cursor preview is Phase 4)
+            else -> return false
         }
         put(e, -1, action, 0, System.nanoTime())
         process()
-        penActivity()
         return true
-    }
-
-    private fun penActivity() {
-        lastPenMs = SystemClock.uptimeMillis()
-        if (!vsyncActive) {
-            vsyncActive = true
-            postVsync()
-        }
     }
 
     private fun postVsync() {
@@ -220,6 +217,13 @@ internal class InkWindow(
         val n = pending
         pending = 0
         schedule(NotiInk.nativeProcess(handle, n))
+    }
+
+    private fun fastestMode(d: Display?): Display.Mode? {
+        val cur = d?.mode ?: return null
+        return d.supportedModes
+            .filter { it.physicalWidth == cur.physicalWidth && it.physicalHeight == cur.physicalHeight }
+            .maxByOrNull { it.refreshRate }
     }
 
     /** Arms the housekeeping timer if the engine wants it sooner than already armed. */

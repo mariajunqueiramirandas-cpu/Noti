@@ -34,17 +34,20 @@
 namespace noti::android {
 
 struct GlRendererOptions {
-  float pen_frame_rate = 144.0f;      // requested while the pen is near (Pad 7 max)
+  float frame_rate = 144.0f;          // requested on both layers, always (Pad 7 max)
   bool flip_y = false;                // set if ink appears vertically mirrored on a device
   bool gpu_timing = false;            // native fence per frame → probe.submit_to_gpu (debug)
   // Re-attach the front buffer with a transaction after drawing (rate-limited
   // to once per refresh). Needed only if HWC composites the wet layer on the
   // GPU (CLIENT); turn off once Phase 0 confirms DEVICE (overlay) composition.
   bool resubmit_front_buffer = true;
-  int64_t adpf_target_ns = 1'000'000;
-  // While the pen is near, touch the GPU this often so it never drops into a
-  // low-power state it must wake from on the next stroke's first sample.
-  int64_t gpu_keepalive_ns = 40'000'000;
+  int64_t adpf_target_ns = 500'000;
+  // Power is not a constraint: touch the GPU this often, always, so it never
+  // drops into a low-power state it must wake from on the next draw.
+  int64_t gpu_keepalive_ns = 4'000'000;
+  // Pin the ink thread to the fastest core and keep that core hot with a
+  // SCHED_IDLE spinner (see perf_session.h).
+  bool pin_and_heat_core = true;
 };
 
 class GlFrontBufferRenderer final : public InkRenderer {
@@ -56,7 +59,6 @@ class GlFrontBufferRenderer final : public InkRenderer {
   void thread_shutdown() override;
   void surface_changed(void* native_window, int32_t w, int32_t h) override;
   void surface_destroyed() override;
-  void hover(bool near) override;
   void render(const FrameUpdate& f) override;
   void commit(const StrokeStore& store, uint32_t id, const RectI& wet_rect) override;
   void cancel(const RectI& wet_rect) override;
@@ -81,7 +83,6 @@ class GlFrontBufferRenderer final : public InkRenderer {
   // Work for the transaction thread (POD: travels through an SPSC ring).
   struct TxJob {
     enum Kind : uint8_t { kResubmit, kCommit, kFrameRate } kind;
-    bool near;
     int fence;
     AHardwareBuffer* wet;
     AHardwareBuffer* dry;
@@ -101,7 +102,7 @@ class GlFrontBufferRenderer final : public InkRenderer {
   void clear_rect(const Target& t, const RectI& r);
   void set_color(const float* premul);
   void draw_stroke_into_dry(Target& dry, const StrokeStore& store, uint32_t id);
-  void apply_frame_rate(bool near);
+  void apply_frame_rate();
   void resubmit_front();
   void post_tx(const TxJob& job);
   void drain_tx();
@@ -147,9 +148,6 @@ class GlFrontBufferRenderer final : public InkRenderer {
   Target backing_, scratch_;
   int cur_wet_ = 0, cur_dry_ = 0;
   bool front_buffer_supported_ = false;
-  bool pen_near_ = false;
-  int64_t far_since_ns_ = 0;  // pen left hover range at this time (0 = near / unknown)
-  static constexpr int64_t kFarDelayNs = 1'500'000'000;  // then relax clocks and refresh rate
   const StrokeStore* store_ = nullptr;
 
   // Transaction callbacks.

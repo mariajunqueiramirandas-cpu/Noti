@@ -37,7 +37,7 @@ internal object NotiInk {
     const val FLAG_BUTTON_SECONDARY = 8
 
     // ---- lifecycle / ink thread ----
-    @JvmStatic external fun nativeCreate(horizonMs: Float, gpuTiming: Boolean, flipY: Boolean): Long
+    @JvmStatic external fun nativeCreate(horizonMs: Float, gpuTiming: Boolean, flipY: Boolean, probe: Boolean): Long
     @JvmStatic external fun nativeAttach(handle: Long): Boolean
     @JvmStatic external fun nativeDetach(handle: Long)
     @JvmStatic external fun nativeDestroy(handle: Long)

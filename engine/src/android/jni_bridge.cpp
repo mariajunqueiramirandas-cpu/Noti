@@ -45,9 +45,10 @@ inline Instance* inst(jlong h) { return reinterpret_cast<Instance*>(h); }
 
 // ---- lifecycle (regular JNI) ----
 
-jlong nativeCreate(JNIEnv*, jclass, jfloat horizon_ms, jboolean gpu_timing, jboolean flip_y) {
+jlong nativeCreate(JNIEnv*, jclass, jfloat horizon_ms, jboolean gpu_timing, jboolean flip_y, jboolean probe) {
   noti::EngineConfig cfg;
   cfg.predictor.horizon_ms = horizon_ms;  // used until vsync timing arrives
+  cfg.probe = probe;
   noti::android::GlRendererOptions opt;
   opt.gpu_timing = gpu_timing;
   opt.flip_y = flip_y;
@@ -167,7 +168,7 @@ void nativeResetStats(jlong h) { post(h, Command{CommandType::kResetProbe}); }
 
 #define M(name, sig) {#name, sig, reinterpret_cast<void*>(name)}
 const JNINativeMethod kMethods[] = {
-    M(nativeCreate, "(FZZ)J"),
+    M(nativeCreate, "(FZZZ)J"),
     M(nativeAttach, "(J)Z"),
     M(nativeDetach, "(J)V"),
     M(nativeDestroy, "(J)V"),

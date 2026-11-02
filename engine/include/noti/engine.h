@@ -49,8 +49,11 @@ struct EngineConfig {
   DisplayTiming display;          // per-frame scan-out-aware horizon (needs kVsync commands)
   Affine2 input_to_surface;          // view px → surface px
   int32_t surface_w = 0, surface_h = 0;
-  int64_t spin_ns = 50'000;          // busy-wait after a batch before sleeping (0 = never spin)
-  // Predictive wake: during a stroke the pen reports on a fixed clock
+  // Threaded mode: busy-wait after a batch before sleeping. -1 = never sleep
+  // (default: power is not a constraint; the render thread polls the ring
+  // continuously and picks up a sample within ~100 ns of its push).
+  int64_t spin_ns = -1;
+  // Predictive wake (only when spin_ns >= 0): during a stroke the pen reports on a fixed clock
   // (240 Hz), so the render thread sleeps with a timeout that expires
   // `wake_lead_ns` before the next sample is due, then spins for it. The
   // sample is then picked up without a futex wake-up or CPU idle exit.

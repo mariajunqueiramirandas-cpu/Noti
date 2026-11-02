@@ -1,5 +1,8 @@
 package app.noti.ink
 
+import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
 import android.graphics.Rect
 import android.os.Handler
 import android.os.HandlerThread
@@ -30,12 +33,14 @@ class InkLayer(
     initialHorizonMs: Float = 10f,
     gpuTiming: Boolean = false,
     flipY: Boolean = false,
+    /** Latency/prediction statistics (a few hundred ns per frame). */
+    probe: Boolean = true,
     /** Finger events over the canvas arrive here, on the ink thread (pan/zoom). Return true if consumed. */
     var onFingerEvent: ((MotionEvent) -> Boolean)? = null,
 ) {
     private val thread = HandlerThread("noti-ink", Process.THREAD_PRIORITY_URGENT_DISPLAY).apply { start() }
     private val ink = Handler(thread.looper)
-    private val handle = NotiInk.nativeCreate(initialHorizonMs, gpuTiming, flipY)
+    private val handle = NotiInk.nativeCreate(initialHorizonMs, gpuTiming, flipY, probe)
     private var window: InkWindow? = null  // ink thread only
     private var released = false
 
@@ -57,6 +62,7 @@ class InkLayer(
     }
 
     private fun attach() {
+        pinHostDisplayMode()
         val token = anchor.windowToken
         val bounds = anchorRect()
         val context = anchor.context
@@ -66,6 +72,29 @@ class InkLayer(
             window = InkWindow(context, handle, ink) { e -> onFingerEvent?.invoke(e) ?: false }
                 .also { it.add(token, bounds) }
         }
+    }
+
+    /**
+     * Pins the host window to the display's highest refresh rate too, and asks for
+     * minimal display post-processing. Power is not a constraint: the panel
+     * stays at max refresh for as long as the canvas is on screen.
+     */
+    private fun pinHostDisplayMode() {
+        val activity = anchor.context.findActivity() ?: return
+        val window = activity.window
+        val display = anchor.display ?: return
+        val cur = display.mode
+        val fastest = display.supportedModes
+            .filter { it.physicalWidth == cur.physicalWidth && it.physicalHeight == cur.physicalHeight }
+            .maxByOrNull { it.refreshRate } ?: return
+        window.attributes = window.attributes.apply { preferredDisplayModeId = fastest.modeId }
+        window.setPreferMinimalPostProcessing(true)
+    }
+
+    private tailrec fun Context.findActivity(): Activity? = when (this) {
+        is Activity -> this
+        is ContextWrapper -> baseContext.findActivity()
+        else -> null
     }
 
     private fun anchorRect(): Rect {

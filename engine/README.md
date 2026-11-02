@@ -8,7 +8,8 @@ portable core builds and is tested on any Linux host.
 
 ```
             ┌──────────────────────── "noti-ink" thread ────────────────────────┐
- digitizer  │ URGENT_DISPLAY + ADPF session · owns: input window, EGL context,  │
+ digitizer  │ nice −10, pinned to the prime core (kept hot by a SCHED_IDLE      │
+            │ spinner), ADPF at max boost · owns: input window, EGL context,    │
  240 Hz ───►│ engine (inline mode), its own Choreographer                       │
             │                                                                   │
             │ InkWindow.onTouchEvent       every historical sample, hw time     │
@@ -32,6 +33,23 @@ therefore its input dispatch, on that thread. The UI thread (Compose, layout, GC
 stage 4) is not on the ink path at all. Because the same thread renders, there's also no hand-off between "input
 thread" and "render thread". The input event is drawn before `onTouchEvent` returns.
 
+## Performance policy: power is not a constraint
+
+The engine is built for minimum latency, with battery life and thermals explicitly out of scope. Everything that
+trades latency for power is off, permanently, from the moment the canvas is on screen:
+
+| Knob | Setting |
+|---|---|
+| CPU | Ink thread at nice −10, **pinned to the fastest core** (highest `cpu_capacity`). A **`SCHED_IDLE` heater thread** spins on the same core whenever the ink thread sleeps: the core never enters an idle state (no idle-exit latency on wake-up) and the governor sees 100% load (max clock, no ramp-up). A pen event preempts the heater immediately. |
+| ADPF | Session always told it is over budget, so it holds the **maximum boost** instead of backing off because batches take only a few µs. API 35 power-efficiency mode is off. |
+| GPU | Touched every **4 ms**, always: it never enters a low-power state it has to wake from. Context priority is **realtime** where the driver allows it, otherwise high. |
+| Display | **Highest refresh mode pinned** on both the ink window and the host window (`preferredDisplayModeId`), `FIXED_SOURCE` + `CHANGE_FRAME_RATE_ALWAYS` on the ink layers, minimal post-processing requested. Vsync timing is fed every frame. |
+| Threaded mode | The render thread **never sleeps** (`spin_ns = -1`): it polls the ring continuously. |
+| ART | `baseline-prof.txt` AOT-compiles the Kotlin input path, so the first strokes after install aren't interpreted. |
+
+If sustained sessions ever show thermal throttling of the prime core, pin to an A720 core instead
+(`GlRendererOptions::pin_and_heat_core`, `fastest_cpu()`).
+
 ## Layout
 
 | Path | What |
@@ -46,9 +64,10 @@ thread" and "render thread". The input event is drawn before `onTouchEvent` retu
 | `include/noti/latency_probe.h` | Lock-free histograms (§5.1): in→recv, recv→submit, in→submit, submit→GPU, frame CPU, prediction error, horizon. |
 | `include/noti/renderer.h`, `src/cpu_renderer.cpp` | Renderer contract and the reference software renderer used by the pixel tests. |
 | `src/android/gl_renderer.*` | GLES 3 front-buffer renderer on `AHardwareBuffer` + `ASurfaceControl`. |
-| `src/android/perf_session.*` | nice −8, ADPF session, API 35 power-efficiency toggle. |
+| `src/android/perf_session.*` | Core pinning, `SCHED_IDLE` core heater, nice −10, ADPF held at max boost. |
 | `src/android/jni_bridge.cpp` | JNI (`RegisterNatives`, `@CriticalNative`). |
 | `android/kotlin/app/noti/ink/` | `InkLayer` (public API), `InkWindow` (ink-thread input window), `NotiInk` (natives). |
+| `android/baseline-prof.txt` | Baseline profile: AOT-compile the input path. |
 | `tools/predictor_bench.cpp` | Predictor harness: models × horizons, display-pipeline simulation, tuner, CI gate, `--csv`. |
 | `tools/engine_bench.cpp` | Real-time 240 Hz replay (threaded and inline), burst throughput, gates. |
 | `tests/tests.cpp` | 29 unit tests (no framework dependency). |
@@ -58,15 +77,16 @@ thread" and "render thread". The input event is drawn before `onTouchEvent` retu
 | Stage (plan §2) | Technique |
 |---|---|
 | 3 · vsync batching | `requestUnbufferedDispatch`; all historical samples with hardware timestamps |
-| 4 · UI thread | **Input window on the ink thread**: the UI thread never sees pen events |
+| 4 · UI thread | **Input window on the ink thread**: the UI thread never sees pen events; earliest View hook (`dispatchTouchEvent` on the window root) |
+| wake-up | Ink thread on a pinned core that a `SCHED_IDLE` heater keeps out of idle states and at max clock |
 | hand-off | **Inline mode**: the input thread is the render thread (threaded mode: SPSC ring + predictive wake) |
 | 5 · render | One scissored instanced draw per update, SDF capsules (no tessellation), persistent coherent instance ring (`GL_EXT_buffer_storage`), **visible work submitted first**, backing update after, high-priority EGL context (`EGL_IMG_context_priority`) |
-| 5 · cold GPU | **GPU keep-alive** every 40 ms while the pen is near: no wake-from-low-power on the first sample after a pause |
+| 5 · cold GPU | **GPU keep-alive** every 4 ms, always; realtime/high GPU context priority |
 | 5 · binder | **Transaction thread**: commit, front-buffer resubmit (with damage region) and frame-rate changes never block the ink thread |
 | 6 · composition | `USAGE_FRONT_BUFFER` wet layer; atomic wet→dry commit with ping-ponged wet buffers |
 | 7 · scan-out | Front buffer: ink is visible the moment the scan line passes its row |
 | 1, 7, 8 · physics | **Predictor with a per-frame, scan-out-aware horizon** |
-| clocks | nice −8 + ADPF session reporting each batch; 144 Hz `FIXED_SOURCE` while the pen is near |
+| clocks / display | ADPF held at max boost; highest refresh mode pinned on both windows, always |
 
 ## Predictor
 
@@ -117,8 +137,11 @@ The defaults were tuned with `predictor_bench --tune` on synthetic strokes. **Re
 
 | sample received → draw submitted | p50 | p90 | p99 | max |
 |---|---|---|---|---|
-| **inline mode (production path)** | **5.8 µs** | **7.8 µs** | **26 µs** | **37 µs** |
-| threaded, predictive wake | 6.3 µs | 32 µs | 160 µs | 1.85 ms |
+| **inline mode (production path)** | **5.8 µs** | **7.8–10 µs** | **18–29 µs** | **37–102 µs** |
+| threaded, render thread never sleeps | 4.0–7.0 µs | 9–16 µs | 38–250 µs | 0.4–3.2 ms |
+| threaded, futex + predictive wake | 6.3 µs | 32 µs | 160 µs | 1.85 ms |
+
+Ranges span repeated runs on two different VM hosts. On a shared VM a spinning second thread still gets descheduled by the hypervisor, which is why having *no* second thread (inline) has by far the tightest tail.
 
 Other numbers: the predictor costs about 120 ns per sample; burst throughput is about 300–370 ns per sample end to end;
 and engine CPU per batch is about 5 µs p50 (cold caches after the 4 ms gap between samples). On the device, the GPU

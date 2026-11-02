@@ -1,0 +1,16 @@
+# Baseline profile for the ink input path: AOT-compile it at install time so the
+# first strokes after an install/update don't run in the interpreter.
+# Copy (or merge) into <module>/src/main/baseline-prof.txt of the Gradle module
+# that compiles engine/android/kotlin.
+# H = hot, S = startup, P = post-startup.
+HSPLapp/noti/ink/InkWindow;->**(**)**
+HSPLapp/noti/ink/InkLayer;->**(**)**
+HSPLapp/noti/ink/InkLayer$*;->**(**)**
+HSPLapp/noti/ink/NotiInk;->**(**)**
+Lapp/noti/ink/InkWindow;
+Lapp/noti/ink/InkLayer;
+Lapp/noti/ink/NotiInk;
+# Framework methods on the per-sample path.
+HSPLandroid/view/MotionEvent;->getHistorical*(**)**
+HSPLandroid/view/MotionEvent;->get*(**)**
+HSPLjava/nio/DirectByteBuffer;->put*(**)**
