@@ -19,7 +19,7 @@ android {
         versionName = "0.0.0-dev"
 
         ndk {
-            // Xiaomi Pad 7 only: one ABI = one native build.
+            // Modern 64-bit ARM only (engine/CMakeLists.txt rejects any other ABI).
             abiFilters += "arm64-v8a"
         }
         externalNativeBuild {
