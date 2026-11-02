@@ -67,7 +67,7 @@ If sustained sessions ever show thermal throttling of the prime core, pin to an 
 | `src/android/perf_session.*` | Core pinning, `SCHED_IDLE` core heater, nice −10, ADPF held at max boost. |
 | `src/android/jni_bridge.cpp` | JNI (`RegisterNatives`, `@CriticalNative`). |
 | `android/kotlin/app/noti/ink/` | `InkLayer` (public API), `InkWindow` (ink-thread input window), `NotiInk` (natives). |
-| `android/baseline-prof.txt` | Baseline profile: AOT-compile the input path. |
+| `android/baseline-profile/baseline-prof.txt` | Baseline profile: AOT-compile the input path. |
 | `tools/predictor_bench.cpp` | Predictor harness: models × horizons, display-pipeline simulation, tuner, CI gate, `--csv`. |
 | `tools/engine_bench.cpp` | Real-time 240 Hz replay (threaded and inline), burst throughput, gates. |
 | `tests/tests.cpp` | 29 unit tests (no framework dependency). |
@@ -172,8 +172,9 @@ cmake -S engine -B engine/build-android -G Ninja \
 cmake --build engine/build-android        # → libnoti_ink.so (16 KB-page aligned, exports only JNI_OnLoad)
 ```
 
-From Gradle, point `externalNativeBuild.cmake.path` at `engine/CMakeLists.txt` and add `engine/android/kotlin` as a
-source directory (`compileSdk >= 34` for `@CriticalNative`). Usage:
+The app module (`app/build.gradle.kts`) does this from Gradle: `externalNativeBuild.cmake.path` points at
+`engine/CMakeLists.txt`, `engine/android/kotlin` is a Kotlin source directory and `engine/android/baseline-profile` a
+baseline-profile directory (`compileSdk >= 34` for `@CriticalNative`). Usage:
 
 ```kotlin
 val ink = InkLayer(canvasView)            // after setContentView; attaches when the view does

@@ -1,0 +1,150 @@
+# Every commit to main → signed APK → GitHub Release.
+#
+# Speed notes (warm run ≈ checkout + cache restore + ~10 s build + upload):
+#  - Nothing is installed: JDK 21, Android SDK platform 36, build-tools, NDK 27.3 and
+#    CMake 3.31.5 are all preinstalled on ubuntu-24.04, and app/build.gradle.kts pins
+#    exactly those versions.
+#  - One cache entry holds the Gradle distribution, dependencies, transforms, the local
+#    build cache and the configuration cache. It is keyed on the build configuration, so
+#    it is only re-uploaded when that changes; every other run only restores it.
+#  - The version comes from environment variables read at execution time, so the
+#    configuration cache hits on every commit.
+#  - Gradle heap is ~70% of the runner's RAM; workers = all cores; Kotlin compiles
+#    in-process; native code builds one ABI with ninja on all cores; no lint, no R8.
+#  - Signing happens outside Gradle (apksigner), so no secret can end up in the cache.
+name: Release APK
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write  # create releases and tags
+
+env:
+  VERSION_PREFIX: "0.1"
+  HAS_SIGNING_KEY: ${{ secrets.SIGNING_KEYSTORE_BASE64 != '' }}
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Restore Gradle caches
+        id: gradle-cache
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+            .gradle/configuration-cache
+          key: gradle-${{ runner.os }}-${{ hashFiles('gradle/wrapper/gradle-wrapper.properties', 'gradle.properties', '**/*.gradle.kts') }}
+          restore-keys: gradle-${{ runner.os }}-
+
+      - name: Build APK
+        env:
+          NOTI_VERSION_CODE: ${{ github.run_number }}
+          NOTI_VERSION_NAME: ${{ env.VERSION_PREFIX }}.${{ github.run_number }}
+        run: |
+          export JAVA_HOME="$JAVA_HOME_21_X64"
+          cores=$(nproc)
+          mem_mb=$(awk '/MemTotal/ { print int($2 / 1024) }' /proc/meminfo)
+          heap_mb=$(( mem_mb * 70 / 100 ))
+          echo "Runner: ${cores} cores, ${mem_mb} MB RAM → Gradle heap ${heap_mb} MB"
+          # --no-daemon: the build JVM exits when done, so nothing is still writing to
+          # ~/.gradle when the cache is saved. (It is one JVM either way.)
+          ./gradlew :app:assembleRelease \
+            --no-daemon \
+            --console=plain \
+            --max-workers="$cores" \
+            -Dorg.gradle.jvmargs="-Xmx${heap_mb}m -XX:MaxMetaspaceSize=2g -XX:+UseParallelGC -XX:+UseStringDeduplication -Dfile.encoding=UTF-8"
+
+      - name: Restore fallback signing key
+        if: ${{ env.HAS_SIGNING_KEY != 'true' }}
+        id: fallback-key
+        uses: actions/cache/restore@v6
+        with:
+          path: ~/.noti-fallback.jks
+          key: noti-fallback-signing-key-v1
+
+      - name: Sign APK
+        id: sign
+        env:
+          KEYSTORE_BASE64: ${{ secrets.SIGNING_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.SIGNING_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.SIGNING_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
+          VERSION: ${{ env.VERSION_PREFIX }}.${{ github.run_number }}
+        run: |
+          bt="$ANDROID_HOME/build-tools/$(ls "$ANDROID_HOME/build-tools" | sort -V | tail -1)"
+          export JAVA_HOME="$JAVA_HOME_21_X64"
+          ks="$RUNNER_TEMP/release.jks"
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "$KEYSTORE_BASE64" | base64 -d > "$ks"
+            echo "key=release" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::No SIGNING_KEYSTORE_BASE64 secret: signing with a fallback key kept in the Actions cache. Add the signing secrets for a permanent key (see README)."
+            fallback="$HOME/.noti-fallback.jks"
+            if [ ! -f "$fallback" ]; then
+              "$JAVA_HOME/bin/keytool" -genkeypair -keystore "$fallback" -storepass android -keypass android \
+                -alias noti -keyalg RSA -keysize 4096 -validity 36500 -dname "CN=Noti CI fallback" -noprompt
+            fi
+            cp "$fallback" "$ks"
+            KEYSTORE_PASSWORD=android KEY_PASSWORD=android KEY_ALIAS=noti
+            echo "key=fallback" >> "$GITHUB_OUTPUT"
+          fi
+          export KEYSTORE_PASSWORD KEY_PASSWORD
+          out="$RUNNER_TEMP/Noti-$VERSION.apk"
+          "$bt/apksigner" sign --v4-signing-enabled false --ks "$ks" --ks-pass env:KEYSTORE_PASSWORD \
+            --ks-key-alias "$KEY_ALIAS" --key-pass env:KEY_PASSWORD \
+            --out "$out" app/build/outputs/apk/release/app-release-unsigned.apk
+          rm -f "$ks"
+          "$bt/apksigner" verify "$out"
+          echo "apk=$out" >> "$GITHUB_OUTPUT"
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          APK: ${{ steps.sign.outputs.apk }}
+          KEY: ${{ steps.sign.outputs.key }}
+          TAG: v${{ env.VERSION_PREFIX }}.${{ github.run_number }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$APK" --clobber   # re-run of the same workflow run
+            exit 0
+          fi
+          {
+            echo "Built from ${GITHUB_SHA::7}: $(git log -1 --format=%s)"
+            echo
+            echo "Install: download \`$(basename "$APK")\` on the tablet and open it (arm64, Android 13+)."
+            if [ "$KEY" = fallback ]; then
+              echo
+              echo "⚠️ Signed with the CI fallback key. If that key is ever regenerated, uninstall before installing a newer build."
+            fi
+          } > "$RUNNER_TEMP/notes.md"
+          gh release create "$TAG" "$APK" \
+            --target "$GITHUB_SHA" \
+            --title "Noti ${TAG#v}" \
+            --notes-file "$RUNNER_TEMP/notes.md" \
+            --latest
+
+      # Saves run after the release is already published.
+      - name: Save Gradle caches
+        if: ${{ steps.gradle-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v6
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+            .gradle/configuration-cache
+          key: ${{ steps.gradle-cache.outputs.cache-primary-key }}
+
+      - name: Save fallback signing key
+        if: ${{ steps.sign.outputs.key == 'fallback' && steps.fallback-key.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v6
+        with:
+          path: ~/.noti-fallback.jks
+          key: noti-fallback-signing-key-v1

@@ -1,7 +1,7 @@
 # Baseline profile for the ink input path: AOT-compile it at install time so the
 # first strokes after an install/update don't run in the interpreter.
-# Copy (or merge) into <module>/src/main/baseline-prof.txt of the Gradle module
-# that compiles engine/android/kotlin.
+# app/build.gradle.kts adds this directory as a baselineProfiles source dir of the
+# app module (it must contain nothing but profiles).
 # H = hot, S = startup, P = post-startup.
 HSPLapp/noti/ink/InkWindow;->**(**)**
 HSPLapp/noti/ink/InkLayer;->**(**)**
