@@ -116,7 +116,7 @@ This is the same model as `androidx.graphics.lowlatency.GLFrontBufferedRenderer`
 - **Our own predictor, tuned for this pen:**
   1. Record thousands of real strokes on the Pad 7 + Focus Pen with full timestamps (handwriting, diagrams, fast annotations, signatures).
   2. Train and compare offline: tuned Kalman, polynomial extrapolation, and a **tiny on-device model** (small MLP/GRU over the last ~8 deltas, < 50 k params, < 50 µs inference on CPU).
-  3. Measure error against horizon. Use a **horizon equal to measured pipeline latency** (from Phase 0), not a guess.
+  3. Measure error against horizon. Set the **horizon from measured software latency (§5.1) plus the feel-calibrated slider value (§5.4)**, not a guess.
   4. **Confidence gating:** shorten or stop prediction on sharp curvature, sudden deceleration and pen-lift approach (falling pressure), which is where predictors overshoot and look "wrong".
 - The predicted tail is drawn into the front buffer each event and **erased and replaced** by the next event. Erasing means restoring the scissor rect from a cached copy of the committed content, which is a cheap blit.
 - Rule: a wrong prediction is worse than latency. We tune for *zero visible overshoot* first, then extend the horizon.
@@ -157,15 +157,46 @@ So the first sample of a stroke never pays for cold caches, a down-clocked CPU o
 
 ## 5. Measurement: you can't beat what you can't measure
 
-We need to build a **latency lab** before writing features.
+**No camera rig, no manual lab work.** Everything here is either built into the app or runs with a single `adb` command.
 
-1. **High-speed camera rig:** a phone recording at 240 or 960 fps, filming the nib and the ink at once, with a ruler on the screen. Measure the distance between the nib and the ink tip ÷ pen speed = latency, at constant speed with a simple track guide. Do this for *every* competitor on the same device.
-2. **Raw digitizer timing:** use `adb shell getevent -lt` to find the true pen report rate, pressure range and whether tilt axes are present, from kernel timestamps.
-3. **Perfetto traces:** input → app → render → SurfaceFlinger → HWC, so we can see where each millisecond goes. Check composition type and front-buffer behaviour.
-4. **In-app probe overlay (debug builds):** show the gap between sample timestamp and draw-submit time, prediction error, and dropped samples, live.
-5. **CI performance gate:** a recorded-stroke replay benchmark that fails the build if p99 render time per sample grows above 0.5 ms.
+This works because of how the latency budget in §2 splits:
+- Stages 1 and 8 (digitizer and LCD pixel response) are **the same for every app on this device**. They don't change any comparison, so we don't need to measure them; we only use a fixed estimate when choosing the prediction horizon.
+- Stages 2–7 are **software**, and the app can timestamp them itself.
 
-**Competitors to benchmark on the same Pad 7:** Xiaomi Notes (the "3 ms" reference), Goodnotes, Notewise, Squid, Noteshelf, Nebo, OneNote, Xodo, Flexcil, and any app using `androidx.ink`.
+### 5.1 Built-in latency probe (debug builds)
+For every pen sample, the engine records:
+
+| Timestamp | Source |
+|---|---|
+| `t_in`: when the hardware produced the sample | `MotionEvent.getEventTimeNanos()` (kernel evdev timestamp, API 34) |
+| `t_recv`: when our code received it | `System.nanoTime()` in the input handler |
+| `t_submit`: when the draw was submitted to the GPU | Engine clock |
+| `t_gpu`: when the GPU finished | Native fence fd from `EGL_ANDROID_native_fence_sync`, polled on a watcher thread |
+| `t_visible`: when that row of pixels was scanned out | **Front buffer:** next scan of the stroke's row after `t_gpu`, from vsync timestamps (`Choreographer`) and the display period. **Dry layer:** the actual present time from `ASurfaceTransactionStats` present fences. |
+
+`t_visible − t_in` is our software pen-to-pixel latency (stages 2–7). It is shown live in a small debug overlay as p50 and p99, plus prediction error and dropped samples. It is also written to a CSV that can be pulled with `adb pull`.
+
+### 5.2 Hands-free automated runs
+- **Synthetic strokes:** `adb shell input stylus motionevent DOWN|MOVE|UP x y` injects stylus events through the real `InputDispatcher`. A script replays recorded handwriting into the app and reports the latency distribution. This needs no human and no pen.
+- **Raw digitizer facts:** `adb shell getevent -lt` while writing for 10 seconds tells us the true pen report rate, the pressure range and whether tilt axes exist.
+- **CI performance gate:** a recorded-stroke replay benchmark fails the build if p99 sample-to-submit time grows above 0.5 ms.
+
+### 5.3 Competitors without a camera
+A system-wide **Perfetto** trace (`adb shell perfetto`, works on retail builds) while the same synthetic strokes are injected into each app:
+- **SurfaceFlinger FrameTimeline** gives the real present time of each frame for normally buffered apps (most competitors). Present time minus injection time is their software latency, measured the same way as ours.
+- The same trace shows each app's layer **composition type** and refresh rate, which reveals whether it uses a front buffer and whether it keeps 144 Hz.
+- Android's input-event tracing can add per-event dispatch times. On retail builds parts of it may be redacted; if so, we fall back to injection timestamps.
+- **Limit:** apps that also draw to a front buffer (probably Xiaomi Notes) don't produce a frame per stroke, so FrameTimeline can't time them. For those we compare by feel (§5.4).
+
+**Competitors:** Xiaomi Notes (the "3 ms" reference), Goodnotes, Notewise, Squid, Noteshelf, Nebo, OneNote, Xodo, Flexcil, and any app using `androidx.ink`.
+
+### 5.4 Calibrating by feel (about 2 minutes)
+Some things only your hand and eyes can judge, but they don't need equipment:
+- **Prediction slider:** a debug setting for prediction horizon (0–20 ms). Write a few lines at different speeds and stop at the value where the ink stays glued to the nib *without* ever shooting past it. That value, plus the software latency from §5.1, calibrates the predictor.
+- **Blind A/B toggle:** a debug button randomly switches between two engine configurations (for example, our predictor vs. androidx's) without saying which is which. You pick the one that feels better; after ~10 rounds the app tells you whether your preference was real or chance.
+
+### 5.5 Optional: one slow-motion video
+If you ever want an absolute number that includes the hardware stages, prop any phone that records 240 fps slow-motion over the tablet and draw a few fast lines for 10 seconds. A script (not a person) then analyses the clip. It's optional and nothing in the roadmap depends on it.
 
 ---
 
@@ -175,16 +206,17 @@ We need to build a **latency lab** before writing features.
 - [ ] `getevent` dump: true pen report rate, pressure resolution, tilt and orientation axes, hover range, button events.
 - [ ] Minimal app using `androidx.graphics` `GLFrontBufferedRenderer` + `MotionEventPredictor` + unbuffered dispatch.
 - [ ] Confirm in `dumpsys SurfaceFlinger` that the front buffer layer is **DEVICE-composited** and the panel stays at 144 Hz.
-- [ ] Build the camera rig and measure: our prototype, Xiaomi Notes, 3 competitors.
-- [ ] Perfetto profile of Xiaomi Notes (observation only) to understand how they reach their latency figure.
-- **Exit criterion:** prototype ≤ Xiaomi Notes measured latency. If the front buffer isn't overlay-composited, escalate to Xiaomi developer relations before Phase 1.
+- [ ] Built-in latency probe (§5.1) and synthetic-stroke script (§5.2).
+- [ ] Perfetto traces of our prototype, Xiaomi Notes and 3 competitors with the same injected strokes (§5.3): software latency, composition type, refresh rate.
+- [ ] 2-minute feel check against Xiaomi Notes (§5.4).
+- **Exit criterion:** front buffer is overlay-composited, the panel stays at 144 Hz, the prototype's software latency is at or below every competitor that FrameTimeline can measure, and it feels at least as good as Xiaomi Notes. If the front buffer isn't overlay-composited, escalate to Xiaomi developer relations before Phase 1.
 
 ### Phase 1 — Native ink engine (3–5 weeks)
 - [ ] C++ engine: SPSC input ring, EGL front-buffer `AHardwareBuffer` + `ASurfaceControl` (replacing androidx), SDF capsule shader, scissored redraw.
 - [ ] Wet → dry commit with an atomic `ASurfaceTransaction`.
 - [ ] ADPF session, thread priorities, hover pre-warming, 144 Hz lock.
 - [ ] Native vs. View input path experiment.
-- **Exit criterion:** p99 sample-to-submit < 1 ms; camera-measured latency at least 30% better than the best competitor.
+- **Exit criterion:** p99 sample-to-submit < 1 ms; p99 software pen-to-pixel latency (§5.1) at least 30% lower than the best competitor measured in §5.3.
 
 ### Phase 2 — Custom predictor (2–4 weeks, in parallel with Phase 1)
 - [ ] Stroke recorder and dataset (a few hundred thousand samples).
@@ -223,9 +255,9 @@ We need to build a **latency lab** before writing features.
 
 1. **Native, allocation-free ink path.** Most apps go through the UI thread and Canvas/Skia with a normal BufferQueue. We skip both.
 2. **Front buffer + unbuffered input + 144 Hz lock + hover pre-warming.** Each one is documented separately; few apps combine all four and verify each with a profiler.
-3. **A predictor trained on this exact pen**, with a horizon calibrated from camera measurements, rather than a generic one.
+3. **A predictor trained on this exact pen**, with a horizon calibrated from measured software latency and a quick feel check, rather than a generic one.
 4. **PDF rendering completely separate from ink**, so a heavy PDF never adds a millisecond to a stroke.
-5. **We measure everything, including competitors, on the same rig**, and treat latency as a CI-gated metric, not a marketing claim.
+5. **We measure everything automatically, including competitors, with the same injected strokes and traces**, and treat latency as a CI-gated metric, not a marketing claim.
 
 ---
 
