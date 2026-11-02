@@ -28,7 +28,11 @@ target_compile_options(noti_flags INTERFACE
   -fno-math-errno -fno-trapping-math
   -fvisibility=hidden -fvisibility-inlines-hidden
   $<$<CONFIG:Release,RelWithDebInfo>:-O3>)
-if(ANDROID AND CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64" AND NOTI_TUNE_PAD7)
+if(ANDROID AND NOT ANDROID_ABI STREQUAL "arm64-v8a")
+  # Modern 64-bit ARM only: no armeabi-v7a, x86 or x86_64 builds.
+  message(FATAL_ERROR "Noti targets arm64-v8a only (got ANDROID_ABI=${ANDROID_ABI})")
+endif()
+if(ANDROID AND NOTI_TUNE_PAD7)
   # armv8.2-a baseline features present on every 64-bit Snapdragon since 2018;
   # schedule for the A720 (the cores the ADPF session keeps us on).
   target_compile_options(noti_flags INTERFACE -march=armv8.2-a+fp16+dotprod -mtune=cortex-a715)
