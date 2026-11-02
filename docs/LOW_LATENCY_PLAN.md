@@ -212,6 +212,8 @@ If you ever want an absolute number that includes the hardware stages, prop any 
 - **Exit criterion:** front buffer is overlay-composited, the panel stays at 144 Hz, the prototype's software latency is at or below every competitor that FrameTimeline can measure, and it feels at least as good as Xiaomi Notes. If the front buffer isn't overlay-composited, escalate to Xiaomi developer relations before Phase 1.
 
 ### Phase 1 — Native ink engine (3–5 weeks)
+> Code: [`engine/`](../engine/README.md). Implemented and host-tested; Android layer compiles but is not yet validated on device.
+
 - [ ] C++ engine: SPSC input ring, EGL front-buffer `AHardwareBuffer` + `ASurfaceControl` (replacing androidx), SDF capsule shader, scissored redraw.
 - [ ] Wet → dry commit with an atomic `ASurfaceTransaction`.
 - [ ] ADPF session, thread priorities, hover pre-warming, 144 Hz lock.
@@ -219,6 +221,8 @@ If you ever want an absolute number that includes the hardware stages, prop any 
 - **Exit criterion:** p99 sample-to-submit < 1 ms; p99 software pen-to-pixel latency (§5.1) at least 30% lower than the best competitor measured in §5.3.
 
 ### Phase 2 — Custom predictor (2–4 weeks, in parallel with Phase 1)
+> Code: [`engine/include/noti/predictor.h`](../engine/include/noti/predictor.h), harness [`engine/tools/predictor_bench.cpp`](../engine/tools/predictor_bench.cpp). Tuned on synthetic strokes; re-tune on recorded Pad 7 strokes.
+
 - [ ] Stroke recorder and dataset (a few hundred thousand samples).
 - [ ] Offline harness: Kalman vs. polynomial vs. tiny NN; error against horizon, and overshoot rate.
 - [ ] Ship the winner with confidence gating; calibrate the horizon from Phase 0 measurements.
