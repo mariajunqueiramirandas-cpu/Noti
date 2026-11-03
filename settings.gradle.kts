@@ -9,6 +9,9 @@ pluginManagement {
                 includeGroupByRegex("androidx.*")
             }
         }
+        // Google's mirror of Maven Central first: Maven Central itself rate-limits (HTTP 429)
+        // shared CI/cloud IPs. Maven Central stays as the fallback.
+        maven("https://maven-central.storage-download.googleapis.com/maven2/") { name = "MavenCentralMirror" }
         mavenCentral()
         gradlePluginPortal()
     }
@@ -47,6 +50,7 @@ dependencyResolutionManagement {
                 includeGroupByRegex("androidx.*")
             }
         }
+        maven("https://maven-central.storage-download.googleapis.com/maven2/") { name = "MavenCentralMirror" }
         mavenCentral()
     }
 }
