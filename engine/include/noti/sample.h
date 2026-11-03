@@ -22,6 +22,7 @@ enum SampleFlags : uint16_t {
   kFlagEraser = 1 << 1,      // TOOL_TYPE_ERASER
   kFlagButtonPrimary = 1 << 2,
   kFlagButtonSecondary = 1 << 3,
+  kFlagFinger = 1 << 4,      // finger ink produced by the palm filter (not the pen)
 };
 
 // 40 bytes, trivially copyable: moved through the SPSC ring by memcpy.

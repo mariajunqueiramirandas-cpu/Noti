@@ -81,6 +81,7 @@ enum class CommandType : uint32_t {
   kVsync,              // t = a vsync (scan-out start) time, CLOCK_MONOTONIC; i0 = period ns
   kSetDisplay,         // f[0] = panel ms, f[1] = gpu ms, i0 = ScanAxis, i1 = reversed
   kSetRecording,       // i0 = 1 on / 0 off (raw stroke recorder for predictor tuning)
+  kSetPage,            // i0 = page; f[0], f[1] = page origin, f[2] = page width (input px)
 };
 
 struct Command {
@@ -152,6 +153,8 @@ class InkEngine {
   const EngineStats& stats() const noexcept { return stats_; }
   // Render thread / quiescent only.
   const StrokeStore& store() const noexcept { return store_; }
+  uint32_t page() const noexcept { return page_; }
+  const PageMap& page_map() const noexcept { return page_map_; }
   const Prediction& last_prediction() const noexcept { return pred_; }
   const StrokePredictor& predictor() const noexcept { return predictor_; }
 
@@ -163,6 +166,7 @@ class InkEngine {
   void extend_stroke(const InkSample& s) noexcept;
   void finish_stroke(int64_t t_end) noexcept;
   void cancel_stroke() noexcept;
+  void set_page(uint32_t page, float x, float y, float width) noexcept;
   void flush_frame(bool with_prediction) noexcept;
   NOTI_INLINE void note_sample(const InkSample& s) noexcept;
   void track_prediction_error(int64_t t_prev, float x0, float y0, int64_t t_now, float x1, float y1) noexcept;
@@ -188,6 +192,8 @@ class InkEngine {
   int32_t surface_w_, surface_h_;
 
   bool active_ = false;
+  uint32_t page_ = 0;
+  PageMap page_map_;  // current page's placement on the surface
   uint32_t frame_first_ = 0;  // first capsule of the open stroke not yet handed to the renderer
   RectF stroke_bounds_;
   float last_x_ = 0, last_y_ = 0, last_r_ = 0;

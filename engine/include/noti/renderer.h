@@ -18,6 +18,10 @@
 //   * commit(): move the finished stroke to the dry layer and clear it from
 //     the wet layer without a visible gap or flicker.
 //   * cancel(): erase a stroke the system cancelled.
+//   * redraw(): the visible page changed (page switch, zoom, pan, rotation):
+//     replace the dry layer with the committed strokes of `page` (already
+//     re-placed by the store) and clear the wet layer. From then on, commit()
+//     only ever sees strokes of that page.
 #pragma once
 
 #include <cstdint>
@@ -58,6 +62,7 @@ class InkRenderer {
   virtual void render(const FrameUpdate& f) = 0;
   virtual void commit(const StrokeStore& store, uint32_t stroke_id, const RectI& wet_rect) = 0;
   virtual void cancel(const RectI& wet_rect) = 0;
+  virtual void redraw(const StrokeStore& /*store*/, uint32_t /*page*/) {}
 
   // Work for the batch is done (e.g. report ADPF actual duration).
   virtual void batch_done(int64_t /*cpu_ns*/) {}
@@ -78,7 +83,8 @@ class NullRenderer final : public InkRenderer {
   void render(const FrameUpdate& f) override { frames_ += 1; capsules_ += f.ink_count + f.pred_count; }
   void commit(const StrokeStore&, uint32_t, const RectI&) override { commits_ += 1; }
   void cancel(const RectI&) override { cancels_ += 1; }
-  uint64_t frames_ = 0, capsules_ = 0, commits_ = 0, cancels_ = 0;
+  void redraw(const StrokeStore&, uint32_t) override { redraws_ += 1; }
+  uint64_t frames_ = 0, capsules_ = 0, commits_ = 0, cancels_ = 0, redraws_ = 0;
 };
 
 }  // namespace noti

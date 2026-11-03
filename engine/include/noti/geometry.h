@@ -155,4 +155,22 @@ struct Affine2 {
   NOTI_INLINE float scale() const noexcept { return std::sqrt(std::fabs(a * d - b * c)); }
 };
 
+// Where a page sits on the surface: page units → surface px is
+// p_surface = origin + p_page * scale (uniform scale, no rotation). A page is
+// kPageUnits wide in page units, whatever its size on screen, so ink stored in
+// page units survives zoom, pan, rotation and page switches exactly.
+struct PageMap {
+  static constexpr float kPageUnits = 1000.0f;
+  float ox = 0, oy = 0, s = 1;  // identity: page units == surface px
+
+  NOTI_INLINE Capsule to_page(const Capsule& c) const noexcept {
+    const float k = 1.0f / s;
+    return {(c.x0 - ox) * k, (c.y0 - oy) * k, c.r0 * k, (c.x1 - ox) * k, (c.y1 - oy) * k, c.r1 * k};
+  }
+  NOTI_INLINE Capsule to_surface(const Capsule& c) const noexcept {
+    return {ox + c.x0 * s, oy + c.y0 * s, c.r0 * s, ox + c.x1 * s, oy + c.y1 * s, c.r1 * s};
+  }
+  bool operator==(const PageMap&) const = default;
+};
+
 }  // namespace noti

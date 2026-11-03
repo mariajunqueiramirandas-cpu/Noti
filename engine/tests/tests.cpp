@@ -13,9 +13,11 @@
 #include "noti/engine.h"
 #include "noti/geometry.h"
 #include "noti/latency_probe.h"
+#include "noti/palm_filter.h"
 #include "noti/predictor.h"
 #include "noti/spsc_ring.h"
 #include "noti/wake_event.h"
+#include "synthetic_touches.h"
 
 using namespace noti;
 
@@ -439,6 +441,64 @@ TEST(engine_cancel_erases) {
   CHECK(fx.engine->store().stroke_count() == 0);
 }
 
+TEST(engine_pages_keep_ink_per_page) {
+  EngineFixture fx;
+  auto set_page = [&](int page, float x, float y, float w) {
+    Command c{CommandType::kSetPage};
+    c.i0 = page; c.f[0] = x; c.f[1] = y; c.f[2] = w;
+    fx.engine->post(c);
+    fx.engine->pump();
+  };
+  auto stroke = [&](int64_t t0, float x, float y) {
+    std::vector<InkSample> s{sample(Action::kDown, t0, x, y)};
+    for (int k = 1; k < 10; ++k) s.push_back(sample(Action::kMove, t0 + k * 4167, x + 4.0f * k, y));
+    s.push_back(sample(Action::kUp, t0 + 10 * 4167, x + 40, y));
+    fx.engine->push(s.data(), uint32_t(s.size()));
+    fx.engine->pump();
+  };
+  set_page(0, 0, 0, 200);
+  stroke(0, 40, 40);
+  const uint64_t page0 = nonzero(fx.renderer.dry());
+  CHECK(page0 > 0);
+  set_page(1, 0, 0, 200);
+  CHECK(nonzero(fx.renderer.dry()) == 0);  // page 1 starts blank
+  stroke(100'000, 40, 120);
+  CHECK(fx.engine->store().stroke(1).page == 1);
+  set_page(0, 0, 0, 200);
+  CHECK(nonzero(fx.renderer.dry()) == page0);  // page 0 exactly as it was
+  CHECK(fx.renderer.dry().at(40, 120) == 0);   // without page 1's stroke
+}
+
+TEST(engine_page_zoom_is_exact_and_drift_free) {
+  EngineFixture fx;
+  auto set_page = [&](float x, float y, float w) {
+    Command c{CommandType::kSetPage};
+    c.i0 = 0; c.f[0] = x; c.f[1] = y; c.f[2] = w;
+    fx.engine->post(c);
+    fx.engine->pump();
+  };
+  set_page(10, 10, 100);
+  std::vector<InkSample> s{sample(Action::kDown, 0, 30, 30)};
+  for (int k = 1; k < 10; ++k) s.push_back(sample(Action::kMove, k * 4167, 30 + 3.0f * k, 30));
+  s.push_back(sample(Action::kUp, 10 * 4167, 57, 30));
+  fx.engine->push(s.data(), uint32_t(s.size()));
+  fx.engine->pump();
+  const Capsule before = fx.engine->store().capsules(0)[3];
+  // Zoom ×2 about the page origin moved to (5, 5): every point maps exactly.
+  set_page(5, 5, 200);
+  const Capsule z = fx.engine->store().capsules(0)[3];
+  CHECK_NEAR(z.x0, 5 + (before.x0 - 10) * 2, 1e-3);
+  CHECK_NEAR(z.y1, 5 + (before.y1 - 10) * 2, 1e-3);
+  CHECK_NEAR(z.r0, before.r0 * 2, 1e-4);
+  // A thousand pinch frames later, back where we started: no drift at all.
+  for (int k = 0; k < 1000; ++k) set_page(10 + 0.37f * float(k % 7), 10 - 0.21f * float(k % 5), 100 + float(k % 13));
+  set_page(10, 10, 100);
+  const Capsule back = fx.engine->store().capsules(0)[3];
+  CHECK_NEAR(back.x0, before.x0, 1e-3);
+  CHECK_NEAR(back.y0, before.y0, 1e-3);
+  CHECK_NEAR(back.r1, before.r1, 1e-4);
+}
+
 TEST(engine_long_stroke_is_never_split) {
   // The open stroke lives in the store, so any length commits as one stroke.
   EngineFixture fx;
@@ -695,6 +755,266 @@ TEST(engine_hover_reaches_renderer) {
   e.pump();
   CHECK(r.enters == 1);
   CHECK(r.exits == 1);
+}
+
+// ---------------------------------------------------------------------------
+// Palm filter
+// ---------------------------------------------------------------------------
+
+constexpr float kPpm = 13.5f;  // px per mm in these tests
+
+TouchSample touch(int64_t t_ms, uint32_t id, TouchAction a, float x_mm, float y_mm, float major_mm = 9.0f,
+                  ToolType tool = ToolType::kFinger, uint8_t flags = 0) {
+  TouchSample s{};
+  s.t_ns = 1'000'000'000'000 + t_ms * 1'000'000;
+  s.x = x_mm * kPpm;
+  s.y = y_mm * kPpm;
+  s.major = major_mm * kPpm;
+  s.minor = major_mm * 0.85f * kPpm;
+  s.id = id;
+  s.action = a;
+  s.tool = tool;
+  s.flags = flags;
+  return s;
+}
+
+InkSample pen(int64_t t_ms, Action a, float x_mm, float y_mm) {
+  InkSample s{};
+  s.t_ns = s.t_recv_ns = 1'000'000'000'000 + t_ms * 1'000'000;
+  s.x = x_mm * kPpm;
+  s.y = y_mm * kPpm;
+  s.pressure = 0.5f;
+  s.tilt = 0.7f;
+  s.orientation = 2.3f;
+  s.action = a;
+  return s;
+}
+
+PalmFilter make_filter(bool finger_ink = false) {
+  PalmConfig cfg;
+  cfg.px_per_mm = kPpm;
+  cfg.view_w = 220 * kPpm;
+  cfg.view_h = 150 * kPpm;
+  cfg.finger_ink = finger_ink;
+  return PalmFilter(cfg);
+}
+
+int count_gestures(const PalmFilter& f, GestureAction a) {
+  int n = 0;
+  for (uint32_t i = 0; i < f.gesture_count(); ++i) n += f.gestures()[i].action == a;
+  return n;
+}
+
+int count_ink(const PalmFilter& f, Action a) {
+  int n = 0;
+  for (uint32_t i = 0; i < f.ink_count(); ++i) n += f.ink()[i].action == a;
+  return n;
+}
+
+TEST(palm_system_palm_is_final) {
+  PalmFilter f = make_filter();
+  TouchSample s = touch(0, 1, TouchAction::kDown, 100, 80, 9, ToolType::kPalm);
+  f.process(&s, 1);
+  CHECK(f.verdict(1) == Verdict::kPalm);
+  for (int k = 1; k < 30; ++k) {
+    s = touch(k * 8, 1, TouchAction::kMove, 100 + k * 2.0f, 80, 9);  // moves like a deliberate finger
+    f.process(&s, 1);
+  }
+  CHECK(f.verdict(1) == Verdict::kPalm);
+  CHECK(f.gesture_count() == 0);
+}
+
+TEST(palm_clean_fingertip_confirms_after_roll_window_and_replays) {
+  PalmFilter f = make_filter();
+  std::vector<TouchSample> in;
+  for (int k = 0; k <= 5; ++k) in.push_back(touch(k * 8, 7, k ? TouchAction::kMove : TouchAction::kDown, 100 + k, 80));
+  f.process(in.data(), 3);  // 0, 8, 16 ms: still inside the roll-on window
+  CHECK(f.verdict(7) == Verdict::kUndecided);
+  CHECK(f.gesture_count() == 0);
+  f.process(in.data() + 3, 3);  // 24, 32, 40 ms
+  CHECK(f.verdict(7) == Verdict::kTouch);
+  // Replay: the gesture starts where the finger landed, with every sample.
+  CHECK(f.gesture_count() == 6);
+  CHECK(f.gestures()[0].action == GestureAction::kDown);
+  CHECK_NEAR(f.gestures()[0].x, 100 * kPpm, 1e-3);
+  for (uint32_t i = 1; i < f.gesture_count(); ++i) {
+    CHECK(f.gestures()[i].action == GestureAction::kMove);
+    CHECK_NEAR(f.gestures()[i].x, (100 + float(i)) * kPpm, 1e-3);
+    CHECK(f.gestures()[i].t_ns > f.gestures()[i - 1].t_ns);
+  }
+}
+
+TEST(palm_contact_while_pen_hovers_is_palm_at_once) {
+  PalmFilter f = make_filter();
+  InkSample p = pen(0, Action::kHoverEnter, 100, 60);
+  f.observe_pen(&p, 1);
+  TouchSample s = touch(10, 1, TouchAction::kDown, 145, 115, 12);
+  f.process(&s, 1);
+  CHECK(f.verdict(1) == Verdict::kPalm);
+  CHECK(f.gesture_count() == 0);
+}
+
+TEST(palm_platform_cancel_cancels_a_started_gesture) {
+  PalmFilter f = make_filter();
+  for (int k = 0; k <= 5; ++k) {
+    TouchSample s = touch(k * 8, 1, k ? TouchAction::kMove : TouchAction::kDown, 100 + k, 80);
+    f.process(&s, 1);
+  }
+  CHECK(count_gestures(f, GestureAction::kDown) == 1);
+  TouchSample up = touch(60, 1, TouchAction::kUp, 105, 80, 9, ToolType::kFinger, kTouchCanceled);
+  f.process(&up, 1);
+  CHECK(count_gestures(f, GestureAction::kCancel) == 1);
+  CHECK(count_gestures(f, GestureAction::kUp) == 0);
+  ContactReport r[4];
+  CHECK(f.drain_reports(r, 4) == 1);
+  CHECK(r[0].system_palm);
+  CHECK(r[0].verdict == Verdict::kPalm);
+}
+
+TEST(palm_finger_ink_starts_at_once_and_pen_revokes_it) {
+  PalmFilter f = make_filter(true);
+  TouchSample s = touch(0, 1, TouchAction::kDown, 80, 80);
+  f.process(&s, 1);
+  CHECK(f.ink_active());
+  CHECK(count_ink(f, Action::kDown) == 1);  // zero added latency
+  CHECK(f.ink()[0].flags & kFlagFinger);
+  for (int k = 1; k < 5; ++k) {
+    s = touch(k * 8, 1, TouchAction::kMove, 80 + k * 2.0f, 80);
+    f.process(&s, 1);
+  }
+  CHECK(count_ink(f, Action::kMove) == 4);
+  InkSample p = pen(45, Action::kHoverEnter, 60, 40);
+  f.observe_pen(&p, 1);
+  CHECK(count_ink(f, Action::kCancel) == 1);
+  CHECK(!f.ink_active());
+  CHECK(f.gesture_count() == 0);  // the stroke was the hand, not a pan
+}
+
+TEST(palm_finger_ink_commits_only_after_linger) {
+  PalmFilter f = make_filter(true);
+  for (int k = 0; k <= 10; ++k) {
+    TouchSample s = touch(k * 8, 1, k == 0 ? TouchAction::kDown : k == 10 ? TouchAction::kUp : TouchAction::kMove,
+                          80 + k * 3.0f, 80);
+    f.process(&s, 1);
+  }
+  CHECK(count_ink(f, Action::kUp) == 0);  // lingering: still revocable
+  CHECK(f.ink_active());
+  const int64_t t_up = touch(80, 1, TouchAction::kUp, 0, 0).t_ns;
+  CHECK(f.next_deadline(t_up) > 0);
+  f.tick(t_up + 40'000'000);
+  CHECK(count_ink(f, Action::kUp) == 0);
+  f.tick(t_up + 81'000'000);
+  CHECK(count_ink(f, Action::kUp) == 1);
+  CHECK(!f.ink_active());
+  ContactReport r[4];
+  CHECK(f.drain_reports(r, 4) == 1);
+  CHECK(r[0].ink_committed);
+}
+
+TEST(palm_second_finger_turns_ink_into_gesture) {
+  PalmFilter f = make_filter(true);
+  TouchSample a = touch(0, 1, TouchAction::kDown, 80, 80);
+  f.process(&a, 1);
+  CHECK(f.ink_active());
+  TouchSample b = touch(30, 2, TouchAction::kDown, 115, 82);
+  f.process(&b, 1);
+  CHECK(count_ink(f, Action::kCancel) == 1);
+  CHECK(!f.ink_active());
+  for (int k = 1; k < 8; ++k) {
+    TouchSample m[2] = {touch(30 + k * 8, 1, TouchAction::kMove, 80, 80 - k * 2.0f),
+                        touch(30 + k * 8, 2, TouchAction::kMove, 115, 82 - k * 2.0f)};
+    f.process(m, 2);
+  }
+  CHECK(count_gestures(f, GestureAction::kDown) == 2);
+}
+
+TEST(palm_model_roundtrip_and_validation) {
+  PalmFilter a = make_filter();
+  float m[PalmFilter::kModelFloats];
+  a.export_model(m);
+  m[1] = 0.9f;   // confidently right-handed
+  m[14] = 200;   // inter-stroke gap
+  PalmFilter b = make_filter();
+  CHECK(b.import_model(m));
+  CHECK_NEAR(b.right_handedness(), 0.9, 1e-6);
+  CHECK_NEAR(b.grace_ms(), 500.0, 1e-3);
+  float bad[PalmFilter::kModelFloats];
+  std::memcpy(bad, m, sizeof(m));
+  bad[3] = std::nanf("");
+  CHECK(!b.import_model(bad));
+  std::memcpy(bad, m, sizeof(m));
+  bad[0] = 99;
+  CHECK(!b.import_model(bad));
+  CHECK_NEAR(b.right_handedness(), 0.9, 1e-6);  // unchanged by rejected imports
+}
+
+TEST(palm_learns_handedness_and_grace) {
+  PalmFilter f = make_filter();
+  CHECK_NEAR(f.right_handedness(), 0.5, 1e-6);
+  uint32_t id = 1;
+  int64_t t = 0;
+  for (int stroke = 0; stroke < 25; ++stroke, t += 400) {
+    const float x = 120 + float(stroke % 5) * 15;
+    InkSample p[3] = {pen(t, Action::kDown, x, 60), pen(t + 150, Action::kMove, x + 8, 61), pen(t + 300, Action::kUp, x + 16, 60)};
+    f.observe_pen(p, 2);
+    // A left-handed writer's palm: below-left of the nib, large and rolling on.
+    TouchSample d = touch(t + 20, id, TouchAction::kDown, x - 45, 115, 12);
+    TouchSample m = touch(t + 60, id, TouchAction::kMove, x - 45, 115, 26);
+    TouchSample u = touch(t + 120, id, TouchAction::kUp, x - 45, 115, 26);
+    f.process(&d, 1);
+    f.process(&m, 1);
+    f.process(&u, 1);
+    f.observe_pen(p + 2, 1);
+    f.clear_outputs();
+    ++id;
+  }
+  CHECK(f.right_handedness() < 0.2f);
+  CHECK(f.grace_ms() < 400.0f);  // 100 ms gaps: a short grace window
+}
+
+TEST(palm_synthetic_scenarios_all_pass) {
+  for (int left = 0; left < 2; ++left) {
+    for (int size = 0; size < 2; ++size) {
+      tools::TouchSynthConfig cfg;
+      cfg.seed = 3;
+      cfg.left_handed = left;
+      cfg.report_size = size == 0;
+      PalmFilter f;
+      int64_t clock = 100'000'000'000;
+      for (const tools::Scenario& s : tools::make_touch_scenarios(cfg)) {
+        const tools::ReplayOutput out = tools::replay(s, f, clock);
+        clock += tools::scenario_end(s) + 30'000'000'000;
+        tools::Score sc;
+        tools::score(s, out, &sc);
+        CHECK(out.streams_well_formed);
+        CHECK(sc.false_accepts == 0);
+        CHECK(sc.false_rejects == 0);
+        for (const std::string& fl : sc.failures) std::printf("    %s\n", fl.c_str());
+      }
+    }
+  }
+}
+
+TEST(palm_recorder_csv_replays_identically) {
+  tools::TouchSynthConfig cfg;
+  cfg.seed = 5;
+  const auto scenarios = tools::make_touch_scenarios(cfg);
+  const tools::Scenario& s = scenarios[3];  // palm + pinky double tap
+  PalmFilter f;
+  f.set_recording(true, "palm");
+  const tools::ReplayOutput a = tools::replay(s, f, 0);
+  const char* path = "palm_recorder_test.csv";
+  CHECK(f.export_recording(path) == int64_t(s.events.size()));
+  tools::Scenario loaded;
+  std::string err;
+  CHECK(tools::load_touch_csv(path, false, &loaded, &err));
+  std::remove(path);
+  PalmFilter g;
+  const tools::ReplayOutput b = tools::replay(loaded, g, 0);
+  CHECK(a.reports.size() == b.reports.size());
+  for (size_t i = 0; i < std::min(a.reports.size(), b.reports.size()); ++i)
+    CHECK(a.reports[i].verdict == b.reports[i].verdict);
+  for (const auto& [id, e] : loaded.expect) CHECK(e == tools::Expect::kPalm);
 }
 
 }  // namespace

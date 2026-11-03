@@ -243,6 +243,9 @@ void InkEngine::handle_command(const Command& c) noexcept {
     case CommandType::kSetRecording:
       if (!active_) recorder_.enable(c.i0 != 0);  // allocation never happens mid-stroke
       break;
+    case CommandType::kSetPage:
+      set_page(uint32_t(c.i0), c.f[0], c.f[1], c.f[2]);
+      break;
   }
   // Every command completes a ticket; post_sync() waits for its own.
   sync_done_.fetch_add(1, std::memory_order_release);
@@ -428,7 +431,7 @@ void InkEngine::flush_frame(bool with_prediction) noexcept {
 void InkEngine::finish_stroke(int64_t t_end) noexcept {
   flush_frame(false);  // last real segments; erases the predicted tail
   // Zero-copy commit: the capsules are already in the store.
-  const uint32_t id = store_.close(stroke_bounds_, stroke_color_, stroke_t0_, t_end);
+  const uint32_t id = store_.close(stroke_bounds_, stroke_color_, stroke_t0_, t_end, page_, page_map_);
   if (NOTI_LIKELY(id != UINT32_MAX)) {
     renderer_.commit(store_, id, pixel_bounds(stroke_bounds_, surface_w_, surface_h_));
   }
@@ -436,6 +439,22 @@ void InkEngine::finish_stroke(int64_t t_end) noexcept {
   // than being lost.
   active_ = false;
   stats_.strokes.fetch_add(1, std::memory_order_relaxed);
+}
+
+// The visible page or its placement changed (page switch, zoom, pan, rotation).
+// Off the per-sample path: costs one pass over the page's capsules plus a
+// renderer redraw.
+void InkEngine::set_page(uint32_t page, float x, float y, float width) noexcept {
+  if (!(width > 0.0f) || !std::isfinite(x) || !std::isfinite(y) || !std::isfinite(width)) return;
+  PageMap m;
+  cfg_.input_to_surface.apply(x, y, &m.ox, &m.oy);
+  m.s = width * scale_ / PageMap::kPageUnits;
+  if (page == page_ && m == page_map_) return;
+  if (active_) finish_stroke(last_t_);  // the stroke belongs to the page it was written on
+  page_ = page;
+  page_map_ = m;
+  store_.remap_page(page, m);
+  renderer_.redraw(store_, page);
 }
 
 void InkEngine::cancel_stroke() noexcept {

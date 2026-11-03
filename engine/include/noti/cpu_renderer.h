@@ -30,6 +30,7 @@ class CpuRenderer final : public InkRenderer {
   void render(const FrameUpdate& f) override;
   void commit(const StrokeStore& store, uint32_t id, const RectI& wet_rect) override;
   void cancel(const RectI& wet_rect) override;
+  void redraw(const StrokeStore& store, uint32_t page) override;
 
   const ImageRGBA8& backing() const { return backing_; }
   const ImageRGBA8& front() const { return front_; }
@@ -44,6 +45,7 @@ class CpuRenderer final : public InkRenderer {
   static uint64_t draw_max(ImageRGBA8& img, const Capsule* caps, uint32_t n, const float* premul, const RectI& clip);
 
  private:
+  void draw_into_dry(const StrokeStore& store, uint32_t id);
   ImageRGBA8 backing_, front_, dry_, scratch_;
   uint64_t pixels_touched_ = 0;
 };

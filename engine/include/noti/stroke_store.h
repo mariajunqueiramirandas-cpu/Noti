@@ -8,6 +8,12 @@
 //
 // Phase 3 replaces the in-memory arena with the mmap'd write-ahead log; the
 // interface (append-only, stable ids, stable pointers) stays the same.
+//
+// Pages: every stroke belongs to a page. Capsules are stored twice: in surface
+// px (what the renderers draw, written on the hot path) and, from close(), in
+// page units (the canonical copy, see PageMap). remap_page() rewrites a page's
+// surface capsules from the canonical copy, so zooming or panning any number of
+// times never accumulates rounding error.
 #pragma once
 
 #include <cstdint>
@@ -24,6 +30,7 @@ struct StrokeRecord {
   float color[4];  // premultiplied
   int64_t t_begin_ns;
   int64_t t_end_ns;
+  uint32_t page;
 };
 
 class StrokeStore {
@@ -40,8 +47,12 @@ class StrokeStore {
     capsules_[capsule_count_++] = c;
     return true;
   }
-  // Seals the open stroke; returns its id, or UINT32_MAX if out of stroke slots.
-  uint32_t close(const RectF& bounds, const float color[4], int64_t t_begin_ns, int64_t t_end_ns) noexcept;
+  // Seals the open stroke on `page` (whose current placement is `map`); returns
+  // its id, or UINT32_MAX if out of stroke slots.
+  uint32_t close(const RectF& bounds, const float color[4], int64_t t_begin_ns, int64_t t_end_ns,
+                 uint32_t page = 0, const PageMap& map = {}) noexcept;
+  // Re-places every stroke of `page` on the surface (off the hot path).
+  void remap_page(uint32_t page, const PageMap& map) noexcept;
   void abort() noexcept { capsule_count_ = open_first_; }
 
   // ---- committed strokes ----
@@ -55,6 +66,7 @@ class StrokeStore {
   uint32_t stroke_count_ = 0, capsule_count_ = 0, open_first_ = 0;
   std::unique_ptr<StrokeRecord[]> strokes_;
   std::unique_ptr<Capsule[]> capsules_;
+  std::unique_ptr<Capsule[]> canon_;  // page units, for committed strokes
 };
 
 }  // namespace noti
