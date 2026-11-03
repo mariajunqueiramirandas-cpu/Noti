@@ -4,6 +4,7 @@ The lowest-latency PDF annotator and note-taking app for the **Xiaomi Pad 7 + Xi
 
 - 📄 [Low-latency ink engine plan](docs/LOW_LATENCY_PLAN.md): hardware analysis, latency budget, engine architecture, measurement lab, and roadmap.
 - ⚙️ [Native ink engine + predictor (C++20)](engine/README.md): lock-free input path, front-buffer GL renderer, tuned Kalman predictor, latency probe, benchmarks.
+- ✋ [Palm rejection](docs/PALM_REJECTION.md): sequential evidence per contact (pen state, a learned model of your hand, pen coupling, contact shape, clusters), replayed gestures, speculative finger ink, measured by `palm_bench`.
 
 ## Android app & releases
 
@@ -12,7 +13,12 @@ from `engine/android/kotlin`. Only arm64 and Android 13+ are supported.
 
 The UI is Jetpack Compose (Material 3): library, editor, settings. Each writing area hosts the native engine's own
 input window over it, so toolbars and panels are docked beside it, never over it (`ui/common/InkCanvas.kt`).
-Controls whose engine support isn't built yet (undo/redo, eraser, lasso, more pages, PDF, export, saving ink) are
+**PDFs**: New → Import PDF copies a PDF into the app (rendered with the platform's PdfRenderer on its own thread).
+One page at a time, fitted to the canvas; pinch to zoom (sharp re-render when the page comes to rest), drag to pan,
+swipe or use the toolbar arrows / page panel to turn pages. Ink is kept per page in page coordinates, so it stays
+on the page through zoom, pan and rotation. Fingers pass palm rejection first.
+
+Controls whose engine support isn't built yet (undo/redo, eraser, lasso, more notebook pages, export, saving ink) are
 shown greyed out and say "coming soon" when tapped. Release builds use R8, which runs in its own JVM with its own
 heap (`settings.gradle.kts`; `-Pnoti.r8.maxHeap=…`, default 8 GB, CI gives it half the runner's RAM).
 

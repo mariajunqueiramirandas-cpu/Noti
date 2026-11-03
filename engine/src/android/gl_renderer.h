@@ -62,6 +62,7 @@ class GlFrontBufferRenderer final : public InkRenderer {
   void render(const FrameUpdate& f) override;
   void commit(const StrokeStore& store, uint32_t id, const RectI& wet_rect) override;
   void cancel(const RectI& wet_rect) override;
+  void redraw(const StrokeStore& store, uint32_t page) override;
   void batch_done(int64_t cpu_ns) override;
   int64_t idle() override;
 
@@ -75,6 +76,7 @@ class GlFrontBufferRenderer final : public InkRenderer {
     std::atomic<int> release_fence{-1};  // written by the transaction callback (binder thread)
     RectI dirty;                         // wet: region that holds ink
     uint32_t seq = 0;                    // dry: committed strokes [0, seq) are drawn in it
+    uint32_t epoch = 0;                  // dry: content valid only if == renderer epoch_
   };
   struct TxContext {
     GlFrontBufferRenderer* self;
@@ -102,6 +104,9 @@ class GlFrontBufferRenderer final : public InkRenderer {
   void clear_rect(const Target& t, const RectI& r);
   void set_color(const float* premul);
   void draw_stroke_into_dry(Target& dry, const StrokeStore& store, uint32_t id);
+  // Swap in a new wet + dry pair with one atomic transaction (commit/redraw).
+  void publish(int next_wet, int next_dry);
+  void do_redraw();
   void apply_frame_rate();
   void resubmit_front();
   void post_tx(const TxJob& job);
@@ -149,6 +154,11 @@ class GlFrontBufferRenderer final : public InkRenderer {
   int cur_wet_ = 0, cur_dry_ = 0;
   bool front_buffer_supported_ = false;
   const StrokeStore* store_ = nullptr;
+  uint32_t page_ = 0;   // only strokes of this page are drawn
+  uint32_t epoch_ = 0;  // bumped by redraw(): older dry content is stale
+  // A redraw waits until the previous wet/dry swap has been latched, so a pinch
+  // (one redraw per frame) never draws into a buffer still on screen.
+  bool redraw_pending_ = false;
 
   // Transaction callbacks.
   TxContext tx_ctx_[16];

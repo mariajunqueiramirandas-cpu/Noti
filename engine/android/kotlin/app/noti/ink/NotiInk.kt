@@ -36,6 +36,33 @@ internal object NotiInk {
     const val FLAG_BUTTON_PRIMARY = 4
     const val FLAG_BUTTON_SECONDARY = 8
 
+    /** Layout of one finger/palm contact in the touch staging buffer (must match noti::TouchSample). */
+    const val TOUCH_BYTES = 40
+    const val TOUCH_STAGING = 512
+
+    // noti::TouchAction
+    const val TOUCH_DOWN: Byte = 0
+    const val TOUCH_MOVE: Byte = 1
+    const val TOUCH_UP: Byte = 2
+    const val TOUCH_CANCEL: Byte = 3
+
+    // noti::TouchFlags
+    const val TOUCH_FLAG_CANCELED = 1
+    const val TOUCH_FLAG_HISTORICAL = 2
+
+    /** Gesture output buffer: int32 count, int32 reserved, int64 deadline, then 24-byte events. */
+    const val GESTURE_HEADER_BYTES = 16
+    const val GESTURE_BYTES = 24
+
+    // noti::GestureAction
+    const val GESTURE_DOWN = 0
+    const val GESTURE_MOVE = 1
+    const val GESTURE_UP = 2
+    const val GESTURE_CANCEL = 3
+
+    /** Floats in the palm filter's learned model (noti::PalmFilter::kModelFloats). */
+    const val PALM_MODEL_FLOATS = 20
+
     // ---- lifecycle / ink thread ----
     @JvmStatic external fun nativeCreate(horizonMs: Float, gpuTiming: Boolean, flipY: Boolean, probe: Boolean): Long
     @JvmStatic external fun nativeAttach(handle: Long): Boolean
@@ -46,6 +73,21 @@ internal object NotiInk {
     @JvmStatic external fun nativeSurfaceDestroyed(handle: Long)
     @JvmStatic external fun nativeExportRecording(handle: Long, path: String): Long
     @JvmStatic external fun nativeStats(handle: Long, out: LongArray)
+
+    // ---- palm rejection + pages (ink thread) ----
+    @JvmStatic external fun nativeTouchStaging(handle: Long): ByteBuffer
+    @JvmStatic external fun nativeGestureOut(handle: Long): ByteBuffer
+    @JvmStatic external fun nativeSetPalmView(handle: Long, width: Float, height: Float, pxPerMm: Float)
+    @JvmStatic external fun nativeSetFingerInk(handle: Long, on: Boolean)
+    @JvmStatic external fun nativeSetPalmModel(handle: Long, model: FloatArray): Boolean
+    @JvmStatic external fun nativePalmModel(handle: Long, out: FloatArray)
+    @JvmStatic external fun nativePalmStats(handle: Long, out: LongArray)
+    @JvmStatic external fun nativeSetPalmRecording(handle: Long, on: Boolean, label: String?)
+    @JvmStatic external fun nativeExportPalmRecording(handle: Long, path: String): Long
+    @JvmStatic external fun nativeSetPage(handle: Long, page: Int, x: Float, y: Float, width: Float)
+
+    /** Runs the palm filter on `count` staged contacts (and any finger ink); returns the next deadline (ns) or -1. */
+    @CriticalNative @JvmStatic external fun nativeTouch(handle: Long, count: Int): Long
 
     /** Predicts and draws `count` staged samples; returns the next housekeeping deadline (ns) or -1. */
     @CriticalNative @JvmStatic external fun nativeProcess(handle: Long, count: Int): Long

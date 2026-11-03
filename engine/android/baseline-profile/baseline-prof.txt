@@ -10,7 +10,14 @@ HSPLapp/noti/ink/NotiInk;->**(**)**
 Lapp/noti/ink/InkWindow;
 Lapp/noti/ink/InkLayer;
 Lapp/noti/ink/NotiInk;
+# Finger path: palm-filtered gestures → canvas gestures and the PDF page viewport.
+HSPLapp/noti/ui/common/CanvasGestures;->**(**)**
+HSPLapp/noti/pdf/PageViewport;->**(**)**
+HSPLapp/noti/pdf/PagePlacement;->**(**)**
+Lapp/noti/ui/common/CanvasGestures;
+Lapp/noti/pdf/PageViewport;
 # Framework methods on the per-sample path.
 HSPLandroid/view/MotionEvent;->getHistorical*(**)**
 HSPLandroid/view/MotionEvent;->get*(**)**
 HSPLjava/nio/DirectByteBuffer;->put*(**)**
+HSPLjava/nio/DirectByteBuffer;->get*(**)**
