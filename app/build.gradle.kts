@@ -1,5 +1,6 @@
 plugins {
     id("com.android.application")
+    id("org.jetbrains.kotlin.plugin.compose")
 }
 
 // Defaults match what the GitHub ubuntu-24.04 image has preinstalled, so CI downloads nothing.
@@ -52,10 +53,11 @@ android {
 
     buildTypes {
         release {
-            // No R8: the app has no dependencies, and the JNI bridge binds
-            // app.noti.ink.NotiInk by name (RegisterNatives).
-            isMinifyEnabled = false
-            isShrinkResources = false
+            // R8 on: Compose is much slower and far larger without it. The JNI bridge binds
+            // app.noti.ink.NotiInk by name (RegisterNatives); proguard-rules.pro keeps it.
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             // Unsigned on purpose: CI signs with apksigner, so no key or password ever
             // enters Gradle's configuration cache (which CI caches).
             signingConfig = null
@@ -68,6 +70,7 @@ android {
     }
 
     buildFeatures {
+        compose = true
         buildConfig = false
         resValues = false
         aidl = false
@@ -101,4 +104,13 @@ androidComponents {
             out.versionName.set(name.orElse("0.0.0-dev"))
         }
     }
+}
+
+dependencies {
+    implementation(platform("androidx.compose:compose-bom:2026.06.01"))
+    implementation("androidx.compose.ui:ui")
+    implementation("androidx.compose.foundation:foundation")
+    implementation("androidx.compose.material3:material3")
+    implementation("androidx.compose.material:material-icons-extended")
+    implementation("androidx.activity:activity-compose:1.13.0")
 }

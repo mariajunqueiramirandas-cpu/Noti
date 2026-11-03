@@ -10,6 +10,12 @@ The lowest-latency PDF annotator and note-taking app for the **Xiaomi Pad 7 + Xi
 `app/` is the Android app (Gradle, AGP 9). It builds `engine/` through CMake and compiles the ink Kotlin sources
 from `engine/android/kotlin`. Only arm64 and Android 13+ are supported.
 
+The UI is Jetpack Compose (Material 3): library, editor, settings. Each writing area hosts the native engine's own
+input window over it, so toolbars and panels are docked beside it, never over it (`ui/common/InkCanvas.kt`).
+Controls whose engine support isn't built yet (undo/redo, eraser, lasso, more pages, PDF, export, saving ink) are
+shown greyed out and say "coming soon" when tapped. Release builds use R8, which runs in its own JVM with its own
+heap (`settings.gradle.kts`; `-Pnoti.r8.maxHeap=…`, default 8 GB, CI gives it half the runner's RAM).
+
 ```sh
 ./gradlew :app:assembleRelease   # → app/build/outputs/apk/release/app-release-unsigned.apk
 ./gradlew :app:assembleDebug     # debug-signed, installable

@@ -1,28 +1,24 @@
 package app.noti
 
-import android.app.Activity
-import android.graphics.Color
 import android.os.Bundle
-import android.view.View
-import app.noti.ink.InkLayer
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
+import app.noti.data.LibraryStore
+import app.noti.data.SettingsStore
+import app.noti.ui.NotiApp
 
-/** A blank page with the low-latency ink layer over it. */
-class MainActivity : Activity() {
-    private var ink: InkLayer? = null
-
+/**
+ * The whole app is Compose. The ink itself never goes through Compose: each writing area
+ * hosts the native engine's own input window and layers (app.noti.ink.InkLayer), so
+ * recomposition, layout and GC on this thread can't delay the pen.
+ */
+class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val canvas = View(this).apply { setBackgroundColor(Color.WHITE) }
-        setContentView(canvas)
-        ink = InkLayer(canvas).apply {
-            setColor(0.1f, 0.1f, 0.12f)
-            setWidth(5f)
-        }
-    }
-
-    override fun onDestroy() {
-        ink?.release()
-        ink = null
-        super.onDestroy()
+        enableEdgeToEdge()
+        val library = LibraryStore(this)
+        val settings = SettingsStore(this)
+        setContent { NotiApp(library, settings) }
     }
 }
