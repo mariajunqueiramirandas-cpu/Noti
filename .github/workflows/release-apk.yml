@@ -9,8 +9,9 @@
 #    it is only re-uploaded when that changes; every other run only restores it.
 #  - The version comes from environment variables read at execution time, so the
 #    configuration cache hits on every commit.
-#  - Gradle heap is ~70% of the runner's RAM; workers = all cores; Kotlin compiles
-#    in-process; native code builds one ABI with ninja on all cores; no lint, no R8.
+#  - RAM is split between two JVMs: the Gradle daemon gets ~40% and R8, which runs in
+#    its own process (settings.gradle.kts), gets ~50%. Workers = all cores; Kotlin
+#    compiles in-process; native code builds one ABI with ninja on all cores; no lint.
 #  - Signing happens outside Gradle (apksigner), so no secret can end up in the cache.
 name: Release APK
 
@@ -52,14 +53,16 @@ jobs:
           export JAVA_HOME="$JAVA_HOME_21_X64"
           cores=$(nproc)
           mem_mb=$(awk '/MemTotal/ { print int($2 / 1024) }' /proc/meminfo)
-          heap_mb=$(( mem_mb * 70 / 100 ))
-          echo "Runner: ${cores} cores, ${mem_mb} MB RAM → Gradle heap ${heap_mb} MB"
+          heap_mb=$(( mem_mb * 40 / 100 ))
+          r8_mb=$(( mem_mb * 50 / 100 ))
+          echo "Runner: ${cores} cores, ${mem_mb} MB RAM → Gradle heap ${heap_mb} MB, R8 heap ${r8_mb} MB"
           # --no-daemon: the build JVM exits when done, so nothing is still writing to
-          # ~/.gradle when the cache is saved. (It is one JVM either way.)
+          # ~/.gradle when the cache is saved. R8's worker JVM exits with it.
           ./gradlew :app:assembleRelease \
             --no-daemon \
             --console=plain \
             --max-workers="$cores" \
+            -Pnoti.r8.maxHeap="${r8_mb}m" \
             -Dorg.gradle.jvmargs="-Xmx${heap_mb}m -XX:MaxMetaspaceSize=2g -XX:+UseParallelGC -XX:+UseStringDeduplication -Dfile.encoding=UTF-8"
 
       - name: Restore fallback signing key
