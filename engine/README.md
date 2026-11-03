@@ -12,7 +12,8 @@ portable core builds and is tested on any Linux host.
             │ spinner), ADPF at max boost · owns: input window, EGL context,    │
  240 Hz ───►│ engine (inline mode), its own Choreographer                       │
             │                                                                   │
-            │ InkWindow.onTouchEvent       every historical sample, hw time     │
+            │ InkWindow.dispatchTouchEvent every historical sample, hw time;    │
+            │  routed per pointer: pen → ink, fingers → palm filter (below)     │
             │  └ 40 B records → direct ByteBuffer (= native memory)             │
             │  └ @CriticalNative nativeProcess(h, n)  ── plain C call ──┐       │
             │                                                           ▼       │
@@ -27,6 +28,11 @@ portable core builds and is tested on any Linux host.
             └───────────────────────────────────────────────────────────────────┘
  UI thread: setters only (lock-free command ring)    tx thread: every ASurfaceTransaction
 ```
+
+**Fingers** take a parallel path on the same thread: 40-byte contact records → `@CriticalNative nativeTouch` →
+`PalmFilter` → finger ink straight into the engine, deliberate touches into a gesture buffer that Kotlin drains
+after each call (pan, zoom, page turns). Pen samples inform the filter first (`observe_pen`), so a pen arriving
+rolls back a finger stroke before its own ink is drawn. The filter costs ~80 ns per event.
 
 **Why a separate thread with its own window:** a window added from a Looper thread has its `ViewRootImpl`, and
 therefore its input dispatch, on that thread. The UI thread (Compose, layout, GC: the 0–20+ ms spikes in plan §2,
@@ -59,7 +65,8 @@ If sustained sessions ever show thermal throttling of the prime core, pin to an 
 | `include/noti/display_timing.h` | Scan-out-aware horizon: when will ink drawn *now* be visible? |
 | `include/noti/geometry.h` | Exact SDF of a tapered capsule, pressure curve LUT, rects, view→surface affine. |
 | `include/noti/spsc_ring.h`, `wake_event.h` | Wait-free SPSC ring; futex sleep/wake (syscall only if the consumer sleeps), timed wait. |
-| `include/noti/stroke_store.h` | Append-only stroke arena; the active stroke writes into it directly (commit copies nothing). |
+| `include/noti/stroke_store.h` | Append-only stroke arena; the active stroke writes into it directly (commit copies nothing). Strokes belong to pages; a canonical page-space copy lets `remap_page` re-place a page's ink exactly on zoom, pan or rotation (no drift). |
+| `include/noti/palm_filter.h`, `src/palm_filter.cpp` | Palm rejection: every finger contact scored by sequential evidence (pen state, learned hand model, pen coupling, contact shape and motion, clusters), deliberate touches replayed to gestures, speculative finger ink with rollback, online learning. See [docs/PALM_REJECTION.md](../docs/PALM_REJECTION.md). |
 | `include/noti/stroke_recorder.h` | Raw stroke recorder → CSV for `predictor_bench --csv`. |
 | `include/noti/latency_probe.h` | Lock-free histograms (§5.1): in→recv, recv→submit, in→submit, submit→GPU, frame CPU, prediction error, horizon. |
 | `include/noti/renderer.h`, `src/cpu_renderer.cpp` | Renderer contract and the reference software renderer used by the pixel tests. |
@@ -70,7 +77,8 @@ If sustained sessions ever show thermal throttling of the prime core, pin to an 
 | `android/baseline-profile/baseline-prof.txt` | Baseline profile: AOT-compile the input path. |
 | `tools/predictor_bench.cpp` | Predictor harness: models × horizons, display-pipeline simulation, tuner, CI gate, `--csv`. |
 | `tools/engine_bench.cpp` | Real-time 240 Hz replay (threaded and inline), burst throughput, gates. |
-| `tests/tests.cpp` | 29 unit tests (no framework dependency). |
+| `tools/palm_bench.cpp`, `tools/synthetic_touches.*` | Palm rejection harness: 20 labelled pen + multi-touch scenarios × seeds × hands × size reporting, CSV replay of on-device recordings, CI gate. |
+| `tests/tests.cpp` | 42 unit tests (no framework dependency). |
 
 ## Latency techniques, by pipeline stage
 

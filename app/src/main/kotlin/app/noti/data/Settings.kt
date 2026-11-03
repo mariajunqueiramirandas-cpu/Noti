@@ -71,6 +71,17 @@ class SettingsStore(context: Context) {
     /** Ask before leaving a notebook, since ink isn't saved yet. */
     var confirmLeave by pref(true, { prefs.getBoolean("confirmLeave", it) }) { putBoolean("confirmLeave", it) }
 
+    /** A single deliberate finger draws. Palms never do, whatever this says. */
+    var fingerDrawing by pref(false, { prefs.getBoolean("fingerDrawing", it) }) { putBoolean("fingerDrawing", it) }
+
+    /**
+     * The palm filter's learned model (hand position, handedness, contact sizes, timing),
+     * so it doesn't start from scratch every time a canvas opens. Null until learned.
+     */
+    var palmModel by pref(null as FloatArray?, { decodeFloats(prefs.getString("palmModel", null)) ?: it }) {
+        putString("palmModel", it?.joinToString(","))
+    }
+
     var tool by pref(Tool.Pen, { enumOr(prefs.getString("tool", null), it) }) { putString("tool", it.name) }
 
     var penSlots by pref(DEFAULT_PEN, { ToolSlots.decode(prefs.getString("penSlots", null), it) }) {
@@ -97,6 +108,9 @@ class SettingsStore(context: Context) {
         )
     }
 }
+
+private fun decodeFloats(s: String?): FloatArray? =
+    s?.split(",")?.mapNotNull { it.toFloatOrNull() }?.toFloatArray()?.takeIf { it.isNotEmpty() }
 
 /** A Compose state that also writes through to preferences. */
 class PrefState<T>(initial: T, private val persist: (T) -> Unit) {

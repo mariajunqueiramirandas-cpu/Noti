@@ -57,7 +57,8 @@ add_library(noti_core STATIC
   src/latency_probe.cpp
   src/stroke_store.cpp
   src/cpu_renderer.cpp
-  src/stroke_recorder.cpp)
+  src/stroke_recorder.cpp
+  src/palm_filter.cpp)
 target_include_directories(noti_core PUBLIC include)
 target_link_libraries(noti_core PUBLIC noti_flags Threads::Threads)
 
@@ -78,7 +79,8 @@ endif()
 
 if(NOTI_BUILD_TESTS AND NOT ANDROID)
   enable_testing()
-  add_executable(noti_tests tests/tests.cpp)
+  add_executable(noti_tests tests/tests.cpp tools/synthetic_touches.cpp)
+  target_include_directories(noti_tests PRIVATE tools)
   target_link_libraries(noti_tests PRIVATE noti_core)
   add_test(NAME noti_tests COMMAND noti_tests)
 endif()
@@ -88,6 +90,9 @@ if(NOTI_BUILD_TOOLS AND NOT ANDROID)
   target_link_libraries(predictor_bench PRIVATE noti_core)
   add_executable(engine_bench tools/engine_bench.cpp tools/synthetic_strokes.cpp)
   target_link_libraries(engine_bench PRIVATE noti_core)
+  add_executable(palm_bench tools/palm_bench.cpp tools/synthetic_touches.cpp)
+  target_link_libraries(palm_bench PRIVATE noti_core)
+  add_test(NAME palm_rejection_gate COMMAND palm_bench --gate)
   # Host CI gates engine CPU cost only; the wall-clock gate (--gate-p99-us) is
   # for on-device runs where scheduling noise is representative.
   add_test(NAME engine_cost_gate COMMAND engine_bench --seconds 2 --gate-cpu-us 100)

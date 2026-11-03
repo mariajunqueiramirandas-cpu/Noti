@@ -576,6 +576,10 @@ void GlFrontBufferRenderer::surface_changed(void* native_window, int32_t w, int3
   clear_rect(backing_, all);
   clear_rect(scratch_, all);
   // Restore committed ink (e.g. after rotation or app resume).
+  for (Target& t : dry_) {
+    t.seq = 0;
+    t.epoch = epoch_;  // cleared above: valid (empty) for the current page
+  }
   if (store_) {
     for (uint32_t s = 0; s < store_->stroke_count(); ++s) draw_stroke_into_dry(dry_[0], *store_, s);
     dry_[0].seq = store_->stroke_count();
@@ -714,6 +718,7 @@ void GlFrontBufferRenderer::batch_done(int64_t cpu_ns) { perf_.report(cpu_ns); }
 
 int64_t GlFrontBufferRenderer::idle() {
   if (!wet_sc_) return -1;
+  if (redraw_pending_ && store_ && tx_pending_.load(std::memory_order_acquire) == 0) do_redraw();
   const int64_t now = now_ns();
   if (resubmit_pending_) resubmit_front();
   if (opt_.gpu_keepalive_ns <= 0) return -1;
@@ -727,6 +732,7 @@ int64_t GlFrontBufferRenderer::idle() {
 
 void GlFrontBufferRenderer::draw_stroke_into_dry(Target& dry, const StrokeStore& store, uint32_t id) {
   const StrokeRecord& s = store.stroke(id);
+  if (s.page != page_) return;
   const RectI r = pixel_bounds(s.bounds, w_, h_);
   if (r.empty()) return;
   // 1. Union-render the stroke on its own (MAX blend) into scratch.
@@ -769,11 +775,24 @@ void GlFrontBufferRenderer::commit(const StrokeStore& store, uint32_t id, const 
   gpu_wait_release(nw);
   clear_rect(nw, nw.dirty);
   nw.dirty = {};
-  // Next dry buffer: bring it up to date with every stroke it lacks.
+  // Next dry buffer: bring it up to date with every stroke it lacks (all of
+  // them if it predates the last redraw).
   gpu_wait_release(nd);
+  if (nd.epoch != epoch_) {
+    clear_rect(nd, RectI{0, 0, w_, h_});
+    nd.seq = 0;
+    nd.epoch = epoch_;
+  }
   for (uint32_t s = nd.seq; s <= id; ++s) draw_stroke_into_dry(nd, store, s);
   nd.seq = id + 1;
   clear_rect(backing_, wet_rect);
+  redraw_pending_ = false;  // nd now holds the whole current page
+  publish(next_wet, next_dry);
+}
+
+void GlFrontBufferRenderer::publish(int next_wet, int next_dry) {
+  Target& nw = wet_[next_wet];
+  Target& nd = dry_[next_dry];
   const int fence = native_fence();
 
   // One atomic transaction (applied by the transaction thread): new dry
@@ -794,6 +813,38 @@ void GlFrontBufferRenderer::commit(const StrokeStore& store, uint32_t id, const 
   last_gpu_ns_ = last_resubmit_ns_ = now_ns();
   resubmit_pending_ = false;
   resubmit_damage_ = {};
+}
+
+void GlFrontBufferRenderer::redraw(const StrokeStore& store, uint32_t page) {
+  store_ = &store;
+  page_ = page;
+  ++epoch_;
+  if (!wet_sc_) return;  // surface_changed() restores from the store when it comes back
+  if (tx_pending_.load(std::memory_order_acquire) > 0) {
+    redraw_pending_ = true;  // idle() runs it once the last swap has landed
+    return;
+  }
+  do_redraw();
+}
+
+void GlFrontBufferRenderer::do_redraw() {
+  redraw_pending_ = false;
+  const StrokeStore& store = *store_;
+  const int next_wet = 1 - cur_wet_;
+  const int next_dry = (cur_dry_ + 1) % 3;
+  Target& nw = wet_[next_wet];
+  Target& nd = dry_[next_dry];
+  const RectI all{0, 0, w_, h_};
+  gpu_wait_release(nw);
+  clear_rect(nw, all);
+  nw.dirty = {};
+  gpu_wait_release(nd);
+  clear_rect(nd, all);
+  for (uint32_t s = 0; s < store.stroke_count(); ++s) draw_stroke_into_dry(nd, store, s);
+  nd.seq = store.stroke_count();
+  nd.epoch = epoch_;
+  clear_rect(backing_, all);
+  publish(next_wet, next_dry);
 }
 
 void GlFrontBufferRenderer::cancel(const RectI& wet_rect) {

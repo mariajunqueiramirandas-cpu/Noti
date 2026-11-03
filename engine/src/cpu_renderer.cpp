@@ -81,6 +81,21 @@ void CpuRenderer::render(const FrameUpdate& f) {
 }
 
 void CpuRenderer::commit(const StrokeStore& store, uint32_t id, const RectI& wet_rect) {
+  draw_into_dry(store, id);
+  backing_.clear(wet_rect);
+  front_.clear(wet_rect);
+}
+
+void CpuRenderer::redraw(const StrokeStore& store, uint32_t page) {
+  const RectI all{0, 0, dry_.w, dry_.h};
+  dry_.clear(all);
+  backing_.clear(all);
+  front_.clear(all);
+  for (uint32_t id = 0; id < store.stroke_count(); ++id)
+    if (store.stroke(id).page == page) draw_into_dry(store, id);
+}
+
+void CpuRenderer::draw_into_dry(const StrokeStore& store, uint32_t id) {
   const StrokeRecord& s = store.stroke(id);
   const RectI r = pixel_bounds(s.bounds, dry_.w, dry_.h);
   // Union-render the stroke on its own, then composite it over the page so
@@ -92,8 +107,6 @@ void CpuRenderer::commit(const StrokeStore& store, uint32_t id, const RectI& wet
       const size_t i = size_t(y) * dry_.w + x;
       dry_.px[i] = over(scratch_.px[i], dry_.px[i]);
     }
-  backing_.clear(wet_rect);
-  front_.clear(wet_rect);
 }
 
 void CpuRenderer::cancel(const RectI& wet_rect) {

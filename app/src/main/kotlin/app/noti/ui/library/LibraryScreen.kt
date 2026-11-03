@@ -1,7 +1,23 @@
 package app.noti.ui.library
 
+import android.graphics.BitmapFactory
 import android.text.format.DateUtils
+import android.widget.Toast
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.runtime.produceState
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
+import app.noti.pdf.PdfImport
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.File
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -97,6 +113,7 @@ private sealed interface Filter {
     data object All : Filter
     data object Recent : Filter
     data object Favorites : Filter
+    data object Pdfs : Filter
     data class InFolder(val id: String) : Filter
     data object Trash : Filter
 }
@@ -118,6 +135,22 @@ fun LibraryScreen(
     var renamingFolder by remember { mutableStateOf<Folder?>(null) }
     var moving by remember { mutableStateOf(false) }
     var confirmDeleteForever by remember { mutableStateOf<Set<String>?>(null) }
+    var importing by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val importPdf = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        importing = true
+        val folderId = (filter as? Filter.InFolder)?.id
+        scope.launch {
+            val result = withContext(Dispatchers.IO) { runCatching { PdfImport.import(context, uri, library.pdfDir) } }
+            importing = false
+            result
+                .onSuccess { onOpen(library.addPdf(it.id, it.name, it.pageCount, folderId).id) }
+                .onFailure { Toast.makeText(context, it.message ?: "Couldn't import that PDF.", Toast.LENGTH_LONG).show() }
+        }
+    }
+    val onImportPdf = { importPdf.launch(arrayOf("application/pdf")) }
 
     BackHandler(enabled = selection.isNotEmpty()) { selection = emptySet() }
 
@@ -127,6 +160,7 @@ fun LibraryScreen(
         .filter {
             when (val f = filter) {
                 Filter.Favorites -> it.favorite
+                Filter.Pdfs -> it.isPdf
                 is Filter.InFolder -> it.folderId == f.id
                 else -> true
             }
@@ -144,6 +178,7 @@ fun LibraryScreen(
         Filter.All -> "All notebooks"
         Filter.Recent -> "Recent"
         Filter.Favorites -> "Favorites"
+        Filter.Pdfs -> "PDFs"
         is Filter.InFolder -> library.folders.firstOrNull { it.id == f.id }?.name ?: "Folder"
         Filter.Trash -> "Trash"
     }
@@ -174,6 +209,7 @@ fun LibraryScreen(
                         inTrash = inTrash,
                         trashNotEmpty = visible.isNotEmpty(),
                         onNew = { creating = true },
+                        onImportPdf = onImportPdf,
                         onEmptyTrash = { confirmDeleteForever = visible.map { it.id }.toSet() },
                     )
                 } else {
@@ -203,7 +239,7 @@ fun LibraryScreen(
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
 
                 if (visible.isEmpty()) {
-                    EmptyState(filter, query.isNotBlank(), onNew = { creating = true })
+                    EmptyState(filter, query.isNotBlank(), onNew = { creating = true }, onImportPdf = onImportPdf)
                 } else {
                     val showRecentRow = filter == Filter.All && query.isBlank() && visible.size > 6
                     val recent = if (showRecentRow) visible.sortedByDescending { it.openedAt }.take(6) else emptyList()
@@ -225,12 +261,12 @@ fun LibraryScreen(
                         if (showRecentRow) {
                             item(span = { GridItemSpan(maxLineSpan) }) { SectionLabel("Recent") }
                             items(recent, key = { "r-" + it.id }) { nb ->
-                                NotebookCard(nb, nb.id in selection, inTrash, onTap, onLongPress)
+                                NotebookCard(nb, library.thumbnailFile(nb), nb.id in selection, inTrash, onTap, onLongPress)
                             }
                             item(span = { GridItemSpan(maxLineSpan) }) { SectionLabel("All") }
                         }
                         items(visible, key = { it.id }) { nb ->
-                            NotebookCard(nb, nb.id in selection, inTrash, onTap, onLongPress)
+                            NotebookCard(nb, library.thumbnailFile(nb), nb.id in selection, inTrash, onTap, onLongPress)
                         }
                     }
                 }
@@ -240,6 +276,20 @@ fun LibraryScreen(
 
     // ---- dialogs ----
 
+    if (importing) {
+        AlertDialog(
+            onDismissRequest = {},
+            confirmButton = {},
+            title = { Text("Importing PDF") },
+            text = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    CircularProgressIndicator(Modifier.size(24.dp))
+                    Spacer(Modifier.width(16.dp))
+                    Text("Copying it into Noti…")
+                }
+            },
+        )
+    }
     if (creating) {
         NewNotebookDialog(
             initialPaper = Paper(settings.defaultTemplate, settings.defaultColor),
@@ -318,7 +368,6 @@ private fun Sidebar(
     onRenameFolder: (Folder) -> Unit,
     onSettings: () -> Unit,
 ) {
-    val pdfSoon = comingSoon("PDF import")
     Column(
         Modifier
             .width(232.dp)
@@ -334,7 +383,7 @@ private fun Sidebar(
         SideItem("All", Icons.AutoMirrored.Outlined.LibraryBooks, filter == Filter.All) { onFilter(Filter.All) }
         SideItem("Recent", Icons.Outlined.History, filter == Filter.Recent) { onFilter(Filter.Recent) }
         SideItem("Favorites", Icons.Outlined.StarBorder, filter == Filter.Favorites) { onFilter(Filter.Favorites) }
-        SideItem("PDFs", Icons.Outlined.PictureAsPdf, false, Modifier.greyedOut(), onClick = pdfSoon)
+        SideItem("PDFs", Icons.Outlined.PictureAsPdf, filter == Filter.Pdfs) { onFilter(Filter.Pdfs) }
 
         Text(
             "FOLDERS",
@@ -412,9 +461,9 @@ private fun TopBar(
     inTrash: Boolean,
     trashNotEmpty: Boolean,
     onNew: () -> Unit,
+    onImportPdf: () -> Unit,
     onEmptyTrash: () -> Unit,
 ) {
-    val pdfSoon = comingSoon("PDF import")
     var sortMenu by remember { mutableStateOf(false) }
     var newMenu by remember { mutableStateOf(false) }
     Row(
@@ -480,8 +529,7 @@ private fun TopBar(
                     DropdownMenuItem(
                         text = { Text("Import PDF") },
                         leadingIcon = { Icon(Icons.Outlined.PictureAsPdf, null) },
-                        onClick = pdfSoon,
-                        modifier = Modifier.greyedOut(),
+                        onClick = { newMenu = false; onImportPdf() },
                     )
                 }
             }
@@ -557,6 +605,7 @@ private fun SectionLabel(text: String) {
 @Composable
 private fun NotebookCard(
     nb: Notebook,
+    thumbnail: File?,
     selected: Boolean,
     inTrash: Boolean,
     onTap: (Notebook) -> Unit,
@@ -569,18 +618,24 @@ private fun NotebookCard(
             .padding(4.dp),
     ) {
         Box {
-            PaperPreview(
-                nb.paper,
-                Modifier
-                    .fillMaxWidth()
-                    .aspectRatio(0.75f)
-                    .clip(MaterialTheme.shapes.small)
-                    .border(
-                        if (selected) 3.dp else 1.dp,
-                        if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
-                        MaterialTheme.shapes.small,
-                    ),
-            )
+            val frame = Modifier
+                .fillMaxWidth()
+                .aspectRatio(0.75f)
+                .clip(MaterialTheme.shapes.small)
+                .border(
+                    if (selected) 3.dp else 1.dp,
+                    if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
+                    MaterialTheme.shapes.small,
+                )
+            if (nb.isPdf) PdfThumbnail(thumbnail, frame) else PaperPreview(nb.paper, frame)
+            if (nb.isPdf) {
+                Icon(
+                    Icons.Outlined.PictureAsPdf,
+                    contentDescription = "PDF",
+                    tint = Color(0xFFD23B3B),
+                    modifier = Modifier.align(Alignment.BottomEnd).padding(8.dp).size(20.dp),
+                )
+            }
             if (nb.favorite && !inTrash) {
                 Icon(
                     Icons.Outlined.Star,
@@ -601,15 +656,29 @@ private fun NotebookCard(
     }
 }
 
+/** The first page of an imported PDF (rendered at import), white until it loads. */
+@Composable
+private fun PdfThumbnail(file: File?, modifier: Modifier) {
+    val bitmap by produceState<android.graphics.Bitmap?>(null, file) {
+        value = withContext(Dispatchers.IO) { file?.takeIf(File::exists)?.let { BitmapFactory.decodeFile(it.path) } }
+    }
+    Box(modifier.background(Color.White)) {
+        bitmap?.let {
+            Image(it.asImageBitmap(), contentDescription = null, contentScale = ContentScale.Crop, alignment = Alignment.TopCenter, modifier = Modifier.fillMaxSize())
+        }
+    }
+}
+
 private fun relative(t: Long): String =
     DateUtils.getRelativeTimeSpanString(t, System.currentTimeMillis(), DateUtils.MINUTE_IN_MILLIS).toString().let {
         if (it == "0 minutes ago" || it == "In 0 minutes") "just now" else it.replaceFirstChar { c -> c.lowercase() }
     }
 
 @Composable
-private fun EmptyState(filter: Filter, searching: Boolean, onNew: () -> Unit) {
+private fun EmptyState(filter: Filter, searching: Boolean, onNew: () -> Unit, onImportPdf: () -> Unit) {
     val (headline, body) = when {
         searching -> "Nothing found" to "No notebook has that name."
+        filter == Filter.Pdfs -> "No PDFs yet" to "Import a PDF to write on it."
         filter == Filter.Trash -> "Trash is empty" to "Deleted notebooks wait here until you delete them forever."
         filter == Filter.Favorites -> "No favorites yet" to "Long-press a notebook and tap Favorite."
         filter is Filter.InFolder -> "This folder is empty" to "Create a notebook here, or move notebooks in from All."
@@ -623,7 +692,14 @@ private fun EmptyState(filter: Filter, searching: Boolean, onNew: () -> Unit) {
         Text(headline, style = MaterialTheme.typography.titleLarge)
         Spacer(Modifier.height(6.dp))
         Text(body, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        if (!searching && filter != Filter.Trash && filter != Filter.Favorites) {
+        if (!searching && filter == Filter.Pdfs) {
+            Spacer(Modifier.height(20.dp))
+            Button(onClick = onImportPdf) {
+                Icon(Icons.Outlined.PictureAsPdf, null)
+                Spacer(Modifier.width(6.dp))
+                Text("Import PDF")
+            }
+        } else if (!searching && filter != Filter.Trash && filter != Filter.Favorites) {
             Spacer(Modifier.height(20.dp))
             Button(onClick = onNew) {
                 Icon(Icons.Outlined.Add, null)

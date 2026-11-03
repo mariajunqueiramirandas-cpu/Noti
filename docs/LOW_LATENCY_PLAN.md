@@ -102,7 +102,7 @@ This is the same model as `androidx.graphics.lowlatency.GLFrontBufferedRenderer`
 - Use event timestamps (`getEventTimeNanos`, API 34) for prediction and velocity, not arrival time.
 - Pass samples straight to a native **lock-free SPSC ring buffer**. The Java/Kotlin handler does nothing else: no allocations, no logging.
 - **Experiment:** compare View input against a native input queue (`AInputQueue` on a looper owned by our own thread, as `NativeActivity`/`GameActivity` do) so the UI thread is not in the path at all. We keep the faster option.
-- **Palm rejection:** while the pen is hovering or touching, ignore `TOOL_TYPE_FINGER`. Honour `ACTION_CANCEL` and `FLAG_CANCELED` (Android 13+), and roll back a stroke the system cancels.
+- **Palm rejection:** while the pen is hovering or touching, ignore `TOOL_TYPE_FINGER`. Honour `ACTION_CANCEL` and `FLAG_CANCELED` (Android 13+), and roll back a stroke the system cancels. *Built well beyond this: see [PALM_REJECTION.md](PALM_REJECTION.md).*
 
 ### 4.2 Rendering: draw only what changed
 - Native **OpenGL ES 3.2 via EGL** on an `AHardwareBuffer`. Adreno's GLES drivers are mature, and for a draw this small, GLES and Vulkan have the same latency. Vulkan (`VK_ANDROID_external_memory_android_hardware_buffer`) is an option for later.

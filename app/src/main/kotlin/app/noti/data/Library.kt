@@ -38,7 +38,12 @@ data class Notebook(
     val openedAt: Long,
     /** Set when moved to Trash. */
     val trashedAt: Long? = null,
-)
+    /** An annotated PDF: its file name in [LibraryStore.pdfDir]. Null for a plain notebook. */
+    val pdf: String? = null,
+    val pageCount: Int = 1,
+) {
+    val isPdf get() = pdf != null
+}
 
 data class Folder(val id: String, val name: String)
 
@@ -47,9 +52,14 @@ enum class SortOrder(val label: String) { Recent("Last opened"), Name("Name"), C
 /**
  * Notebooks and folders, kept in memory as Compose state and written to a small JSON
  * file on every change. Holds metadata only: ink isn't saved yet (plan Phase 3).
+ * Imported PDFs are copied into [pdfDir], with a first-page thumbnail beside each.
  */
 class LibraryStore(context: Context) {
     private val file = File(context.filesDir, "library.json")
+    val pdfDir = File(context.filesDir, "pdfs").apply { mkdirs() }
+
+    fun pdfFile(nb: Notebook): File? = nb.pdf?.let { File(pdfDir, it) }
+    fun thumbnailFile(nb: Notebook): File? = nb.pdf?.let { File(pdfDir, it.removeSuffix(".pdf") + ".png") }
 
     var notebooks by mutableStateOf<List<Notebook>>(emptyList())
         private set
@@ -77,6 +87,27 @@ class LibraryStore(context: Context) {
         return nb
     }
 
+    /**
+     * Adds a notebook for a PDF already copied to [pdfDir] as `<id>.pdf` (see
+     * app.noti.pdf.PdfImport). Main thread.
+     */
+    fun addPdf(id: String, name: String, pageCount: Int, folderId: String?): Notebook {
+        val now = System.currentTimeMillis()
+        val nb = Notebook(
+            id = id,
+            name = name.ifBlank { "Untitled PDF" },
+            paper = Paper(PaperTemplate.Blank, PaperColor.White, PaperSize.Endless),
+            folderId = folderId,
+            createdAt = now,
+            openedAt = now,
+            pdf = "$id.pdf",
+            pageCount = pageCount,
+        )
+        notebooks = notebooks + nb
+        save()
+        return nb
+    }
+
     fun rename(id: String, name: String) = update(id) { it.copy(name = name.ifBlank { it.name }) }
     fun setPaper(id: String, paper: Paper) = update(id) { it.copy(paper = paper) }
     fun markOpened(id: String) = update(id) { it.copy(openedAt = System.currentTimeMillis()) }
@@ -87,14 +118,25 @@ class LibraryStore(context: Context) {
     fun restore(ids: Set<String>) = updateAll(ids) { it.copy(trashedAt = null) }
 
     fun deleteForever(ids: Set<String>) {
+        notebooks.filter { it.id in ids }.forEach { nb ->
+            pdfFile(nb)?.delete()
+            thumbnailFile(nb)?.delete()
+        }
         notebooks = notebooks.filterNot { it.id in ids }
         save()
     }
 
     fun duplicate(ids: Set<String>) {
         val now = System.currentTimeMillis()
-        val copies = notebooks.filter { it.id in ids }.map {
-            it.copy(id = UUID.randomUUID().toString(), name = "${it.name} (copy)", createdAt = now, openedAt = now)
+        val copies = notebooks.filter { it.id in ids }.mapNotNull { nb ->
+            val id = UUID.randomUUID().toString()
+            // A copy of an annotated PDF gets its own copy of the file; skip it if that fails.
+            val pdf = if (nb.pdf == null) null else runCatching {
+                pdfFile(nb)!!.copyTo(File(pdfDir, "$id.pdf"))
+                thumbnailFile(nb)?.takeIf(File::exists)?.copyTo(File(pdfDir, "$id.png"))
+                "$id.pdf"
+            }.getOrNull() ?: return@mapNotNull null
+            nb.copy(id = id, name = "${nb.name} (copy)", createdAt = now, openedAt = now, pdf = pdf)
         }
         notebooks = notebooks + copies
         save()
@@ -147,6 +189,8 @@ class LibraryStore(context: Context) {
                     createdAt = o.optLong("createdAt"),
                     openedAt = o.optLong("openedAt"),
                     trashedAt = if (o.has("trashedAt")) o.getLong("trashedAt") else null,
+                    pdf = o.optString("pdf").ifEmpty { null },
+                    pageCount = o.optInt("pageCount", 1),
                 )
             }
         }
@@ -167,6 +211,7 @@ class LibraryStore(context: Context) {
                 .put("createdAt", nb.createdAt)
                 .put("openedAt", nb.openedAt)
                 .apply { nb.trashedAt?.let { put("trashedAt", it) } }
+                .apply { nb.pdf?.let { put("pdf", it).put("pageCount", nb.pageCount) } }
         }))
         // Write-then-rename so a crash mid-write never leaves a truncated library.
         val tmp = File(file.parentFile, "library.json.tmp")

@@ -25,6 +25,18 @@ import androidx.compose.material.icons.outlined.Create
 import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Palette
+import androidx.compose.material.icons.outlined.PanTool
+import androidx.compose.material3.Button
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.runtime.LaunchedEffect
+import android.widget.Toast
+import app.noti.ink.InkLayer
+import app.noti.ui.common.PalmSpec
+import kotlinx.coroutines.delay
+import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import androidx.compose.material.icons.outlined.TouchApp
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -69,6 +81,7 @@ import app.noti.ui.common.greyedOut
 private enum class Section(val label: String, val icon: ImageVector) {
     Pen("Pen", Icons.Outlined.Create),
     Writing("Writing", Icons.Outlined.TouchApp),
+    Palm("Palm rejection", Icons.Outlined.PanTool),
     Pages("Pages", Icons.Outlined.Description),
     Appearance("Appearance", Icons.Outlined.Palette),
     About("About", Icons.Outlined.Info),
@@ -104,6 +117,7 @@ fun SettingsScreen(settings: SettingsStore, onBack: () -> Unit) {
                 when (section) {
                     Section.Pen -> PenSection(settings)
                     Section.Writing -> Pane { WritingSection(settings) }
+                    Section.Palm -> PalmSection(settings)
                     Section.Pages -> Pane { PagesSection(settings) }
                     Section.Appearance -> Pane { AppearanceSection(settings) }
                     Section.About -> Pane { AboutSection() }
@@ -192,6 +206,7 @@ private fun PenSection(settings: SettingsStore) {
                         if (settings.pressureOn) settings.pressureGamma else null,
                     ),
                     engine = EngineSpec(settings.predictor.engineId, settings.inkFeelMs),
+                    palm = settings.palmSpec(),
                     modifier = Modifier
                         .fillMaxSize()
                         .clip(MaterialTheme.shapes.medium)
@@ -204,17 +219,180 @@ private fun PenSection(settings: SettingsStore) {
 
 @Composable
 private fun WritingSection(settings: SettingsStore) {
-    val fingerSoon = comingSoon("Drawing with your finger")
     val undoSoon = comingSoon("Undo")
     SwitchRow(
-        "Draw with finger", "Off: only the pen writes, so your palm and fingers never leave marks.",
-        checked = false, modifier = Modifier.greyedOut(),
-    ) { fingerSoon() }
+        "Draw with finger",
+        if (settings.fingerDrawing) {
+            "On: one finger draws, two fingers move the page. Palms are still rejected, and while you use the pen a finger moves the page instead."
+        } else {
+            "Off: only the pen writes; fingers move and zoom the page."
+        },
+        checked = settings.fingerDrawing,
+    ) { settings.fingerDrawing = it }
     SwitchRow("Two-finger tap to undo", null, checked = false, modifier = Modifier.greyedOut()) { undoSoon() }
     SwitchRow(
         "Ask before leaving a notebook", "Ink isn't saved yet, so leaving a notebook clears it.",
         checked = settings.confirmLeave,
     ) { settings.confirmLeave = it }
+}
+
+private fun SettingsStore.palmSpec() = PalmSpec(fingerDrawing, palmModel, onModel = { palmModel = it })
+
+/** What each recording is labelled as, for palm_bench. */
+private enum class PalmScenario(val label: String, val title: String, val hint: String) {
+    Palm("palm", "Writing hand", "Write normally with your hand resting on the screen. Every finger contact is counted as a palm."),
+    Touch("touch", "Deliberate touches", "Don't use the pen. Tap, pan and pinch with your fingers. Every contact is counted as deliberate."),
+}
+
+/**
+ * Palm rejection, live: a scratch canvas with the filter's counters and what it has
+ * learned about your hand, plus a recorder that writes labelled sessions for palm_bench
+ * (engine/tools/palm_bench.cpp) so the filter can be measured on your own hand.
+ */
+@Composable
+private fun PalmSection(settings: SettingsStore) {
+    val context = LocalContext.current
+    var layer by remember { mutableStateOf<InkLayer?>(null) }
+    var stats by remember { mutableStateOf(LongArray(9)) }
+    var scenario by remember { mutableStateOf(PalmScenario.Palm) }
+    var recording by remember { mutableStateOf(false) }
+    var clears by remember { mutableIntStateOf(0) }
+    // After "Forget", the closing canvas must not save back what it had learned.
+    var modelGeneration by remember { mutableIntStateOf(0) }
+    LaunchedEffect(layer) {
+        while (layer != null) {
+            layer?.palmStats { stats = it }
+            delay(500)
+        }
+    }
+    Row(Modifier.fillMaxSize()) {
+        Column(
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+            modifier = Modifier.weight(1f).fillMaxHeight().verticalScroll(rememberScrollState()).padding(24.dp),
+        ) {
+            Text(
+                "Only the pen and deliberate touches get through. Every finger contact is scored from the pen's state, " +
+                    "where your hand rests relative to the nib, the contact's size and how it moves, and its neighbours, " +
+                    "and only confirmed touches move the page. The filter learns your hand as you write.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text("This session", style = MaterialTheme.typography.titleSmall)
+                StatRow("Palm contacts rejected", "${stats[0]}" + if (stats[4] > 0) "  (${stats[4]} flagged by the system)" else "")
+                StatRow("Deliberate touches", if (stats[1] > 0) "${stats[1]}, confirmed in %.0f ms on average".format(stats[5] / 1000.0) else "0")
+                StatRow("Finger strokes kept", "${stats[2]}")
+                StatRow("Tentative strokes rolled back", "${stats[3]}")
+            }
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text("What it has learned", style = MaterialTheme.typography.titleSmall)
+                val right = stats[6] / 1000f
+                StatRow(
+                    "Writing hand",
+                    when {
+                        right > 0.75f -> "right (%.0f%%)".format(right * 100)
+                        right < 0.25f -> "left (%.0f%%)".format((1 - right) * 100)
+                        else -> "not sure yet"
+                    },
+                )
+                StatRow("Pause between strokes it waits out", "${stats[7]} ms")
+                StatRow("Fingertip / palm size boundary", "%.1f mm".format(stats[8] / 1000.0))
+                TextButton(onClick = {
+                    modelGeneration++
+                    settings.palmModel = null
+                    clears++
+                    Toast.makeText(context, "Forgot what it learned about your hand", Toast.LENGTH_SHORT).show()
+                }) { Text("Forget") }
+            }
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Record a test session", style = MaterialTheme.typography.titleSmall)
+                Text(
+                    "Records every pen and touch sample on the canvas, labelled, so palm_bench can measure the filter on your hand.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                SingleChoiceSegmentedButtonRow {
+                    PalmScenario.entries.forEachIndexed { i, s ->
+                        SegmentedButton(
+                            selected = scenario == s,
+                            onClick = { if (!recording) scenario = s },
+                            enabled = !recording || scenario == s,
+                            shape = SegmentedButtonDefaults.itemShape(i, PalmScenario.entries.size),
+                        ) { Text(s.title) }
+                    }
+                }
+                Text(scenario.hint, style = MaterialTheme.typography.bodyMedium)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (!recording) {
+                        Button(onClick = {
+                            layer?.setPalmRecording(true, scenario.label)
+                            recording = true
+                        }, enabled = layer != null) { Text("Start recording") }
+                    } else {
+                        Button(onClick = {
+                            val dir = File(context.getExternalFilesDir(null), "palm-lab").apply { mkdirs() }
+                            val stamp = SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(Date())
+                            val file = File(dir, "palm-${scenario.label}-$stamp.csv")
+                            val l = layer
+                            if (l == null) {
+                                recording = false
+                            } else {
+                                l.exportPalmRecording(file.path) { rows ->
+                                    l.setPalmRecording(false, scenario.label)
+                                    recording = false
+                                    val msg = if (rows >= 0) "Saved $rows samples to ${file.path}" else "Couldn't save the recording"
+                                    Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+                                }
+                            }
+                        }) { Text("Stop and save") }
+                        OutlinedButton(onClick = {
+                            layer?.setPalmRecording(false, scenario.label)
+                            recording = false
+                        }) { Text("Discard") }
+                    }
+                }
+                Text(
+                    "Files go to Android/data/app.noti/files/palm-lab. Copy them with adb pull, then run palm_bench --csv <files>.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+        VerticalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+        Column(Modifier.weight(1f).fillMaxHeight().padding(24.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Try it here", style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
+                TextButton(onClick = { clears++ }, enabled = !recording) { Text("Clear") }
+            }
+            Spacer(Modifier.height(8.dp))
+            val slots = settings.penSlots
+            key(clears) {
+                InkCanvas(
+                    paper = Paper(),
+                    brush = BrushSpec(slots.currentColor, 1f, slots.currentWidth, if (settings.pressureOn) settings.pressureGamma else null),
+                    engine = EngineSpec(settings.predictor.engineId, settings.inkFeelMs),
+                    palm = run {
+                        val gen = modelGeneration
+                        PalmSpec(settings.fingerDrawing, settings.palmModel) { m -> if (gen == modelGeneration) settings.palmModel = m }
+                    },
+                    onLayer = { layer = it },
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .clip(MaterialTheme.shapes.medium)
+                        .border(1.dp, MaterialTheme.colorScheme.outlineVariant, MaterialTheme.shapes.medium),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun StatRow(label: String, value: String) {
+    Row(Modifier.fillMaxWidth()) {
+        Text(label, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+        Text(value, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
 }
 
 @Composable

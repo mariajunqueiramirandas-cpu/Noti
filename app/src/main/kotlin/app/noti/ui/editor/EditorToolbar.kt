@@ -15,6 +15,8 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowLeft
+import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.outlined.Redo
 import androidx.compose.material.icons.automirrored.outlined.Undo
 import androidx.compose.material.icons.outlined.ArrowDropDown
@@ -70,6 +72,9 @@ internal fun EditorToolbar(
     onPagePaper: () -> Unit,
     onFullScreen: () -> Unit,
     onSettings: () -> Unit,
+    /** For a PDF: the page on screen (0-based) and the page count; null for a notebook. */
+    pdfPage: Pair<Int, Int>? = null,
+    onPage: (Int) -> Unit = {},
 ) {
     val undoSoon = comingSoon("Undo")
     val redoSoon = comingSoon("Redo")
@@ -101,6 +106,20 @@ internal fun EditorToolbar(
                     modifier = Modifier.weight(1f, fill = false),
                 )
                 Icon(Icons.Outlined.ArrowDropDown, contentDescription = "Rename")
+            }
+            if (pdfPage != null) {
+                val (page, count) = pdfPage
+                IconButton(onClick = { onPage(page - 1) }, enabled = page > 0) {
+                    Icon(Icons.AutoMirrored.Outlined.KeyboardArrowLeft, contentDescription = "Previous page")
+                }
+                Text(
+                    "${page + 1} / $count",
+                    style = MaterialTheme.typography.labelLarge,
+                    maxLines = 1,
+                )
+                IconButton(onClick = { onPage(page + 1) }, enabled = page < count - 1) {
+                    Icon(Icons.AutoMirrored.Outlined.KeyboardArrowRight, contentDescription = "Next page")
+                }
             }
 
             ToolbarDivider()
@@ -171,11 +190,13 @@ internal fun EditorToolbar(
                         onClick = exportSoon,
                         modifier = Modifier.greyedOut(),
                     )
-                    DropdownMenuItem(
-                        text = { Text("Page paper") },
-                        leadingIcon = { Icon(Icons.Outlined.Description, null) },
-                        onClick = { menuOpen = false; onPagePaper() },
-                    )
+                    if (pdfPage == null) {
+                        DropdownMenuItem(
+                            text = { Text("Page paper") },
+                            leadingIcon = { Icon(Icons.Outlined.Description, null) },
+                            onClick = { menuOpen = false; onPagePaper() },
+                        )
+                    }
                     DropdownMenuItem(
                         text = { Text("Full screen") },
                         leadingIcon = { Icon(Icons.Outlined.Fullscreen, null) },

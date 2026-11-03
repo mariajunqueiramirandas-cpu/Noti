@@ -20,6 +20,14 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Close
@@ -63,6 +71,9 @@ import app.noti.data.Tool
 import app.noti.ui.common.BrushSpec
 import app.noti.ui.common.EngineSpec
 import app.noti.ui.common.InkCanvas
+import app.noti.ui.common.PageController
+import app.noti.ui.common.PalmSpec
+import app.noti.pdf.PdfDocument
 import app.noti.ui.common.PaperPicker
 import app.noti.ui.common.PaperPreview
 import app.noti.ui.common.TextInputDialog
@@ -100,6 +111,12 @@ fun EditorScreen(
         )
     }
     val engine = EngineSpec(settings.predictor.engineId, settings.inkFeelMs)
+    val palm = PalmSpec(settings.fingerDrawing, settings.palmModel, onModel = { settings.palmModel = it })
+    // An annotated PDF: rendered on its own thread, one page at a time.
+    val pdf = remember(notebook.pdf) { library.pdfFile(notebook)?.let { PdfDocument(it) } }
+    DisposableEffect(pdf) { onDispose { pdf?.close() } }
+    val pages = remember(notebook.pdf) { PageController() }
+    val pdfPage = if (pdf != null && pdf.pageCount > 0) pages.page to pdf.pageCount else null
 
     Surface(color = MaterialTheme.colorScheme.background, modifier = Modifier.fillMaxSize()) {
         Column(
@@ -121,16 +138,22 @@ fun EditorScreen(
                         Toast.makeText(context, "Two-finger double-tap or Back to exit full screen", Toast.LENGTH_SHORT).show()
                     },
                     onSettings = { settingsOpen = true },
+                    pdfPage = pdfPage,
+                    onPage = pages::goTo,
                 )
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             }
             Row(Modifier.fillMaxSize()) {
                 if (pagesOpen && !fullScreen) {
-                    PagesPanel(
-                        notebook = notebook,
-                        onClose = { pagesOpen = false },
-                        onChangePaper = { choosingPaper = true },
-                    )
+                    if (pdf != null) {
+                        PdfPagesPanel(pdf = pdf, current = pages.page, onPage = pages::goTo, onClose = { pagesOpen = false })
+                    } else {
+                        PagesPanel(
+                            notebook = notebook,
+                            onClose = { pagesOpen = false },
+                            onChangePaper = { choosingPaper = true },
+                        )
+                    }
                     VerticalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 }
                 InkCanvas(
@@ -138,6 +161,9 @@ fun EditorScreen(
                     brush = brush,
                     engine = engine,
                     modifier = Modifier.weight(1f).fillMaxHeight(),
+                    palm = palm,
+                    pdf = pdf,
+                    pages = pages,
                     onTwoFingerDoubleTap = { fullScreen = false },
                 )
             }
@@ -267,6 +293,53 @@ private fun PagesPanel(notebook: Notebook, onClose: () -> Unit, onChangePaper: (
         }
     }
 }
+
+/** Page thumbnails of a PDF; tap one to go there. */
+@Composable
+private fun PdfPagesPanel(pdf: PdfDocument, current: Int, onPage: (Int) -> Unit, onClose: () -> Unit) {
+    val list = rememberLazyListState()
+    LaunchedEffect(current) { if (current !in list.layoutInfo.visibleItemsInfo.map { it.index }) list.animateScrollToItem(current) }
+    @Suppress("UNUSED_VARIABLE") val v = pdf.version  // recompose when thumbnails land
+    Column(
+        Modifier
+            .width(200.dp)
+            .fillMaxHeight()
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("Pages", style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
+            IconButton(onClick = onClose) { Icon(Icons.Outlined.Close, contentDescription = "Close pages") }
+        }
+        LazyColumn(state = list, verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxSize()) {
+            items(pdf.pageCount) { i ->
+                Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
+                    val shape = MaterialTheme.shapes.small
+                    Box(
+                        Modifier
+                            .fillMaxWidth()
+                            .aspectRatio(1f / pdf.aspect(i))
+                            .clip(shape)
+                            .background(Color.White)
+                            .border(
+                                if (i == current) 2.dp else 1.dp,
+                                if (i == current) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
+                                shape,
+                            )
+                            .clickable { onPage(i) },
+                    ) {
+                        pdf.thumbnail(i, THUMB_PX)?.let { bmp ->
+                            Image(bmp.asImageBitmap(), contentDescription = "Page ${i + 1}", contentScale = ContentScale.Fit, modifier = Modifier.fillMaxSize())
+                        }
+                    }
+                    Spacer(Modifier.height(4.dp))
+                    Text("${i + 1}", style = MaterialTheme.typography.labelMedium)
+                }
+            }
+        }
+    }
+}
+
+private const val THUMB_PX = 320
 
 /** Hides the status and navigation bars while [hidden] (full screen); a swipe shows them briefly. */
 @Composable
