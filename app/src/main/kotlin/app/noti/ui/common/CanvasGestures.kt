@@ -8,7 +8,7 @@ import kotlin.math.max
 
 /**
  * Turns the palm filter's stream of deliberate touches into canvas gestures:
- *  - one finger pans (or, unzoomed, swipes to the next page),
+ *  - one finger scrolls continuously with momentum,
  *  - two fingers pinch-zoom and pan,
  *  - a two-finger double tap calls [onTwoFingerDoubleTap].
  *
@@ -19,8 +19,28 @@ import kotlin.math.max
 internal class CanvasGestures(
     private val slopPx: Float,
     private val viewport: PageViewport?,
+    private val schedule: (Runnable, Long) -> Unit,
+    private val cancel: (Runnable) -> Unit,
+    private val onTwoFingerTap: () -> Unit = {},
     private val onTwoFingerDoubleTap: () -> Unit,
+
 ) : GestureListener {
+    private val main = android.os.Handler(android.os.Looper.getMainLooper())
+    private val tapAction = Runnable { onTwoFingerTap() }
+    private var vx = 0f
+    private var vy = 0f
+    private var batchTime = 0L
+    private var eventTime = 0L
+    private val fling = object : Runnable {
+        override fun run() {
+            viewport?.pan(vx * 0.016f, vy * 0.016f)
+            vx *= 0.91f; vy *= 0.91f
+            if (hypot(vx, vy) > 30f) schedule(this, 16) else viewport?.end()
+        }
+    }
+    fun stopMotion() { cancel(fling); viewport?.end() }
+    override fun onPenDown() { stopMotion(); main.removeCallbacks(tapAction) }
+    fun close() { main.removeCallbacks(tapAction); cancel(fling) }
     private class Pointer(var x: Float, var y: Float, val x0: Float, val y0: Float)
 
     private val pointers = LinkedHashMap<Int, Pointer>()
@@ -38,9 +58,12 @@ internal class CanvasGestures(
     private var lastDist = 0f
 
     override fun onGesture(action: Int, id: Int, x: Float, y: Float, timeNanos: Long) {
+        eventTime = timeNanos
         when (action) {
             NotiInk.GESTURE_DOWN -> {
                 if (pointers.isEmpty()) {
+                    cancel(fling)
+                    vx = 0f; vy = 0f; batchTime = 0L
                     sessionStart = timeNanos
                     maxPointers = 0
                     moved = false
@@ -83,12 +106,19 @@ internal class CanvasGestures(
             lastCx = cx
             lastCy = cy
             lastDist = dist
+            batchTime = eventTime
             return
         }
         if (!engaged) {
             if (!moved) return  // within touch slop: maybe a tap
             engaged = true
         }
+        val elapsed = (eventTime - batchTime) / 1e9f
+        if (elapsed > 0f && elapsed < 0.1f) {
+            vx = 0.4f * vx + 0.6f * (cx - lastCx) / elapsed
+            vy = 0.4f * vy + 0.6f * (cy - lastCy) / elapsed
+        }
+        batchTime = eventTime
         if (b == null) vp.pan(cx - lastCx, cy - lastCy)
         else vp.pinch(cx, cy, if (lastDist > 1f) dist / lastDist else 1f, cx - lastCx, cy - lastCy)
         lastCx = cx
@@ -97,15 +127,20 @@ internal class CanvasGestures(
     }
 
     private fun endSession(t: Long) {
-        viewport?.end()
+        if (!cancelled && moved && t - batchTime < 100_000_000 && hypot(vx, vy) > 150f) {
+            viewport?.begin()
+            schedule(fling, 16)
+        } else viewport?.end()
         lastCount = 0
         val tap = !cancelled && maxPointers == 2 && !moved && t - sessionStart < TAP_NS
-        if (!tap) return
+        if (!tap) { lastTapEnd = 0L; return }
         if (lastTapEnd != 0L && t - lastTapEnd < DOUBLE_TAP_NS) {
             lastTapEnd = 0L
+            main.removeCallbacks(tapAction)
             onTwoFingerDoubleTap()
         } else {
             lastTapEnd = t
+            main.postDelayed(tapAction, DOUBLE_TAP_NS / 1_000_000)
         }
     }
 

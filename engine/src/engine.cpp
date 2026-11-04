@@ -257,6 +257,7 @@ void InkEngine::process_samples(const InkSample* s, uint32_t n, int64_t t_start)
   bool dirty = false;
   for (uint32_t i = 0; i < n; ++i) {
     const InkSample& smp = s[i];
+    if (edit_sample(smp)) continue;
     switch (smp.action) {
       case Action::kHoverEnter:
         renderer_.hover(true);
@@ -268,6 +269,8 @@ void InkEngine::process_samples(const InkSample* s, uint32_t n, int64_t t_start)
         continue;
       case Action::kDown:
         if (active_) finish_stroke(last_t_);  // missed UP: never lose ink
+        if (!pick_page(smp.x, smp.y)) continue;
+        selected_.clear();
         note_sample(smp);
         begin_stroke(smp);
         dirty = true;
@@ -334,6 +337,13 @@ void InkEngine::begin_stroke(const InkSample& s) noexcept {
 
   float x, y;
   cfg_.input_to_surface.apply(s.x, s.y, &x, &y);
+  if (document_mode_) {
+    for (const auto& p : visible_pages_) if (p.page == page_) {
+      x = std::clamp(x, page_map_.ox, page_map_.ox + p.width * scale_);
+      y = std::clamp(y, page_map_.oy, page_map_.oy + p.height * scale_);
+      break;
+    }
+  }
   const float r = brush_.radius(s.pressure) * scale_;
   const Capsule dot{x, y, r, x, y, r};
   if (NOTI_LIKELY(store_.push(dot))) stroke_bounds_.add(dot);
@@ -347,6 +357,13 @@ void InkEngine::begin_stroke(const InkSample& s) noexcept {
 void InkEngine::extend_stroke(const InkSample& s) noexcept {
   float x, y;
   cfg_.input_to_surface.apply(s.x, s.y, &x, &y);
+  if (document_mode_) {
+    for (const auto& p : visible_pages_) if (p.page == page_) {
+      x = std::clamp(x, page_map_.ox, page_map_.ox + p.width * scale_);
+      y = std::clamp(y, page_map_.oy, page_map_.oy + p.height * scale_);
+      break;
+    }
+  }
   const float r = brush_.radius(s.pressure) * scale_;
   const Capsule c{last_x_, last_y_, last_r_, x, y, r};
   const int64_t dt = s.t_ns - last_t_;
@@ -434,9 +451,12 @@ void InkEngine::finish_stroke(int64_t t_end) noexcept {
   const uint32_t id = store_.close(stroke_bounds_, stroke_color_, stroke_t0_, t_end, page_, page_map_);
   if (NOTI_LIKELY(id != UINT32_MAX)) {
     renderer_.commit(store_, id, pixel_bounds(stroke_bounds_, surface_w_, surface_h_));
+    remember_edit(EditAction{0, {id}});
   }
-  // If the store is out of stroke slots the ink stays on the wet layer rather
-  // than being lost.
+  else {
+    store_.abort();
+    renderer_.cancel(pixel_bounds(stroke_bounds_, surface_w_, surface_h_));
+  }
   active_ = false;
   stats_.strokes.fetch_add(1, std::memory_order_relaxed);
 }

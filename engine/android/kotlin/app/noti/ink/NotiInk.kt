@@ -86,6 +86,13 @@ internal object NotiInk {
     @JvmStatic external fun nativeExportPalmRecording(handle: Long, path: String): Long
     @JvmStatic external fun nativeSetPage(handle: Long, page: Int, x: Float, y: Float, width: Float)
 
+    @JvmStatic external fun nativeSetTool(handle: Long, tool: Int)
+    @JvmStatic external fun nativeSetPages(handle: Long, pages: FloatArray)
+    @JvmStatic external fun nativeSnapshot(handle: Long): ByteArray
+    @JvmStatic external fun nativeRestore(handle: Long, data: ByteArray): Boolean
+    @JvmStatic external fun nativeDocumentAction(handle: Long, action: Int, page: Int): Boolean
+    @JvmStatic external fun nativeDocumentState(handle: Long): DoubleArray
+
     /** Runs the palm filter on `count` staged contacts (and any finger ink); returns the next deadline (ns) or -1. */
     @CriticalNative @JvmStatic external fun nativeTouch(handle: Long, count: Int): Long
 

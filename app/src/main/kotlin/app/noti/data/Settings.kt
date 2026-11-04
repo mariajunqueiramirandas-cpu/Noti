@@ -12,8 +12,8 @@ enum class Predictor(val label: String, val engineId: Int) {
     Off("Off", 0), Linear("Linear", 1), Polynomial("Polynomial", 2), Kalman("Kalman", 3),
 }
 
-enum class Tool(val label: String, val available: Boolean) {
-    Pen("Pen", true), Highlighter("Highlighter", true), Eraser("Eraser", false), Lasso("Lasso", false),
+enum class Tool(val label: String) {
+    Pen("Pen"), Highlighter("Highlighter"), Eraser("Eraser"), Lasso("Lasso"),
 }
 
 /** The three quick color slots and three quick width slots of a drawing tool. */
@@ -68,8 +68,8 @@ class SettingsStore(context: Context) {
         putString("defColor", it.name)
     }
 
-    /** Ask before leaving a notebook, since ink isn't saved yet. */
-    var confirmLeave by pref(true, { prefs.getBoolean("confirmLeave", it) }) { putBoolean("confirmLeave", it) }
+    /** Optional confirmation before returning to the library. */
+    var confirmLeave by pref(false, { prefs.getBoolean("confirmLeave", it) }) { putBoolean("confirmLeave", it) }
 
     /** A single deliberate finger draws. Palms never do, whatever this says. */
     var fingerDrawing by pref(false, { prefs.getBoolean("fingerDrawing", it) }) { putBoolean("fingerDrawing", it) }
@@ -81,6 +81,8 @@ class SettingsStore(context: Context) {
     var palmModel by pref(null as FloatArray?, { decodeFloats(prefs.getString("palmModel", null)) ?: it }) {
         putString("palmModel", it?.joinToString(","))
     }
+
+    var tapUndo by pref(true, { prefs.getBoolean("tapUndo", it) }) { putBoolean("tapUndo", it) }
 
     var tool by pref(Tool.Pen, { enumOr(prefs.getString("tool", null), it) }) { putString("tool", it.name) }
 

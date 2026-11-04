@@ -46,6 +46,10 @@ class InkLayer(
     palmModel: FloatArray? = null,
     /** Receives the learned model when the layer is released (ink thread); persist it. */
     private val onPalmModel: ((FloatArray) -> Unit)? = null,
+    initialInk: ByteArray? = null,
+    private val onSnapshot: ((ByteArray) -> Unit)? = null,
+    private val onDocumentState: ((DoubleArray) -> Unit)? = null,
+    private val onRestoreError: (() -> Unit)? = null,
 ) {
     private val thread = HandlerThread("noti-ink", Process.THREAD_PRIORITY_URGENT_DISPLAY).apply { start() }
     private val ink = Handler(thread.looper)
@@ -55,6 +59,26 @@ class InkLayer(
     @Volatile private var released = false
     private var fingerDrawing = fingerDrawing
     private val initialModel = palmModel?.copyOf()
+    private val initialInk = initialInk
+    private var persistenceEnabled = true
+    private var lastRevision = -1.0
+    private var lastTool = -1
+    private var lastDocumentState: DoubleArray? = null
+    private val documentPoll = object : Runnable {
+        override fun run() {
+            if (released) return
+            val state = NotiInk.nativeDocumentState(handle)
+            if (lastDocumentState?.contentEquals(state) != true) {
+                lastDocumentState = state
+                main.post { onDocumentState?.invoke(state) }
+            }
+            if (state[8] == 0.0 && state[0] != lastRevision) {
+                lastRevision = state[0]
+                if (persistenceEnabled) onSnapshot?.invoke(NotiInk.nativeSnapshot(handle))
+            }
+            ink.postDelayed(this, 350)
+        }
+    }
 
     // Latest page placement, applied on the ink thread at the next vsync (so a
     // pinch updates the engine at most once per frame, however fast it reports).
@@ -79,6 +103,7 @@ class InkLayer(
     }
 
     private fun attach() {
+        if (released) return
         pinHostDisplayMode()
         val token = anchor.windowToken
         val bounds = anchorRect()
@@ -86,6 +111,13 @@ class InkLayer(
         anchor.addOnLayoutChangeListener(layoutListener)
         ink.post {
             check(NotiInk.nativeAttach(handle)) { "noti ink engine failed to initialise EGL" }
+            initialInk?.let {
+                if (!NotiInk.nativeRestore(handle, it)) {
+                    persistenceEnabled = false
+                    main.post { onRestoreError?.invoke() }
+                }
+            }
+            ink.post(documentPoll)
             initialModel?.let { NotiInk.nativeSetPalmModel(handle, it) }
             NotiInk.nativeSetFingerInk(handle, fingerDrawing)
             window = InkWindow(context, handle, ink, gestures, ::flushPage).also { it.add(token, bounds) }
@@ -175,7 +207,43 @@ class InkLayer(
         }
     }
 
+    fun setTool(tool: Int) {
+        if (lastTool == tool) return
+        lastTool = tool
+        ink.post { if (!released) NotiInk.nativeSetTool(handle, tool) }
+    }
+
+    fun documentAction(action: Int, page: Int = 0, onDone: ((Boolean) -> Unit)? = null) {
+        ink.post {
+            if (released) return@post
+            val ok = NotiInk.nativeDocumentAction(handle, action, page)
+            if (ok && persistenceEnabled) onSnapshot?.invoke(NotiInk.nativeSnapshot(handle))
+            main.post { onDone?.invoke(ok) }
+        }
+    }
+
+    fun snapshot(onDone: (ByteArray) -> Unit) {
+        ink.post {
+            if (released) return@post
+            NotiInk.nativeDocumentAction(handle, 5, 0)
+            val bytes = NotiInk.nativeSnapshot(handle)
+            main.post { onDone(bytes) }
+        }
+    }
+
+    fun saveNow() {
+        ink.post {
+            if (!released && persistenceEnabled) {
+                NotiInk.nativeDocumentAction(handle, 5, 0)
+                onSnapshot?.invoke(NotiInk.nativeSnapshot(handle))
+            }
+        }
+    }
+
     // ---- pages (any thread) ----
+    fun setPages(placements: FloatArray) { pendingPages.set(placements) }
+    private val pendingPages = AtomicReference<FloatArray?>(null)
+
 
     /**
      * The page on screen and where it is: [x], [y] its top-left corner and [width] its width,
@@ -186,12 +254,16 @@ class InkLayer(
         pendingPage.set(PageRequest(page, x, y, width))
     }
 
+    fun scheduleInk(task: Runnable, delayMs: Long) { ink.postDelayed(task, delayMs) }
+    fun cancelInk(task: Runnable) { ink.removeCallbacks(task) }
+
     /** Runs [block] on the ink thread (where gestures arrive). */
     fun runOnInkThread(block: () -> Unit) {
         ink.post(block)
     }
 
     private fun flushPage() {
+        pendingPages.getAndSet(null)?.let { NotiInk.nativeSetPages(handle, it) }
         val r = pendingPage.getAndSet(null) ?: return
         NotiInk.nativeSetPage(handle, r.page, r.x, r.y, r.width)
     }
@@ -221,7 +293,11 @@ class InkLayer(
         if (released) return
         released = true
         anchor.removeOnLayoutChangeListener(layoutListener)
+        ink.removeCallbacks(documentPoll)
         ink.post {
+            NotiInk.nativeIdle(handle)
+            NotiInk.nativeDocumentAction(handle, 5, 0)
+            if (persistenceEnabled) onSnapshot?.invoke(NotiInk.nativeSnapshot(handle))
             onPalmModel?.let { save ->
                 val model = FloatArray(NotiInk.PALM_MODEL_FLOATS)
                 NotiInk.nativePalmModel(handle, model)

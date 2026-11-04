@@ -13,14 +13,28 @@ from `engine/android/kotlin`. Only arm64 and Android 13+ are supported.
 
 The UI is Jetpack Compose (Material 3): library, editor, settings. Each writing area hosts the native engine's own
 input window over it, so toolbars and panels are docked beside it, never over it (`ui/common/InkCanvas.kt`).
-**PDFs**: New → Import PDF copies a PDF into the app (rendered with the platform's PdfRenderer on its own thread).
-One page at a time, fitted to the canvas; pinch to zoom (sharp re-render when the page comes to rest), drag to pan,
-swipe or use the toolbar arrows / page panel to turn pages. Ink is kept per page in page coordinates, so it stays
-on the page through zoom, pan and rotation. Fingers pass palm rejection first.
+**Pages**: notebooks and imported PDFs scroll vertically as a continuous document. Drag to scroll,
+pinch to zoom, and use page arrows or the pages panel to jump. Momentum stops when the pen touches down.
+Only visible pages are rendered; PDF neighbours are prefetched and zoomed detail is rendered after scrolling settles.
+Ink uses canonical page coordinates, so scrolling, zooming, rotation and reopening do not move annotations.
 
-Controls whose engine support isn't built yet (undo/redo, eraser, lasso, more notebook pages, export, saving ink) are
-shown greyed out and say "coming soon" when tapped. Release builds use R8, which runs in its own JVM with its own
-heap (`settings.gradle.kts`; `-Pnoti.r8.maxHeap=…`, default 8 GB, CI gives it half the runner's RAM).
+**Writing**: a separate document bar and scrollable drawing strip provide labelled pen, highlighter, stroke eraser
+and lasso tools, quick colors and widths, and live undo/redo. Circle whole strokes with the lasso, then drag inside
+the selection to move them. Hold a primary stylus button (or use the eraser tip) for erasing; the secondary button
+selects. Two-finger tap undoes (configurable); two-finger double-tap exits full screen.
+
+**Saving**: completed edits are autosaved to versioned `.noti` files with `AtomicFile` on a separate IO executor.
+Snapshots run between strokes; pause, leaving and release also save. Invalid archives are preserved instead of being
+overwritten. Undo history lasts for the editing session (up to 256 operations); reopening restores the visible ink.
+Notebooks can add, duplicate and delete pages, with the last page protected. A4 and Letter paper sizes work;
+legacy Endless paper uses the A4 page proportion with additional pages available from the toolbar or page panel.
+
+**Export**: export a flattened PDF with paper/source PDF and annotations from the editor or library. Multiple
+library selections export as a ZIP of PDFs. Source PDF pages are rasterized at up to 2× for export; ink stays vector.
+Duplicating a notebook copies its saved ink; permanent deletion removes it.
+
+Release builds use R8, which runs in its own JVM with its own heap (`settings.gradle.kts`;
+`-Pnoti.r8.maxHeap=…`, default 8 GB, CI gives it half the runner's RAM).
 
 ```sh
 ./gradlew :app:assembleRelease   # → app/build/outputs/apk/release/app-release-unsigned.apk
@@ -53,3 +67,17 @@ base64 -w0 noti-release.jks   # → SIGNING_KEYSTORE_BASE64
 Keep `noti-release.jks` somewhere safe and out of the repo. Without these secrets, CI signs with a fallback key it
 generates once and keeps in the Actions cache. That works, but if the cache entry is ever evicted the key changes,
 and you'll have to uninstall before the next APK will install.
+
+### Verification
+
+```sh
+./gradlew :app:assembleDebug :app:testDebugUnitTest
+cmake -S engine -B work/build-engine -DCMAKE_BUILD_TYPE=Release
+cmake --build work/build-engine -j
+ctest --test-dir work/build-engine --output-on-failure
+```
+
+The host suite covers editing history, eraser cancellation, lasso movement, archive validation,
+multiple visible pages, page operations, palm rejection, prediction quality and the engine CPU budget.
+JVM viewport tests cover continuous dragging, bounds, pinch anchoring, mixed page sizes, resize and large documents.
+Validate actual Focus Pen button mappings, front-buffer rendering and visual appearance on an arm64 Android 13+ tablet.

@@ -75,7 +75,6 @@ import app.noti.ui.common.BrushSpec
 import app.noti.ui.common.EngineSpec
 import app.noti.ui.common.InkCanvas
 import app.noti.ui.common.PaperPicker
-import app.noti.ui.common.comingSoon
 import app.noti.ui.common.greyedOut
 
 private enum class Section(val label: String, val icon: ImageVector) {
@@ -141,7 +140,6 @@ private fun Pane(content: @Composable () -> Unit) {
  */
 @Composable
 private fun PenSection(settings: SettingsStore) {
-    val buttonsSoon = comingSoon("Pen button actions")
     var clears by remember { mutableIntStateOf(0) }
     Row(Modifier.fillMaxSize()) {
         Column(
@@ -184,10 +182,10 @@ private fun PenSection(settings: SettingsStore) {
                     }
                 }
             }
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.greyedOut()) {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text("Pen buttons", style = MaterialTheme.typography.titleSmall)
-                ValueRow("Upper button", "Eraser", onClick = buttonsSoon)
-                ValueRow("Lower button", "Lasso", onClick = buttonsSoon)
+                Text("Hold the primary stylus button to erase, or the secondary button to select ink. Release to return to your tool.",
+                    style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
         VerticalDivider(color = MaterialTheme.colorScheme.outlineVariant)
@@ -219,7 +217,6 @@ private fun PenSection(settings: SettingsStore) {
 
 @Composable
 private fun WritingSection(settings: SettingsStore) {
-    val undoSoon = comingSoon("Undo")
     SwitchRow(
         "Draw with finger",
         if (settings.fingerDrawing) {
@@ -229,9 +226,9 @@ private fun WritingSection(settings: SettingsStore) {
         },
         checked = settings.fingerDrawing,
     ) { settings.fingerDrawing = it }
-    SwitchRow("Two-finger tap to undo", null, checked = false, modifier = Modifier.greyedOut()) { undoSoon() }
+    SwitchRow("Two-finger tap to undo", "Double-tap with two fingers to leave full screen.", checked = settings.tapUndo) { settings.tapUndo = it }
     SwitchRow(
-        "Ask before leaving a notebook", "Ink isn't saved yet, so leaving a notebook clears it.",
+        "Ask before leaving a notebook", "Ink is saved automatically on this device.",
         checked = settings.confirmLeave,
     ) { settings.confirmLeave = it }
 }

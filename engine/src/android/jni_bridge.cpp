@@ -205,6 +205,45 @@ void nativeSetPage(JNIEnv*, jclass, jlong h, jint page, jfloat x, jfloat y, jflo
   inst(h)->engine.execute(c);
 }
 
+// Document operations are dispatched by InkLayer onto the ink thread.
+void nativeSetTool(JNIEnv*, jclass, jlong h, jint tool) { inst(h)->engine.set_tool(tool); }
+void nativeSetPages(JNIEnv* env, jclass, jlong h, jfloatArray input) {
+  const jsize n = env->GetArrayLength(input);
+  if (n % 5 != 0) return;
+  std::vector<jfloat> values(n);
+  env->GetFloatArrayRegion(input, 0, n, values.data());
+  std::vector<noti::InkEngine::VisiblePage> pages;
+  for (int k = 0; k < n; k += 5) pages.push_back({uint32_t(values[k]), values[k+1], values[k+2], values[k+3], values[k+4]});
+  inst(h)->engine.set_pages(pages);
+}
+jbyteArray nativeSnapshot(JNIEnv* env, jclass, jlong h) {
+  const auto data = inst(h)->engine.snapshot();
+  auto out = env->NewByteArray(jsize(data.size()));
+  if (out) env->SetByteArrayRegion(out, 0, jsize(data.size()), reinterpret_cast<const jbyte*>(data.data()));
+  return out;
+}
+jboolean nativeRestore(JNIEnv* env, jclass, jlong h, jbyteArray input) {
+  const jsize n = env->GetArrayLength(input);
+  std::vector<uint8_t> data(n);
+  env->GetByteArrayRegion(input, 0, n, reinterpret_cast<jbyte*>(data.data()));
+  return inst(h)->engine.restore(data.data(), data.size());
+}
+jboolean nativeDocumentAction(JNIEnv*, jclass, jlong h, jint action, jint page) {
+  auto& e = inst(h)->engine;
+  if (action == 0) e.undo();
+  else if (action == 1) e.redo();
+  else if (action == 5) e.finish_input();
+  else return e.edit_page(action - 2, uint32_t(page));
+  return JNI_TRUE;
+}
+jdoubleArray nativeDocumentState(JNIEnv* env, jclass, jlong h) {
+  const auto& e = inst(h)->engine;
+  const auto b = e.selection_bounds();
+  const jdouble values[] = {double(e.revision()), double(e.can_undo()), double(e.can_redo()), double(e.selection_count()),
+    b.empty() ? 0.0 : b.x0, b.empty() ? 0.0 : b.y0, b.empty() ? 0.0 : b.x1, b.empty() ? 0.0 : b.y1, double(e.document_busy())};
+  auto out = env->NewDoubleArray(9); env->SetDoubleArrayRegion(out, 0, 9, values); return out;
+}
+
 void nativeSurfaceChanged(JNIEnv* env, jclass, jlong h, jobject surface, jint w, jint hh) {
   Command c{CommandType::kSurfaceChanged};
   c.ptr = surface ? ANativeWindow_fromSurface(env, surface) : nullptr;  // reference passed to the renderer
@@ -354,6 +393,12 @@ const JNINativeMethod kMethods[] = {
     M(nativeSetPalmRecording, "(JZLjava/lang/String;)V"),
     M(nativeExportPalmRecording, "(JLjava/lang/String;)J"),
     M(nativeSetPage, "(JIFFF)V"),
+    M(nativeSetTool, "(JI)V"),
+    M(nativeSetPages, "(J[F)V"),
+    M(nativeSnapshot, "(J)[B"),
+    M(nativeRestore, "(J[B)Z"),
+    M(nativeDocumentAction, "(JII)Z"),
+    M(nativeDocumentState, "(J)[D"),
     M(nativeTouch, "(JI)J"),
     M(nativeProcess, "(JI)J"),
     M(nativeIdle, "(J)J"),

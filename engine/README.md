@@ -208,3 +208,19 @@ Phase 0 device checks before relying on it:
 4. Panel scan geometry for `setDisplayTiming(scanAxis=…)`: until known, leave it at 0 (unknown).
 5. `gpuTiming = true` fills `submit_to_gpu` (adds a native fence per frame: debug only). Feed its p50 into
    `setDisplayTiming(gpuMs=…)`.
+
+## Document editing and persistence
+
+`set_pages()` places the visible pages of a continuous document; input chooses its page at pen-down,
+and the renderer composites all visible page ink. Identical placements are ignored so touching down after
+scrolling cannot split a stroke. `set_page()` remains available for single-page hosts and benchmarks.
+
+`document.cpp` implements stroke erasing (a swept hit test), polygon lasso selection, bounded movement,
+and transactional undo/redo. Cancellation rolls an erase or move back. `edit_page()` inserts, duplicates
+or removes page ink and rejects a duplicate before mutation if the arena lacks capacity.
+
+`StrokeStore::encode/decode` uses the versioned little-endian NTI1 format: magic, version, stroke count,
+then each visible stroke's page, capsule count, four premultiplied color floats and canonical capsule floats.
+Decode validates the complete bounded archive before replacing existing ink. Hidden undo/eraser records
+and session history are omitted. Android snapshots between strokes, writes through `AtomicFile` on IO,
+and takes a final snapshot before destroying the engine. The original sample/predictor path stays unchanged.

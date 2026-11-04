@@ -92,11 +92,12 @@ void CpuRenderer::redraw(const StrokeStore& store, uint32_t page) {
   backing_.clear(all);
   front_.clear(all);
   for (uint32_t id = 0; id < store.stroke_count(); ++id)
-    if (store.stroke(id).page == page) draw_into_dry(store, id);
+    if (page == UINT32_MAX || store.stroke(id).page == page) draw_into_dry(store, id);
 }
 
 void CpuRenderer::draw_into_dry(const StrokeStore& store, uint32_t id) {
   const StrokeRecord& s = store.stroke(id);
+  if (s.hidden || !s.on_screen) return;
   const RectI r = pixel_bounds(s.bounds, dry_.w, dry_.h);
   // Union-render the stroke on its own, then composite it over the page so
   // translucent ink looks identical wet and dry.

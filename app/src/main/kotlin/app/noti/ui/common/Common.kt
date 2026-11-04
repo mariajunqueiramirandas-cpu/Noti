@@ -1,6 +1,5 @@
 package app.noti.ui.common
 
-import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -37,7 +36,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.TextFieldValue
@@ -47,21 +45,8 @@ import app.noti.data.PaperColor
 import app.noti.data.PaperSize
 import app.noti.data.PaperTemplate
 
-/** Opacity of controls whose engine support isn't built yet. */
-const val COMING_SOON_ALPHA = 0.38f
-
-/** Returns a click handler that explains "[what] is coming soon". */
-@Composable
-fun comingSoon(what: String): () -> Unit {
-    val context = LocalContext.current
-    return { Toast.makeText(context, "$what is coming soon", Toast.LENGTH_SHORT).show() }
-}
-
-/**
- * Greys out a control whose feature isn't built yet. It stays tappable so a tap can
- * explain itself (see [comingSoon]) instead of silently doing nothing.
- */
-fun Modifier.greyedOut(greyed: Boolean = true): Modifier = if (greyed) alpha(COMING_SOON_ALPHA) else this
+/** Match the opacity of disabled Material controls. */
+fun Modifier.greyedOut(greyed: Boolean = true): Modifier = if (greyed) alpha(0.38f) else this
 
 @Composable
 fun TextInputDialog(
@@ -95,7 +80,6 @@ fun TextInputDialog(
 /** Template, color and size choices, shared by "New notebook" and "Page paper". */
 @Composable
 fun PaperPicker(paper: Paper, onChange: (Paper) -> Unit, showSize: Boolean = true) {
-    val sizeSoon = comingSoon("Fixed page sizes")
     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
         LabeledRow("Paper") {
             PaperTemplate.entries.forEach { t ->
@@ -141,9 +125,8 @@ fun PaperPicker(paper: Paper, onChange: (Paper) -> Unit, showSize: Boolean = tru
                 PaperSize.entries.forEach { s ->
                     FilterChip(
                         selected = paper.size == s,
-                        onClick = { if (s.available) onChange(paper.copy(size = s)) else sizeSoon() },
+                        onClick = { onChange(paper.copy(size = s)) },
                         label = { Text(s.label) },
-                        modifier = Modifier.greyedOut(!s.available),
                     )
                     Spacer(Modifier.width(8.dp))
                 }

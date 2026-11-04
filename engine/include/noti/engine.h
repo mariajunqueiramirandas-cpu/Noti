@@ -30,6 +30,7 @@
 #include <cstdint>
 #include <memory>
 #include <thread>
+#include <vector>
 
 #include "noti/display_timing.h"
 #include "noti/geometry.h"
@@ -147,6 +148,23 @@ class InkEngine {
   // Processes everything pending; returns true if any work was done.
   bool pump() noexcept;
 
+  // Document/edit APIs: ink thread only; geometry stays canonical in the store.
+  struct VisiblePage { uint32_t page; float x, y, width, height; };
+  void set_pages(const std::vector<VisiblePage>& pages);
+  void set_tool(int tool) noexcept;
+  void undo();
+  void redo();
+  bool edit_page(int operation, uint32_t page);
+  void finish_input();
+  bool document_busy() const noexcept { return active_ || editing_; }
+  std::vector<uint8_t> snapshot();
+  bool restore(const uint8_t* bytes, size_t size);
+  uint64_t revision() const noexcept { return revision_; }
+  bool can_undo() const noexcept { return !undo_.empty(); }
+  bool can_redo() const noexcept { return !redo_.empty(); }
+  RectF selection_bounds() const noexcept;
+  size_t selection_count() const noexcept { return selected_.size(); }
+
   // ---- observation (any thread) ----
   const LatencyProbe& probe() const noexcept { return probe_; }
   LatencyProbe& probe() noexcept { return probe_; }
@@ -171,6 +189,30 @@ class InkEngine {
   NOTI_INLINE void note_sample(const InkSample& s) noexcept;
   void track_prediction_error(int64_t t_prev, float x0, float y0, int64_t t_now, float x1, float y1) noexcept;
   bool has_pending() noexcept;
+
+  bool edit_sample(const InkSample& s);
+  bool pick_page(float x, float y) noexcept;
+  void redraw_document();
+  void end_edit(bool cancel);
+  struct EditAction;
+  void apply_edit(bool forward, const EditAction& action);
+  struct EditAction {
+    int kind = 0; // 0 add, 1 erase, 2 move
+    std::vector<uint32_t> ids;
+    float dx = 0, dy = 0;
+  };
+  void remember_edit(EditAction action);
+  std::vector<VisiblePage> visible_pages_;
+  std::vector<EditAction> undo_, redo_;
+  std::vector<uint32_t> selected_;
+  struct Point { float x, y; };
+  std::vector<Point> polygon_;
+  EditAction edit_;
+  int tool_ = 0, gesture_tool_ = 0;
+  bool editing_ = false, moving_selection_ = false, document_mode_ = false, layout_dirty_ = false;
+  float edit_x_ = 0, edit_y_ = 0;
+  RectF edit_bounds_;
+  uint64_t revision_ = 0;
 
   EngineConfig cfg_;
   InkRenderer& renderer_;

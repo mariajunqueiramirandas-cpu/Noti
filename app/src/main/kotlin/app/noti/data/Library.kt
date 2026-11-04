@@ -17,9 +17,9 @@ enum class PaperColor(val label: String, val argb: Long, val isDark: Boolean) {
     Dark("Dark", 0xFF24272C, true),
 }
 
-/** Only [Endless] works today: the engine has no page model yet (plan Phase 3). */
-enum class PaperSize(val label: String, val available: Boolean) {
-    A4("A4", false), Letter("Letter", false), Endless("Endless", true),
+/** Notebook paper proportions; Endless pages use the A4 writing proportion. */
+enum class PaperSize(val label: String) {
+    A4("A4"), Letter("Letter"), Endless("Endless"),
 }
 
 data class Paper(
@@ -51,12 +51,15 @@ enum class SortOrder(val label: String) { Recent("Last opened"), Name("Name"), C
 
 /**
  * Notebooks and folders, kept in memory as Compose state and written to a small JSON
- * file on every change. Holds metadata only: ink isn't saved yet (plan Phase 3).
+ * file on every change. Canonical ink is saved separately in [inkDir].
  * Imported PDFs are copied into [pdfDir], with a first-page thumbnail beside each.
  */
 class LibraryStore(context: Context) {
     private val file = File(context.filesDir, "library.json")
     val pdfDir = File(context.filesDir, "pdfs").apply { mkdirs() }
+
+    val inkDir = File(context.filesDir, "ink").apply { mkdirs() }
+    fun inkFile(nb: Notebook) = File(inkDir, "${nb.id}.noti")
 
     fun pdfFile(nb: Notebook): File? = nb.pdf?.let { File(pdfDir, it) }
     fun thumbnailFile(nb: Notebook): File? = nb.pdf?.let { File(pdfDir, it.removeSuffix(".pdf") + ".png") }
@@ -110,6 +113,7 @@ class LibraryStore(context: Context) {
 
     fun rename(id: String, name: String) = update(id) { it.copy(name = name.ifBlank { it.name }) }
     fun setPaper(id: String, paper: Paper) = update(id) { it.copy(paper = paper) }
+    fun setPageCount(id: String, count: Int) = update(id) { it.copy(pageCount = count.coerceAtLeast(1)) }
     fun markOpened(id: String) = update(id) { it.copy(openedAt = System.currentTimeMillis()) }
 
     fun setFavorite(ids: Set<String>, favorite: Boolean) = updateAll(ids) { it.copy(favorite = favorite) }
@@ -119,6 +123,7 @@ class LibraryStore(context: Context) {
 
     fun deleteForever(ids: Set<String>) {
         notebooks.filter { it.id in ids }.forEach { nb ->
+            InkFile.delete(inkFile(nb))
             pdfFile(nb)?.delete()
             thumbnailFile(nb)?.delete()
         }
@@ -136,6 +141,8 @@ class LibraryStore(context: Context) {
                 thumbnailFile(nb)?.takeIf(File::exists)?.copyTo(File(pdfDir, "$id.png"))
                 "$id.pdf"
             }.getOrNull() ?: return@mapNotNull null
+            runCatching { InkFile.open(inkFile(nb)).initial?.let { File(inkDir, "$id.noti").writeBytes(it) } }
+                .getOrElse { return@mapNotNull null }
             nb.copy(id = id, name = "${nb.name} (copy)", createdAt = now, openedAt = now, pdf = pdf)
         }
         notebooks = notebooks + copies
@@ -190,7 +197,7 @@ class LibraryStore(context: Context) {
                     openedAt = o.optLong("openedAt"),
                     trashedAt = if (o.has("trashedAt")) o.getLong("trashedAt") else null,
                     pdf = o.optString("pdf").ifEmpty { null },
-                    pageCount = o.optInt("pageCount", 1),
+                    pageCount = o.optInt("pageCount", 1).coerceAtLeast(1),
                 )
             }
         }
@@ -211,7 +218,8 @@ class LibraryStore(context: Context) {
                 .put("createdAt", nb.createdAt)
                 .put("openedAt", nb.openedAt)
                 .apply { nb.trashedAt?.let { put("trashedAt", it) } }
-                .apply { nb.pdf?.let { put("pdf", it).put("pageCount", nb.pageCount) } }
+                .put("pageCount", nb.pageCount)
+                .apply { nb.pdf?.let { put("pdf", it) } }
         }))
         // Write-then-rename so a crash mid-write never leaves a truncated library.
         val tmp = File(file.parentFile, "library.json.tmp")
