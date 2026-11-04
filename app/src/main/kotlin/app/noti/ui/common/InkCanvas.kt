@@ -1,6 +1,7 @@
 package app.noti.ui.common
 
 import android.graphics.Rect
+import android.graphics.Bitmap
 import android.graphics.RectF
 import android.os.Handler
 import android.os.Looper
@@ -8,6 +9,7 @@ import android.view.View
 import android.view.ViewConfiguration
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -21,6 +23,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -103,8 +106,8 @@ class PageController {
  *
  * Pages scroll continuously; ink stays in page coordinates through zoom, pan and rotation.
  *
- * Keep it at a fixed position on screen (not inside a scrolling container): the ink
- * window follows size changes, not pure moves.
+ * The native input window follows the anchor's global position as well as its size.
+ * Document scrolling stays inside this fixed, clipped viewport.
  */
 @Composable
 fun InkCanvas(
@@ -237,8 +240,19 @@ fun InkCanvas(
         }
     }
 
-    Box(modifier.onSizeChanged { size -> layer.runOnInkThread { rig.viewport.setCanvas(size.width, size.height) } }) {
-        DocumentBackground(paper, pdf, controller.placement, Modifier.fillMaxSize())
+    DocumentViewport(modifier.onSizeChanged { size -> layer.runOnInkThread { rig.viewport.setCanvas(size.width, size.height) } }) {
+        val images = remember(pdf) {
+            pdf?.let { document ->
+                DocumentImages(
+                    page = { index, width ->
+                        @Suppress("UNUSED_VARIABLE") val version = document.version
+                        document.page(index, width)
+                    },
+                    detail = { document.detail },
+                )
+            }
+        }
+        DocumentBackground(paper, images, controller.placement, Modifier.fillMaxSize())
         if (pdf != null) {
             pdf.error?.let { Text(it, modifier = Modifier.align(Alignment.Center), color = MaterialTheme.colorScheme.error) }
         }
@@ -254,20 +268,35 @@ fun InkCanvas(
     }
 }
 
+/**
+ * A drawing surface does not inherit a clip from its layout bounds in Compose.
+ * Clip the entire document subtree, including PDF bitmaps, paper, shadows and
+ * selection outlines, before it can paint over the toolbar or system insets.
+ */
+@Composable
+internal fun DocumentViewport(modifier: Modifier = Modifier, content: @Composable BoxScope.() -> Unit) {
+    Box(modifier.clipToBounds(), content = content)
+}
+
 /** One canvas's engine and, for a PDF, its page viewport (owned by the ink thread). */
 private class Rig(val layer: InkLayer, val viewport: PageViewport, val gestures: CanvasGestures)
 
+/** Images arrive from the PDF worker; reads during drawing subscribe to its bitmap updates. */
+internal class DocumentImages(
+    val page: (Int, Int) -> Bitmap?,
+    val detail: () -> PdfDocument.Detail? = { null },
+)
+
 /** Render only pages intersecting the viewport; paper and ink share the same transform. */
 @Composable
-private fun DocumentBackground(paper: Paper, pdf: PdfDocument?, placement: PagePlacement?, modifier: Modifier) {
+internal fun DocumentBackground(paper: Paper, images: DocumentImages?, placement: PagePlacement?, modifier: Modifier) {
     val backdrop = MaterialTheme.colorScheme.surfaceContainerLow
     Canvas(modifier) {
         drawRect(backdrop)
         val current = placement ?: return@Canvas
-        @Suppress("UNUSED_VARIABLE") val version = pdf?.version
         current.visiblePages.forEach { p ->
             drawRect(Color(0x12000000), Offset(p.left + 2f, p.top + 4f), Size(p.width, p.height))
-            if (pdf == null) {
+            if (images == null) {
                 withTransform({ translate(p.left, p.top) }) {
                     clipRect(0f, 0f, p.width, p.height) {
                         drawPaperPage(paper, p.width, p.height, p.width / 1000f)
@@ -275,10 +304,10 @@ private fun DocumentBackground(paper: Paper, pdf: PdfDocument?, placement: PageP
                 }
             } else {
                 drawRect(Color.White, Offset(p.left, p.top), Size(p.width, p.height))
-                pdf.page(p.page, p.fitWidth.roundToInt())?.let { bmp ->
+                images.page(p.page, p.fitWidth.roundToInt())?.let { bmp ->
                     drawBitmap(bmp.asImageBitmap(), bmp.width, bmp.height, p.left, p.top, p.width, p.height)
                 }
-                pdf.detail?.takeIf { it.index == p.page }?.let { d ->
+                images.detail()?.takeIf { it.index == p.page }?.let { d ->
                     val k = p.width / d.pageRect.width()
                     drawBitmap(d.bitmap.asImageBitmap(), d.bitmap.width, d.bitmap.height,
                         p.left + (d.visible.left - d.pageRect.left) * k,

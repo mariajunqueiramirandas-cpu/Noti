@@ -20,6 +20,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.Palette
+import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -42,11 +43,7 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.toArgb
-import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Popup
-import androidx.compose.ui.window.PopupProperties
 import app.noti.data.SettingsStore
 import app.noti.data.Tool
 import app.noti.data.ToolSlots
@@ -78,14 +75,9 @@ internal fun ToolOptionsPopup(settings: SettingsStore, onDismiss: () -> Unit) {
     val presets = if (highlighter) HighlighterColors else PenColors
     val widthRange = if (highlighter) 8f..60f else 1f..30f
     var custom by remember { mutableStateOf(slots.currentColor !in presets) }
-    val offsetY = with(LocalDensity.current) { 52.dp.roundToPx() }
-
-    Popup(
-        alignment = Alignment.TopStart,
-        offset = IntOffset(0, offsetY),
-        onDismissRequest = onDismiss,
-        properties = PopupProperties(focusable = true),
-    ) {
+    // Material's anchored menu stays inside the visible window and scrolls when
+    // font scaling or a short landscape display leaves less vertical room.
+    DropdownMenu(expanded = true, onDismissRequest = onDismiss) {
         Surface(
             shape = MaterialTheme.shapes.large,
             color = MaterialTheme.colorScheme.surface,

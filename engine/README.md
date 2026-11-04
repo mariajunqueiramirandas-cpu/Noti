@@ -224,3 +224,8 @@ then each visible stroke's page, capsule count, four premultiplied color floats 
 Decode validates the complete bounded archive before replacing existing ink. Hidden undo/eraser records
 and session history are omitted. Android snapshots between strokes, writes through `AtomicFile` on IO,
 and takes a final snapshot before destroying the engine. The original sample/predictor path stays unchanged.
+
+The Compose document subtree is clipped to its viewport before it can paint over editor chrome.
+`InkAnchorBounds` tracks the anchor's window-relative position on pre-draw, including ancestor movement,
+translation and inset changes. It sends only changed bounds to the ink window, whose coordinates use
+physical left/top without applying system insets a second time. None of that work runs on pen dispatch.

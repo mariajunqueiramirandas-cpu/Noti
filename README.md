@@ -18,7 +18,7 @@ pinch to zoom, and use page arrows or the pages panel to jump. Momentum stops wh
 Only visible pages are rendered; PDF neighbours are prefetched and zoomed detail is rendered after scrolling settles.
 Ink uses canonical page coordinates, so scrolling, zooming, rotation and reopening do not move annotations.
 
-**Writing**: a separate document bar and scrollable drawing strip provide labelled pen, highlighter, stroke eraser
+**Writing**: a separate document bar and adaptive drawing controls provide labelled pen, highlighter, stroke eraser
 and lasso tools, quick colors and widths, and live undo/redo. Circle whole strokes with the lasso, then drag inside
 the selection to move them. Hold a primary stylus button (or use the eraser tip) for erasing; the secondary button
 selects. Two-finger tap undoes (configurable); two-finger double-tap exits full screen.
@@ -81,3 +81,11 @@ The host suite covers editing history, eraser cancellation, lasso movement, arch
 multiple visible pages, page operations, palm rejection, prediction quality and the engine CPU budget.
 JVM viewport tests cover continuous dragging, bounds, pinch anchoring, mixed page sizes, resize and large documents.
 Validate actual Focus Pen button mappings, front-buffer rendering and visual appearance on an arm64 Android 13+ tablet.
+
+Android graphics regression tests run with Robolectric and native Skia as part of `:app:testDebugUnitTest`.
+They render scrolled/zoomed PDF bitmaps, paper and selection overlays to verify that pixels stay inside
+the document viewport, and exercise toolbar controls at portrait, landscape, narrow-window and large-font sizes.
+The native window's anchor is also tested after ancestor movement without an anchor layout change.
+Rendered editor screenshots are written to `app/build/reports/editor-ui/`.
+The Android UI regressions workflow runs these checks on PRs and uploads the reports and screenshots.
+These host tests do not replace Focus Pen or SurfaceFlinger testing on the tablet.

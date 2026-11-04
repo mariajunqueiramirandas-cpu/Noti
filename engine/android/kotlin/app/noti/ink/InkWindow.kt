@@ -114,7 +114,11 @@ internal class InkWindow(
             PixelFormat.TRANSLUCENT,
         ).apply {
             token = parentToken
-            gravity = Gravity.TOP or Gravity.START
+            // Bounds are physical window coordinates, including in edge-to-edge mode.
+            // START would mirror x in RTL; fitting insets would offset it a second time.
+            @Suppress("RtlHardcoded")
+            gravity = Gravity.TOP or Gravity.LEFT
+            setFitInsetsTypes(0)
             x = bounds.left
             y = bounds.top
             title = "noti-ink"

@@ -83,6 +83,16 @@ android {
         abortOnError = false
     }
 
+    testOptions {
+        unitTests.isIncludeAndroidResources = true
+        unitTests.all {
+            it.maxHeapSize = "2g"
+            it.maxParallelForks = 1
+            // Robolectric downloads its Android runtime through the same trusted route as Gradle.
+            it.systemProperty("robolectric.dependency.repo.url", "https://maven-central.storage-download.googleapis.com/maven2")
+        }
+    }
+
     dependenciesInfo {
         includeInApk = false
         includeInBundle = false
@@ -108,6 +118,9 @@ androidComponents {
 
 dependencies {
     testImplementation("junit:junit:4.13.2")
+    testImplementation("org.robolectric:robolectric:4.17")
+    testImplementation("androidx.compose.ui:ui-test-junit4")
+    debugImplementation("androidx.compose.ui:ui-test-manifest")
     implementation(platform("androidx.compose:compose-bom:2026.06.01"))
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.foundation:foundation")

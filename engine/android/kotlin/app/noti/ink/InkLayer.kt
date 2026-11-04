@@ -3,7 +3,6 @@ package app.noti.ink
 import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
-import android.graphics.Rect
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.Process
@@ -85,30 +84,28 @@ class InkLayer(
     private class PageRequest(val page: Int, val x: Float, val y: Float, val width: Float)
     private val pendingPage = AtomicReference<PageRequest?>(null)
 
-    private val layoutListener = View.OnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
-        val r = anchorRect()
-        ink.post { window?.updateBounds(r) }
+    private val boundsObserver = InkAnchorBounds(anchor) { bounds ->
+        ink.post { if (!released) window?.updateBounds(bounds) }
+    }
+    private val attachListener = object : View.OnAttachStateChangeListener {
+        override fun onViewAttachedToWindow(v: View) {
+            v.removeOnAttachStateChangeListener(this)
+            attach()
+        }
+        override fun onViewDetachedFromWindow(v: View) {}
     }
 
     init {
-        if (anchor.isAttachedToWindow) attach() else anchor.addOnAttachStateChangeListener(
-            object : View.OnAttachStateChangeListener {
-                override fun onViewAttachedToWindow(v: View) {
-                    v.removeOnAttachStateChangeListener(this)
-                    attach()
-                }
-                override fun onViewDetachedFromWindow(v: View) {}
-            },
-        )
+        if (anchor.isAttachedToWindow) attach() else anchor.addOnAttachStateChangeListener(attachListener)
     }
 
     private fun attach() {
         if (released) return
         pinHostDisplayMode()
         val token = anchor.windowToken
-        val bounds = anchorRect()
+        val bounds = boundsObserver.current()
         val context = anchor.context
-        anchor.addOnLayoutChangeListener(layoutListener)
+        boundsObserver.start()
         ink.post {
             check(NotiInk.nativeAttach(handle)) { "noti ink engine failed to initialise EGL" }
             initialInk?.let {
@@ -145,12 +142,6 @@ class InkLayer(
         is Activity -> this
         is ContextWrapper -> baseContext.findActivity()
         else -> null
-    }
-
-    private fun anchorRect(): Rect {
-        val loc = IntArray(2)
-        anchor.getLocationInWindow(loc)
-        return Rect(loc[0], loc[1], loc[0] + anchor.width, loc[1] + anchor.height)
     }
 
     // ---- brush & predictor (UI thread) ----
@@ -292,7 +283,8 @@ class InkLayer(
     fun release() {
         if (released) return
         released = true
-        anchor.removeOnLayoutChangeListener(layoutListener)
+        anchor.removeOnAttachStateChangeListener(attachListener)
+        boundsObserver.stop()
         ink.removeCallbacks(documentPoll)
         ink.post {
             NotiInk.nativeIdle(handle)
