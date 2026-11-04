@@ -732,7 +732,7 @@ int64_t GlFrontBufferRenderer::idle() {
 
 void GlFrontBufferRenderer::draw_stroke_into_dry(Target& dry, const StrokeStore& store, uint32_t id) {
   const StrokeRecord& s = store.stroke(id);
-  if (s.page != page_) return;
+  if (s.hidden || !s.on_screen || (page_ != UINT32_MAX && s.page != page_)) return;
   const RectI r = pixel_bounds(s.bounds, w_, h_);
   if (r.empty()) return;
   // 1. Union-render the stroke on its own (MAX blend) into scratch.

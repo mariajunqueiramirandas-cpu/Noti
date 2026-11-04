@@ -105,8 +105,10 @@ import app.noti.data.SortOrder
 import app.noti.ui.common.PaperPicker
 import app.noti.ui.common.PaperPreview
 import app.noti.ui.common.TextInputDialog
-import app.noti.ui.common.comingSoon
-import app.noti.ui.common.greyedOut
+import app.noti.data.InkFile
+import app.noti.pdf.DocumentExport
+import java.util.zip.ZipOutputStream
+import java.util.zip.ZipEntry
 
 /** What the library is showing. */
 private sealed interface Filter {
@@ -150,6 +152,38 @@ fun LibraryScreen(
                 .onFailure { Toast.makeText(context, it.message ?: "Couldn't import that PDF.", Toast.LENGTH_LONG).show() }
         }
     }
+    var exportNotebooks by remember { mutableStateOf<List<Notebook>>(emptyList()) }
+    var exporting by remember { mutableStateOf(false) }
+    fun exportTo(uri: android.net.Uri?) {
+        if (uri == null) return
+        val chosen = exportNotebooks
+        exporting = true
+        scope.launch {
+            val result = withContext(Dispatchers.IO) {
+                runCatching {
+                    if (chosen.size == 1) {
+                        val nb = chosen.single()
+                        DocumentExport.writePdf(context, nb, library, InkFile.open(library.inkFile(nb)).initial, uri)
+                    } else {
+                        context.contentResolver.openOutputStream(uri, "wt")?.use { stream ->
+                            ZipOutputStream(stream).use { zip ->
+                                chosen.forEachIndexed { i, nb ->
+                                    val safeName = nb.name.replace(Regex("[^a-zA-Z0-9 ._-]"), "_")
+                                    zip.putNextEntry(ZipEntry("${i + 1}-$safeName.pdf"))
+                                    DocumentExport.writePdf(nb, library, InkFile.open(library.inkFile(nb)).initial, zip)
+                                    zip.closeEntry()
+                                }
+                            }
+                        } ?: error("Couldn't open destination")
+                    }
+                }
+            }
+            exporting = false
+            Toast.makeText(context, if (result.isSuccess) "Export complete" else "Couldn't export. Try another destination.", Toast.LENGTH_LONG).show()
+        }
+    }
+    val exportPdf = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/pdf"), ::exportTo)
+    val exportZip = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/zip"), ::exportTo)
     val onImportPdf = { importPdf.launch(arrayOf("application/pdf")) }
 
     BackHandler(enabled = selection.isNotEmpty()) { selection = emptySet() }
@@ -221,6 +255,13 @@ fun LibraryScreen(
                         onFavorite = { fav -> library.setFavorite(selection, fav) },
                         onMove = { moving = true },
                         onRename = { renamingNotebook = library.notebook(selection.first()) },
+                        onExport = {
+                            if (!exporting) {
+                                exportNotebooks = library.notebooks.filter { it.id in selection }
+                                if (exportNotebooks.size == 1) exportPdf.launch("${exportNotebooks.single().name.replace(Regex("[^a-zA-Z0-9 ._-]"), "_")}.pdf")
+                                else exportZip.launch("Noti notebooks.zip")
+                            }
+                        },
                         onDuplicate = {
                             library.duplicate(selection)
                             selection = emptySet()
@@ -546,12 +587,12 @@ private fun SelectionBar(
     onFavorite: (Boolean) -> Unit,
     onMove: () -> Unit,
     onRename: () -> Unit,
+    onExport: () -> Unit,
     onDuplicate: () -> Unit,
     onDelete: () -> Unit,
     onRestore: () -> Unit,
     onDeleteForever: () -> Unit,
 ) {
-    val exportSoon = comingSoon("Export")
     Row(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(4.dp),
@@ -574,7 +615,7 @@ private fun SelectionBar(
             BarAction("Move", Icons.AutoMirrored.Outlined.DriveFileMove, onClick = onMove)
             if (count == 1) BarAction("Rename", Icons.Outlined.DriveFileRenameOutline, onClick = onRename)
             BarAction("Duplicate", Icons.Outlined.ContentCopy, onClick = onDuplicate)
-            BarAction("Export", Icons.Outlined.IosShare, Modifier.greyedOut(), onClick = exportSoon)
+            BarAction("Export", Icons.Outlined.IosShare, onClick = onExport)
             BarAction("Delete", Icons.Outlined.Delete, onClick = onDelete)
         }
     }

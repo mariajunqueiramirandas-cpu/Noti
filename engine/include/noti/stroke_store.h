@@ -18,6 +18,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <vector>
 
 #include "noti/geometry.h"
 
@@ -31,6 +32,8 @@ struct StrokeRecord {
   int64_t t_begin_ns;
   int64_t t_end_ns;
   uint32_t page;
+  bool hidden = false;
+  bool on_screen = true;
 };
 
 class StrokeStore {
@@ -60,6 +63,17 @@ class StrokeStore {
   uint32_t capsule_count() const noexcept { return capsule_count_; }
   const StrokeRecord& stroke(uint32_t id) const noexcept { return strokes_[id]; }
   const Capsule* capsules(uint32_t id) const noexcept { return &capsules_[strokes_[id].first_capsule]; }
+
+  void set_hidden(uint32_t id, bool hidden) noexcept { strokes_[id].hidden = hidden; }
+  void set_on_screen(uint32_t page, bool on) noexcept;
+  void translate(uint32_t id, float dx, float dy, const PageMap& map) noexcept;
+  const Capsule* canonical(uint32_t id) const noexcept { return &canon_[strokes_[id].first_capsule]; }
+  bool can_copy_page(uint32_t page) const noexcept;
+  uint32_t copy_stroke(uint32_t id, uint32_t page) noexcept;
+  void insert_page(uint32_t page) noexcept;
+  void delete_page(uint32_t page) noexcept;
+  std::vector<uint8_t> encode() const;
+  bool decode(const uint8_t* bytes, size_t size);
 
  private:
   uint32_t max_strokes_, max_capsules_;

@@ -3,59 +3,22 @@ package app.noti.ui.editor
 import android.app.Activity
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
-import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.aspectRatio
-import androidx.compose.foundation.layout.fillMaxHeight
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.safeDrawing
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.*
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.Image
-import androidx.compose.foundation.background
-import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.layout.ContentScale
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Add
-import androidx.compose.material.icons.outlined.Close
-import androidx.compose.material.icons.outlined.ContentCopy
-import androidx.compose.material.icons.outlined.Delete
-import androidx.compose.material.icons.outlined.Description
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Checkbox
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
-import androidx.compose.material3.VerticalDivider
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
+import androidx.compose.material.icons.outlined.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
@@ -64,232 +27,227 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
-import app.noti.data.LibraryStore
-import app.noti.data.Notebook
-import app.noti.data.SettingsStore
-import app.noti.data.Tool
-import app.noti.ui.common.BrushSpec
-import app.noti.ui.common.EngineSpec
-import app.noti.ui.common.InkCanvas
-import app.noti.ui.common.PageController
-import app.noti.ui.common.PalmSpec
+import app.noti.data.*
+import app.noti.ink.InkLayer
+import app.noti.pdf.DocumentExport
 import app.noti.pdf.PdfDocument
-import app.noti.ui.common.PaperPicker
-import app.noti.ui.common.PaperPreview
-import app.noti.ui.common.TextInputDialog
-import app.noti.ui.common.comingSoon
-import app.noti.ui.common.greyedOut
+import app.noti.ui.common.*
 import app.noti.ui.settings.SettingsScreen
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @Composable
-fun EditorScreen(
-    notebook: Notebook,
-    library: LibraryStore,
-    settings: SettingsStore,
-    onBack: () -> Unit,
-) {
+fun EditorScreen(notebook: Notebook, library: LibraryStore, settings: SettingsStore, onBack: () -> Unit) {
+    val opened by produceState<Result<InkFile>?>(null, notebook.id) {
+        value = withContext(Dispatchers.IO) { runCatching { InkFile.open(library.inkFile(notebook)) } }
+    }
+    val result = opened
+    if (result == null) {
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+    } else if (result.isFailure) {
+        AlertDialog(onDismissRequest = onBack, title = { Text("Couldn't open saved ink") },
+            text = { Text("The saved file has been kept. Return to the library and try again.") },
+            confirmButton = { TextButton(onClick = onBack) { Text("Back to library") } })
+    } else {
+        key(notebook.id) { EditorContent(notebook, library, settings, result.getOrThrow(), onBack) }
+    }
+}
+
+@Composable
+private fun EditorContent(notebook: Notebook, library: LibraryStore, settings: SettingsStore, inkFile: InkFile, onBack: () -> Unit) {
     var pagesOpen by remember { mutableStateOf(false) }
     var fullScreen by remember { mutableStateOf(false) }
     var renaming by remember { mutableStateOf(false) }
     var choosingPaper by remember { mutableStateOf(false) }
     var confirmingLeave by remember { mutableStateOf(false) }
     var settingsOpen by remember { mutableStateOf(false) }
+    var restoreError by remember { mutableStateOf(false) }
+    var deletingPage by remember { mutableStateOf<Int?>(null) }
+    var layer by remember { mutableStateOf<InkLayer?>(null) }
+    var saveStatus by remember { mutableStateOf("Autosave on") }
+    var exporting by remember { mutableStateOf(false) }
+    var leaving by remember { mutableStateOf(false) }
+    var pageBusy by remember { mutableStateOf(false) }
     val context = LocalContext.current
-
-    val leave = { if (settings.confirmLeave) confirmingLeave = true else onBack() }
+    val scope = rememberCoroutineScope()
+    DisposableEffect(inkFile) {
+        inkFile.onSaved = { ok -> saveStatus = if (ok) "Saved on device" else "Save failed · tap to retry" }
+        onDispose { inkFile.onSaved = null }
+    }
+    DisposableEffect(layer) {
+        val app = context.applicationContext as android.app.Application
+        val callbacks = object : android.app.Application.ActivityLifecycleCallbacks {
+            override fun onActivityPaused(activity: Activity) { if (activity == context) layer?.saveNow() }
+            override fun onActivityCreated(a: Activity, b: android.os.Bundle?) {}
+            override fun onActivityStarted(a: Activity) {}
+            override fun onActivityResumed(a: Activity) {}
+            override fun onActivityStopped(a: Activity) {}
+            override fun onActivitySaveInstanceState(a: Activity, b: android.os.Bundle) {}
+            override fun onActivityDestroyed(a: Activity) {}
+        }
+        app.registerActivityLifecycleCallbacks(callbacks)
+        onDispose { app.unregisterActivityLifecycleCallbacks(callbacks) }
+    }
+    fun saveAndLeave() {
+        if (leaving) return
+        val current = layer
+        if (current == null) onBack() else {
+            leaving = true
+            current.snapshot { bytes ->
+                inkFile.save(bytes) { ok ->
+                    leaving = false
+                    if (ok) onBack() else Toast.makeText(context, "Couldn't save. Keep this notebook open and tap the save status to retry.", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+    }
+    val leave = { if (settings.confirmLeave) confirmingLeave = true else saveAndLeave() }
     BackHandler(enabled = !fullScreen) { leave() }
     BackHandler(enabled = fullScreen) { fullScreen = false }
     SystemBarsHidden(fullScreen)
 
     val slots = if (settings.tool == Tool.Highlighter) settings.highlighterSlots else settings.penSlots
-    val brush = if (settings.tool == Tool.Highlighter) {
-        BrushSpec(slots.currentColor, alpha = 0.4f, widthPx = slots.currentWidth, pressureGamma = null)
-    } else {
-        BrushSpec(
-            slots.currentColor, alpha = 1f, widthPx = slots.currentWidth,
-            pressureGamma = if (settings.pressureOn) settings.pressureGamma else null,
-        )
-    }
+    val brush = BrushSpec(slots.currentColor, if (settings.tool == Tool.Highlighter) 0.4f else 1f,
+        slots.currentWidth, if (settings.tool == Tool.Highlighter || !settings.pressureOn) null else settings.pressureGamma, settings.tool)
     val engine = EngineSpec(settings.predictor.engineId, settings.inkFeelMs)
     val palm = PalmSpec(settings.fingerDrawing, settings.palmModel, onModel = { settings.palmModel = it })
-    // An annotated PDF: rendered on its own thread, one page at a time.
     val pdf = remember(notebook.pdf) { library.pdfFile(notebook)?.let { PdfDocument(it) } }
     DisposableEffect(pdf) { onDispose { pdf?.close() } }
-    val pages = remember(notebook.pdf) { PageController() }
-    val pdfPage = if (pdf != null && pdf.pageCount > 0) pages.page to pdf.pageCount else null
+    val pages = remember { PageController() }
+    val pageCount = if (pdf != null) pdf.pageCount.takeIf { it > 0 } ?: notebook.pageCount else notebook.pageCount
 
+    fun changePages(operation: Int, index: Int) {
+        if (pageBusy || notebook.isPdf || layer == null) return
+        if (operation == 2 && notebook.pageCount <= 1) return
+        pageBusy = true
+        layer?.documentAction(operation + 2, index) { ok ->
+            pageBusy = false
+            if (ok) {
+                val count = notebook.pageCount + if (operation == 2) -1 else 1
+                library.setPageCount(notebook.id, count)
+                pages.goTo((if (operation == 1) index + 1 else index).coerceIn(0, count - 1))
+            } else Toast.makeText(context, "This notebook has reached its ink capacity. The original page is unchanged.", Toast.LENGTH_LONG).show()
+        }
+    }
+    val export = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/pdf")) { uri ->
+        if (uri != null) {
+            exporting = true; saveStatus = "Exporting PDF…"
+            layer?.snapshot { bytes ->
+                scope.launch {
+                    val result = withContext(Dispatchers.IO) { runCatching { DocumentExport.writePdf(context, notebook, library, bytes, uri) } }
+                    exporting = false
+                    saveStatus = if (result.isSuccess) "PDF exported" else "Export failed"
+                    Toast.makeText(context, if (result.isSuccess) "PDF exported" else "Couldn't export PDF. Try another destination.", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+    }
     Surface(color = MaterialTheme.colorScheme.background, modifier = Modifier.fillMaxSize()) {
-        Column(
-            Modifier
-                .fillMaxSize()
-                .then(if (fullScreen) Modifier else Modifier.windowInsetsPadding(WindowInsets.safeDrawing)),
-        ) {
+        Column(Modifier.fillMaxSize().then(if (fullScreen) Modifier else Modifier.windowInsetsPadding(WindowInsets.safeDrawing))) {
             if (!fullScreen) {
                 EditorToolbar(
-                    title = notebook.name,
-                    settings = settings,
-                    pagesOpen = pagesOpen,
-                    onBack = leave,
-                    onRename = { renaming = true },
-                    onTogglePages = { pagesOpen = !pagesOpen },
+                    title = notebook.name, settings = settings, pagesOpen = pagesOpen,
+                    onBack = leave, onRename = { renaming = true }, onTogglePages = { pagesOpen = !pagesOpen },
                     onPagePaper = { choosingPaper = true },
                     onFullScreen = {
                         fullScreen = true
                         Toast.makeText(context, "Two-finger double-tap or Back to exit full screen", Toast.LENGTH_SHORT).show()
                     },
-                    onSettings = { settingsOpen = true },
-                    pdfPage = pdfPage,
-                    onPage = pages::goTo,
+                    onSettings = { settingsOpen = true }, pdfPage = pages.page to pageCount, onPage = pages::goTo,
+                    canUndo = pages.canUndo, canRedo = pages.canRedo,
+                    onUndo = { layer?.documentAction(0) }, onRedo = { layer?.documentAction(1) },
+                    onExport = { if (!exporting && layer != null) export.launch("${notebook.name.replace(Regex("[^a-zA-Z0-9 ._-]"), "_")}.pdf") },
+                    onAddPage = if (notebook.isPdf) null else { { changePages(0, notebook.pageCount) } },
+                    saveStatus = saveStatus, onSave = { layer?.saveNow() }, selectionCount = pages.documentState[3].toInt(), isPdf = notebook.isPdf,
                 )
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             }
-            Row(Modifier.fillMaxSize()) {
+            Row(Modifier.weight(1f).fillMaxWidth()) {
                 if (pagesOpen && !fullScreen) {
                     if (pdf != null) {
-                        PdfPagesPanel(pdf = pdf, current = pages.page, onPage = pages::goTo, onClose = { pagesOpen = false })
+                        PdfPagesPanel(pdf, pages.page, pages::goTo, onClose = { pagesOpen = false })
                     } else {
-                        PagesPanel(
-                            notebook = notebook,
-                            onClose = { pagesOpen = false },
-                            onChangePaper = { choosingPaper = true },
-                        )
+                        PagesPanel(notebook, pages.page, pageBusy, pages::goTo, onClose = { pagesOpen = false },
+                            onAdd = { changePages(0, notebook.pageCount) }, onDuplicate = { changePages(1, it) },
+                            onDelete = { deletingPage = it }, onChangePaper = { choosingPaper = true })
                     }
                     VerticalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 }
                 InkCanvas(
-                    paper = notebook.paper,
-                    brush = brush,
-                    engine = engine,
-                    modifier = Modifier.weight(1f).fillMaxHeight(),
-                    palm = palm,
-                    pdf = pdf,
-                    pages = pages,
+                    paper = notebook.paper, brush = brush, engine = engine, modifier = Modifier.weight(1f).fillMaxHeight(),
+                    palm = palm, pdf = pdf, pages = pages, pageCount = notebook.pageCount, inkFile = inkFile,
+                    tapUndo = settings.tapUndo, onLayer = { layer = it }, onRestoreError = { restoreError = true },
                     onTwoFingerDoubleTap = { fullScreen = false },
                 )
             }
         }
     }
-
-    if (renaming) {
-        TextInputDialog("Rename notebook", notebook.name, "Rename", onDismiss = { renaming = false }) {
-            library.rename(notebook.id, it)
-            renaming = false
-        }
+    if (restoreError) AlertDialog(onDismissRequest = {}, title = { Text("Couldn't read saved ink") },
+        text = { Text("The saved file has been kept without changes. Return to the library to keep your original ink safe.") },
+        confirmButton = { TextButton(onClick = onBack) { Text("Back to library") } })
+    if (renaming) TextInputDialog("Rename notebook", notebook.name, "Rename", onDismiss = { renaming = false }) {
+        library.rename(notebook.id, it); renaming = false
     }
     if (choosingPaper) {
         var paper by remember { mutableStateOf(notebook.paper) }
-        AlertDialog(
-            onDismissRequest = { choosingPaper = false },
-            title = { Text("Page paper") },
+        AlertDialog(onDismissRequest = { choosingPaper = false }, title = { Text("Page paper") },
             text = { PaperPicker(paper, onChange = { paper = it }, showSize = false) },
-            confirmButton = {
-                TextButton(onClick = {
-                    library.setPaper(notebook.id, paper)
-                    choosingPaper = false
-                }) { Text("Apply") }
-            },
-            dismissButton = { TextButton(onClick = { choosingPaper = false }) { Text("Cancel") } },
-        )
+            confirmButton = { TextButton(onClick = { library.setPaper(notebook.id, paper); choosingPaper = false }) { Text("Apply") } },
+            dismissButton = { TextButton(onClick = { choosingPaper = false }) { Text("Cancel") } })
     }
-    if (confirmingLeave) {
-        var dontAsk by remember { mutableStateOf(false) }
-        AlertDialog(
-            onDismissRequest = { confirmingLeave = false },
-            title = { Text("Leave this notebook?") },
-            text = {
-                Column {
-                    Text("Saving ink is coming in a future update, so the ink on this page will be cleared when you leave.")
-                    Spacer(Modifier.height(12.dp))
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.clip(MaterialTheme.shapes.small).clickable { dontAsk = !dontAsk },
-                    ) {
-                        Checkbox(checked = dontAsk, onCheckedChange = { dontAsk = it })
-                        Text("Don't ask again", modifier = Modifier.padding(end = 8.dp))
-                    }
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    if (dontAsk) settings.confirmLeave = false
-                    confirmingLeave = false
-                    onBack()
-                }) { Text("Leave") }
-            },
-            dismissButton = { TextButton(onClick = { confirmingLeave = false }) { Text("Stay") } },
-        )
+    deletingPage?.let { index ->
+        AlertDialog(onDismissRequest = { deletingPage = null }, title = { Text("Delete page ${index + 1}?") },
+            text = { Text("This removes the page and its ink.") },
+            confirmButton = { TextButton(onClick = { changePages(2, index); deletingPage = null }) { Text("Delete") } },
+            dismissButton = { TextButton(onClick = { deletingPage = null }) { Text("Cancel") } })
     }
-    if (settingsOpen) {
-        // A full-screen dialog rather than a separate screen, so this notebook (and its
-        // unsaved ink) stays alive underneath.
-        Dialog(
-            onDismissRequest = { settingsOpen = false },
-            properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false),
-        ) {
-            SettingsScreen(settings, onBack = { settingsOpen = false })
-        }
+    if (confirmingLeave) AlertDialog(onDismissRequest = { confirmingLeave = false }, title = { Text("Return to library?") },
+        text = { Text("Your ink is saved automatically on this device.") },
+        confirmButton = { TextButton(onClick = { confirmingLeave = false; saveAndLeave() }) { Text("Leave") } },
+        dismissButton = { TextButton(onClick = { confirmingLeave = false }) { Text("Stay") } })
+    if (settingsOpen) Dialog(onDismissRequest = { settingsOpen = false },
+        properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
+        SettingsScreen(settings, onBack = { settingsOpen = false })
     }
 }
 
 @Composable
-private fun PagesPanel(notebook: Notebook, onClose: () -> Unit, onChangePaper: () -> Unit) {
-    val addSoon = comingSoon("Adding pages")
-    val duplicateSoon = comingSoon("Duplicating pages")
-    val deleteSoon = comingSoon("Deleting pages")
-    var menuOpen by remember { mutableStateOf(false) }
-    Column(
-        Modifier
-            .width(200.dp)
-            .fillMaxHeight()
-            .padding(horizontal = 16.dp, vertical = 8.dp),
-    ) {
+private fun PagesPanel(notebook: Notebook, current: Int, busy: Boolean, onPage: (Int) -> Unit,
+    onClose: () -> Unit, onAdd: () -> Unit, onDuplicate: (Int) -> Unit, onDelete: (Int) -> Unit, onChangePaper: () -> Unit) {
+    val list = rememberLazyListState()
+    LaunchedEffect(current) {
+        if (current !in list.layoutInfo.visibleItemsInfo.map { it.index }) list.animateScrollToItem(current.coerceAtLeast(0))
+    }
+    Column(Modifier.width(184.dp).fillMaxHeight().background(MaterialTheme.colorScheme.surface).padding(12.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("Pages", style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
-            IconButton(onClick = onClose) { Icon(Icons.Outlined.Close, contentDescription = "Close pages") }
+            IconButton(onClick = onClose) { Icon(Icons.Outlined.Close, "Close pages") }
         }
-        Spacer(Modifier.height(8.dp))
-        Box {
-            Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
-                PaperPreview(
-                    notebook.paper,
-                    Modifier
-                        .fillMaxWidth()
-                        .aspectRatio(0.75f)
-                        .clip(MaterialTheme.shapes.small)
-                        .border(2.dp, MaterialTheme.colorScheme.primary, MaterialTheme.shapes.small)
-                        .clickable { menuOpen = true },
-                )
-                Spacer(Modifier.height(4.dp))
-                Text("1", style = MaterialTheme.typography.labelMedium)
-            }
-            DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-                DropdownMenuItem(
-                    text = { Text("Change paper") },
-                    leadingIcon = { Icon(Icons.Outlined.Description, null) },
-                    onClick = {
-                        menuOpen = false
-                        onChangePaper()
-                    },
-                )
-                DropdownMenuItem(
-                    text = { Text("Duplicate") },
-                    leadingIcon = { Icon(Icons.Outlined.ContentCopy, null) },
-                    onClick = duplicateSoon,
-                    modifier = Modifier.greyedOut(),
-                )
-                DropdownMenuItem(
-                    text = { Text("Delete") },
-                    leadingIcon = { Icon(Icons.Outlined.Delete, null) },
-                    onClick = deleteSoon,
-                    modifier = Modifier.greyedOut(),
-                )
+        LazyColumn(state = list, modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            items(notebook.pageCount) { index ->
+                var menu by remember { mutableStateOf(false) }
+                Column {
+                    PaperPreview(notebook.paper, Modifier.fillMaxWidth().aspectRatio(if (notebook.paper.size == PaperSize.Letter) 8.5f/11f else 1f/1.4142f)
+                        .clip(MaterialTheme.shapes.medium)
+                        .border(if (current == index) 2.dp else 1.dp, if (current == index) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant, MaterialTheme.shapes.medium)
+                        .clickable(enabled = !busy) { onPage(index) })
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Page ${index + 1}", style = MaterialTheme.typography.labelMedium, modifier = Modifier.weight(1f))
+                        Box {
+                            IconButton(onClick = { menu = true }, enabled = !busy) { Icon(Icons.Outlined.MoreHoriz, "Page ${index + 1} options") }
+                            DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                                DropdownMenuItem(text = { Text("Change paper") }, onClick = { menu = false; onChangePaper() })
+                                DropdownMenuItem(text = { Text("Duplicate") }, onClick = { menu = false; onDuplicate(index) })
+                                DropdownMenuItem(text = { Text("Delete") }, enabled = notebook.pageCount > 1, onClick = { menu = false; onDelete(index) })
+                            }
+                        }
+                    }
+                }
             }
         }
-        Spacer(Modifier.weight(1f))
-        OutlinedButton(onClick = addSoon, modifier = Modifier.fillMaxWidth().greyedOut()) {
-            Icon(Icons.Outlined.Add, null)
-            Spacer(Modifier.width(6.dp))
-            Text("Page")
+        FilledTonalButton(onClick = onAdd, enabled = !busy, modifier = Modifier.fillMaxWidth()) {
+            Icon(Icons.Outlined.Add, null, modifier = Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("Add page")
         }
     }
 }
@@ -353,6 +311,3 @@ private fun SystemBarsHidden(hidden: Boolean) {
         onDispose { if (hidden) controller.show(WindowInsetsCompat.Type.systemBars()) }
     }
 }
-
-internal val ToolbarHeight = 56.dp
-internal val ToolbarSpacing = Arrangement.spacedBy(2.dp)

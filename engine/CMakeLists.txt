@@ -53,6 +53,7 @@ find_package(Threads REQUIRED)
 # ---------------------------------------------------------------------------
 add_library(noti_core STATIC
   src/engine.cpp
+  src/document.cpp
   src/predictor.cpp
   src/latency_probe.cpp
   src/stroke_store.cpp

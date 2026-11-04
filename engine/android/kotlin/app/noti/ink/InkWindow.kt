@@ -23,6 +23,9 @@ interface GestureListener {
     /** [action]: NotiInk.GESTURE_DOWN / MOVE / UP / CANCEL. [id] is stable for the life of the contact. */
     fun onGesture(action: Int, id: Int, x: Float, y: Float, timeNanos: Long)
 
+    /** Stop scrolling before the nib touches the page. */
+    fun onPenDown() {}
+
     /** End of one batch of events (everything one input event produced). */
     fun onGestureBatchEnd() {}
 }
@@ -168,6 +171,8 @@ internal class InkWindow(
                 }
                 if (isPen(e, ai)) {
                     if (penId < 0) {
+                        gestures?.onPenDown()
+                        onFrame() // apply the final viewport before accepting this stroke
                         penId = e.getPointerId(ai)
                         penDevice = e.deviceId
                         put(e, ai, -1, NotiInk.ACTION_DOWN, penFlags(e, ai), recv)

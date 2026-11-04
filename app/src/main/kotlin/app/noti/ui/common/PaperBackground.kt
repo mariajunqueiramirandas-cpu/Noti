@@ -70,3 +70,31 @@ private fun DrawScope.drawPaper(paper: Paper, step: Float, stroke: Float) {
         }
     }
 }
+
+/** Page-space pattern: 1000 units across, shared with stored ink and PDF export. */
+internal fun DrawScope.drawPaperPage(paper: Paper, width: Float, height: Float, scale: Float) {
+    drawRect(Color(paper.color.argb), size = androidx.compose.ui.geometry.Size(width, height))
+    val line = if (paper.color.isDark) Color(0x33FFFFFF) else Color(0x2E3A5A8C)
+    val step = 40f * scale
+    val stroke = scale.coerceAtLeast(0.5f)
+    if (step <= 0) return
+    when (paper.template) {
+        PaperTemplate.Blank -> Unit
+        PaperTemplate.Lined, PaperTemplate.Grid -> {
+            var y = if (paper.template == PaperTemplate.Lined) step * 2 else step
+            while (y < height) { drawLine(line, Offset(0f, y), Offset(width, y), stroke); y += step }
+            if (paper.template == PaperTemplate.Grid) {
+                var x = step
+                while (x < width) { drawLine(line, Offset(x, 0f), Offset(x, height), stroke); x += step }
+            }
+        }
+        PaperTemplate.Dots -> {
+            var y = step
+            while (y < height) {
+                var x = step
+                while (x < width) { drawCircle(line, stroke * 1.4f, Offset(x, y)); x += step }
+                y += step
+            }
+        }
+    }
+}

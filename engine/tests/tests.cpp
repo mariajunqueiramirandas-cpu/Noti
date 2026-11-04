@@ -739,6 +739,119 @@ TEST(recorder_exports_predictor_bench_csv) {
   }
 }
 
+
+void draw_line(InkEngine& e, float x, float y, float to_x, float to_y) {
+  InkSample s[] = {sample(Action::kDown, 0, x, y), sample(Action::kMove, 4167, to_x, to_y), sample(Action::kUp, 8334, to_x, to_y)};
+  e.process(s, 3);
+}
+
+TEST(document_undo_redo_and_branching) {
+  EngineFixture fx; auto& e = *fx.engine;
+  draw_line(e, 30, 30, 80, 30);
+  auto original = fx.renderer.composite(false);
+  CHECK(e.can_undo()); CHECK(!e.can_redo());
+  e.undo(); CHECK(nonzero(fx.renderer.composite(false)) == 0); CHECK(e.can_redo());
+  e.redo(); CHECK(fx.renderer.composite(false).px == original.px);
+  e.undo(); draw_line(e, 90, 50, 120, 50); CHECK(!e.can_redo());
+}
+
+TEST(document_eraser_sweeps_segments_and_cancel_rolls_back) {
+  EngineFixture fx; auto& e = *fx.engine;
+  draw_line(e, 20, 80, 200, 80);
+  e.set_tool(2);
+  InkSample eraser[] = {sample(Action::kDown, 10000, 90, 20), sample(Action::kMove, 14000, 90, 140), sample(Action::kUp, 18000, 90, 140)};
+  e.process(eraser, 3); CHECK(e.store().stroke(0).hidden);
+  e.undo(); CHECK(!e.store().stroke(0).hidden);
+  eraser[2].action = Action::kCancel; e.process(eraser, 3); CHECK(!e.store().stroke(0).hidden);
+  e.redo(); CHECK(e.store().stroke(0).hidden);
+}
+
+TEST(document_lasso_moves_and_undoes_canonical_ink) {
+  EngineFixture fx; auto& e = *fx.engine;
+  draw_line(e, 50, 50, 80, 50);
+  e.set_tool(3);
+  InkSample lasso[] = {sample(Action::kDown, 0, 35, 35), sample(Action::kMove, 4000, 100, 35), sample(Action::kMove, 8000, 100, 80), sample(Action::kMove, 12000, 35, 80), sample(Action::kUp, 16000, 35, 35)};
+  e.process(lasso, 5); CHECK(e.selection_count() == 1);
+  draw_line(e, 60, 50, 90, 70);
+  CHECK_NEAR(e.store().canonical(0)[0].x0, 80, 1e-5);
+  CHECK_NEAR(e.store().canonical(0)[0].y0, 70, 1e-5);
+  e.undo(); CHECK_NEAR(e.store().canonical(0)[0].x0, 50, 1e-5);
+  e.redo(); CHECK_NEAR(e.store().canonical(0)[0].x0, 80, 1e-5);
+}
+
+TEST(document_visible_pages_hit_testing_and_remapping) {
+  EngineFixture fx; auto& e = *fx.engine;
+  e.set_pages({{0, 10, 10, 200, 90}, {1, 10, 120, 200, 90}});
+  draw_line(e, 30, 40, 60, 40); draw_line(e, 30, 150, 60, 150);
+  CHECK(e.store().stroke_count() == 2);
+  CHECK(e.store().stroke(0).page == 0); CHECK(e.store().stroke(1).page == 1);
+  CHECK(nonzero(fx.renderer.composite(false)) > 0);
+  draw_line(e, 30, 110, 60, 110); CHECK(e.store().stroke_count() == 2); // gap
+  e.set_pages({{1, 10, 10, 200, 90}});
+  CHECK(!e.store().stroke(0).on_screen); CHECK(e.store().stroke(1).on_screen);
+  CHECK_NEAR(e.store().capsules(1)[0].y0, 40, 1e-5);
+  e.set_pages({{0, 10, 10, 200, 90}, {1, 10, 120, 200, 90}});
+  CHECK_NEAR(e.store().capsules(1)[0].y0, 150, 1e-5);
+}
+
+TEST(document_archive_roundtrip_and_corruption_is_atomic) {
+  EngineFixture fx; auto& e = *fx.engine;
+  draw_line(e, 30, 40, 80, 40); draw_line(e, 30, 80, 80, 80); e.undo();
+  const auto bytes = e.snapshot();
+  EngineFixture other; CHECK(other.engine->restore(bytes.data(), bytes.size()));
+  CHECK(other.engine->store().stroke_count() == 1);
+  CHECK(other.engine->snapshot() == bytes);
+  for (size_t cut : {size_t(0), size_t(11), bytes.size() - 1}) {
+    CHECK(!other.engine->restore(bytes.data(), cut)); CHECK(other.engine->snapshot() == bytes);
+  }
+  auto corrupt = bytes; corrupt[16] = 0xff; corrupt[17] = 0xff; corrupt[18] = 0xff; corrupt[19] = 0x7f;
+  CHECK(!other.engine->restore(corrupt.data(), corrupt.size())); CHECK(other.engine->snapshot() == bytes);
+}
+
+TEST(document_page_duplicate_insert_delete_keep_other_pages) {
+  EngineFixture fx; auto& e = *fx.engine;
+  e.set_pages({{0, 10, 10, 200, 90}, {1, 10, 120, 200, 90}});
+  draw_line(e, 30, 40, 60, 40); draw_line(e, 30, 150, 60, 150);
+  e.edit_page(1, 0); // copy 0 to new 1; old 1 is now 2
+  CHECK(e.store().stroke_count() == 3); CHECK(e.store().stroke(1).page == 2); CHECK(e.store().stroke(2).page == 1);
+  CHECK_NEAR(e.store().canonical(0)[0].x0, e.store().canonical(2)[0].x0, 1e-5);
+  e.edit_page(2, 0); CHECK(e.store().stroke(0).hidden); CHECK(e.store().stroke(1).page == 1); CHECK(e.store().stroke(2).page == 0);
+  e.edit_page(0, 0); CHECK(e.store().stroke(1).page == 2); CHECK(e.store().stroke(2).page == 1);
+}
+
+
+TEST(document_restore_remaps_when_viewport_is_unchanged) {
+  EngineFixture fx; auto& e = *fx.engine;
+  const std::vector<InkEngine::VisiblePage> pages{{0, 10, 20, 200, 200}};
+  e.set_pages(pages); draw_line(e, 30, 40, 60, 40);
+  const auto bytes = e.snapshot();
+  const auto original = fx.renderer.composite(false).px;
+  CHECK(e.restore(bytes.data(), bytes.size()));
+  CHECK_NEAR(e.store().capsules(0)[0].x0, 30, 1e-5);
+  CHECK(fx.renderer.composite(false).px == original);
+}
+
+TEST(document_duplicate_capacity_failure_leaves_document_unchanged) {
+  EngineConfig cfg; cfg.store_max_strokes = 1; cfg.store_max_capsules = 64;
+  NullRenderer renderer; InkEngine e(cfg, renderer);
+  draw_line(e, 30, 40, 60, 40);
+  const auto bytes = e.snapshot();
+  CHECK(!e.edit_page(1, 0));
+  CHECK(e.snapshot() == bytes);
+  CHECK(e.can_undo());
+}
+
+TEST(document_same_placement_does_not_interrupt_a_stroke) {
+  EngineFixture fx; auto& e = *fx.engine;
+  const std::vector<InkEngine::VisiblePage> pages{{0, 10, 10, 200, 200}};
+  e.set_pages(pages);
+  auto down = sample(Action::kDown, 0, 30, 40); e.process(&down, 1);
+  e.set_pages(pages);
+  auto up = sample(Action::kUp, 8000, 60, 40); e.process(&up, 1);
+  CHECK(e.store().stroke_count() == 1);
+  CHECK(e.store().stroke(0).capsule_count == 2);
+}
+
 TEST(engine_hover_reaches_renderer) {
   struct HoverRenderer final : InkRenderer {
     int enters = 0, exits = 0;
