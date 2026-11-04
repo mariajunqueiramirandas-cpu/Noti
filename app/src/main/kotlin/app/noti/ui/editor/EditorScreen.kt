@@ -151,6 +151,11 @@ private fun EditorContent(notebook: Notebook, library: LibraryStore, settings: S
                 tapUndo = settings.tapUndo, onLayer = { layer = it }, onRestoreError = { restoreError = true },
                 onTwoFingerDoubleTap = { fullScreen = false },
                 topClearance = if (fullScreen) 16.dp else 72.dp, bottomClearance = if (fullScreen) 16.dp else 72.dp,
+                buttons = settings.penButtonOptions(enabled = !settingsOpen && !renaming && !choosingPaper &&
+                    !confirmingLeave && !restoreError && deletingPage == null && !leaving && !exporting && !pageBusy && !pagesOpen),
+                onButtonClick = { button ->
+                    settings.performButtonAction(settings.buttonAction(button)) { layer?.documentAction(it) }
+                },
             )
             if (!fullScreen) {
                 EditorToolbar(

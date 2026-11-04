@@ -779,6 +779,36 @@ TEST(document_lasso_moves_and_undoes_canonical_ink) {
   e.redo(); CHECK_NEAR(e.store().canonical(0)[0].x0, 80, 1e-5);
 }
 
+TEST(stylus_primary_override_is_latched_for_one_stroke_then_returns_to_drawing) {
+  EngineFixture fx; auto& e = *fx.engine;
+  draw_line(e, 20, 80, 200, 80);
+  InkSample erase[] = {sample(Action::kDown, 10000, 90, 20), sample(Action::kMove, 14000, 90, 140), sample(Action::kUp, 18000, 90, 140)};
+  erase[0].flags = kFlagButtonPrimary; // button released before MOVE: finish the same eraser gesture
+  e.process(erase, 3);
+  CHECK(e.store().stroke(0).hidden);
+  draw_line(e, 30, 180, 130, 180);
+  CHECK(e.store().stroke_count() == 2);
+  CHECK(!e.store().stroke(1).hidden);
+  e.undo(); CHECK(e.store().stroke(1).hidden);
+  e.undo(); CHECK(!e.store().stroke(0).hidden);
+}
+
+TEST(stylus_secondary_override_selects_and_cancellation_keeps_original_ink) {
+  EngineFixture fx; auto& e = *fx.engine;
+  draw_line(e, 50, 50, 80, 50);
+  InkSample lasso[] = {sample(Action::kDown, 10000, 35, 35), sample(Action::kMove, 14000, 100, 35),
+    sample(Action::kMove, 18000, 100, 80), sample(Action::kMove, 22000, 35, 80), sample(Action::kUp, 26000, 35, 35)};
+  lasso[0].flags = kFlagButtonSecondary;
+  e.process(lasso, 5); CHECK(e.selection_count() == 1);
+  CHECK(!e.store().stroke(0).hidden);
+  InkSample erase[] = {sample(Action::kDown, 30000, 60, 50), sample(Action::kCancel, 34000, 60, 50)};
+  erase[0].flags = kFlagButtonPrimary | kFlagButtonSecondary; // eraser wins if both buttons are down
+  e.process(erase, 2);
+  CHECK(!e.store().stroke(0).hidden);
+  draw_line(e, 50, 150, 80, 150);
+  CHECK(e.store().stroke_count() == 2);
+}
+
 TEST(document_visible_pages_hit_testing_and_remapping) {
   EngineFixture fx; auto& e = *fx.engine;
   e.set_pages({{0, 10, 10, 200, 90}, {1, 10, 120, 200, 90}});

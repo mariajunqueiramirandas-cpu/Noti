@@ -24,8 +24,13 @@ Ink uses canonical page coordinates, so scrolling, zooming, rotation and reopeni
 to reposition it. The launcher stays fixed through the short opening/closing animation. Tap the fan's brush-options
 button for color and width presets, custom colors and pressure settings. Undo and redo share the compact header.
 Save status is in More, with a visible retry control when saving fails. Circle whole strokes with the lasso, then drag inside
-the selection to move them. Hold a primary stylus button (or use the eraser tip) for erasing; the secondary button
-selects. Two-finger tap undoes (configurable); two-finger double-tap exits full screen.
+the selection to move them. Click the Focus Pen's writing button to toggle the eraser, or its screenshot button
+to toggle the lasso; click again to return to your last pen/highlighter. Genuine held buttons temporarily erase/select
+for strokes begun while pressed; an eraser tip also erases. Configure shortcuts and test your tablet in
+**Settings → Pen buttons**. Xiaomi firmware that reports instant clicks cannot supply hold duration.
+The Focus/Spotlight button stays with the system unless assigned and delivered to the app.
+See [pen button support and device verification](docs/PEN_BUTTONS.md).
+Two-finger tap undoes (configurable); two-finger double-tap exits full screen.
 
 **Saving**: completed edits are autosaved to versioned `.noti` files with `AtomicFile` on a separate IO executor.
 Snapshots run between strokes; pause, leaving and release also save. Invalid archives are preserved instead of being

@@ -84,7 +84,32 @@ class SettingsStore(context: Context) {
 
     var tapUndo by pref(true, { prefs.getBoolean("tapUndo", it) }) { putBoolean("tapUndo", it) }
 
-    var tool by pref(Tool.Pen, { enumOr(prefs.getString("tool", null), it) }) { putString("tool", it.name) }
+    private var storedTool by pref(Tool.Pen, { enumOr(prefs.getString("tool", null), it) }) { putString("tool", it.name) }
+    var lastDrawingTool by pref(Tool.Pen, {
+        enumOr(prefs.getString("lastDrawingTool", null), if (storedTool == Tool.Highlighter) Tool.Highlighter else it)
+            .takeIf { value -> value == Tool.Pen || value == Tool.Highlighter } ?: Tool.Pen
+    }) { putString("lastDrawingTool", it.name) }
+        private set
+    var tool: Tool
+        get() = storedTool
+        set(value) {
+            if (value == Tool.Pen || value == Tool.Highlighter) lastDrawingTool = value
+            storedTool = value
+        }
+
+    var penButtonsEnabled by pref(true, { prefs.getBoolean("penButtonsEnabled", it) }) { putBoolean("penButtonsEnabled", it) }
+    var penButtonHolds by pref(true, { prefs.getBoolean("penButtonHolds", it) }) { putBoolean("penButtonHolds", it) }
+    var penLegacyKeys by pref(true, { prefs.getBoolean("penLegacyKeys", it) }) { putBoolean("penLegacyKeys", it) }
+    var penSwapLegacyKeys by pref(false, { prefs.getBoolean("penSwapLegacyKeys", it) }) { putBoolean("penSwapLegacyKeys", it) }
+    var primaryButtonAction by pref(PenButtonAction.ToggleEraser, { enumOr(prefs.getString("primaryButtonAction", null), it) }) {
+        putString("primaryButtonAction", it.name)
+    }
+    var secondaryButtonAction by pref(PenButtonAction.ToggleLasso, { enumOr(prefs.getString("secondaryButtonAction", null), it) }) {
+        putString("secondaryButtonAction", it.name)
+    }
+    var focusButtonAction by pref(PenButtonAction.None, { enumOr(prefs.getString("focusButtonAction", null), it) }) {
+        putString("focusButtonAction", it.name)
+    }
 
     var penSlots by pref(DEFAULT_PEN, { ToolSlots.decode(prefs.getString("penSlots", null), it) }) {
         putString("penSlots", it.encode())

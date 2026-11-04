@@ -56,6 +56,7 @@ internal class InkWindow(
     private val ink: Handler,
     private val gestures: GestureListener?,
     private val onFrame: () -> Unit,
+    private val buttons: StylusButtons,
 ) : SurfaceView(context), SurfaceHolder.Callback {
 
     private val wm = context.getSystemService(WindowManager::class.java)
@@ -143,6 +144,7 @@ internal class InkWindow(
     }
 
     fun remove() {
+        buttons.reset()
         ink.removeCallbacks(idleTick)
         vsyncActive = false
         choreographer.removeVsyncCallback(vsync)
@@ -166,6 +168,9 @@ internal class InkWindow(
 
     override fun dispatchTouchEvent(e: MotionEvent): Boolean {
         val recv = System.nanoTime()
+        for (i in 0 until e.pointerCount) {
+            if (isPen(e, i)) { buttons.motion(e.deviceId, e.buttonState); break }
+        }
         val ai = e.actionIndex
         when (e.actionMasked) {
             MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> {
@@ -203,6 +208,7 @@ internal class InkWindow(
             MotionEvent.ACTION_UP, MotionEvent.ACTION_POINTER_UP -> {
                 val canceled = (e.flags and MotionEvent.FLAG_CANCELED) != 0  // API 33
                 if (penIndex(e) == ai) {
+                    if (canceled) buttons.reset()
                     put(e, ai, -1, if (canceled) NotiInk.ACTION_CANCEL else NotiInk.ACTION_UP, penFlags(e, ai), recv)
                     penId = -1
                 } else if (!isPen(e, ai)) {
@@ -210,6 +216,7 @@ internal class InkWindow(
                 }
             }
             MotionEvent.ACTION_CANCEL -> {
+                buttons.reset()
                 val pi = penIndex(e)
                 if (penId >= 0) {
                     put(e, if (pi >= 0) pi else 0, -1, NotiInk.ACTION_CANCEL, 0, recv)
@@ -227,14 +234,16 @@ internal class InkWindow(
     }
 
     override fun dispatchGenericMotionEvent(e: MotionEvent): Boolean {
+        if (!isPen(e, 0)) return false
+        buttons.motion(e.deviceId, e.buttonState)
         val action = when (e.actionMasked) {
             MotionEvent.ACTION_HOVER_ENTER -> NotiInk.ACTION_HOVER_ENTER
             MotionEvent.ACTION_HOVER_EXIT -> NotiInk.ACTION_HOVER_EXIT
             // The engine ignores hover moves; the palm filter uses them to know where the hand is.
             MotionEvent.ACTION_HOVER_MOVE -> NotiInk.ACTION_HOVER_MOVE
+            MotionEvent.ACTION_BUTTON_PRESS, MotionEvent.ACTION_BUTTON_RELEASE -> return true
             else -> return false
         }
-        if (!isPen(e, 0)) return false
         put(e, 0, -1, action, 0, System.nanoTime())
         process()
         return true
@@ -256,8 +265,7 @@ internal class InkWindow(
     private fun penFlags(e: MotionEvent, i: Int): Int {
         var f = 0
         if (e.getToolType(i) == MotionEvent.TOOL_TYPE_ERASER) f = f or NotiInk.FLAG_ERASER
-        if (e.isButtonPressed(MotionEvent.BUTTON_STYLUS_PRIMARY)) f = f or NotiInk.FLAG_BUTTON_PRIMARY
-        if (e.isButtonPressed(MotionEvent.BUTTON_STYLUS_SECONDARY)) f = f or NotiInk.FLAG_BUTTON_SECONDARY
+        f = f or buttons.flags(e.deviceId, e.buttonState, contact = true)
         return f
     }
 
