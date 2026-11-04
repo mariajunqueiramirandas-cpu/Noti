@@ -54,6 +54,43 @@ class PageViewportTest {
         assertEquals(2f, f.state.zoom, 0.001f)
     }
 
+    @Test fun zoomOutShowsMultiplePagesAndClampsAtQuarterSize() {
+        val f = Fixture(FloatArray(20) { 1.4f })
+        f.viewport.goTo(8)
+        f.viewport.pinch(150f, 200f, 0.01f, 0f, 0f)
+        assertEquals(0.25f, f.state.zoom, 0.001f)
+        assertEquals(70f, f.state.width, 0.001f)
+        assertEquals(115f, f.state.left, 0.001f)
+        assertTrue(f.state.visiblePages.size >= 4)
+        f.viewport.scrollTo(1f)
+        assertEquals(19, f.state.visiblePages.last().page)
+        assertEquals(390f, f.state.visiblePages.last().let { it.top + it.height }, 0.001f)
+    }
+
+    @Test fun zoomingOutPreservesVerticalFocalPointAndResetReturnsToFitWidth() {
+        val f = Fixture(FloatArray(20) { 1.4f })
+        f.viewport.goTo(8)
+        val before = f.state
+        f.viewport.pinch(150f, 200f, 0.5f, 0f, 0f)
+        assertEquals(0.5f, f.state.zoom, 0.001f)
+        assertEquals(before.page, f.state.page)
+        assertEquals((200f - before.top) / before.width, (200f - f.state.top) / f.state.width, 0.001f)
+        f.viewport.resetZoom()
+        assertEquals(1f, f.state.zoom, 0.001f)
+        assertEquals(before.top, f.state.top, 0.001f)
+    }
+
+    @Test fun shortZoomedOutDocumentIsCentredWithNoScrollRange() {
+        val f = Fixture(floatArrayOf(1.4f))
+        f.viewport.pinch(150f, 200f, 0.25f, 0f, 0f)
+        assertEquals(151f, f.state.top, 0.001f)
+        assertEquals(1f, f.state.viewportFraction, 0f)
+        f.viewport.pan(100000f, -100000f)
+        assertEquals(115f, f.state.left, 0.001f)
+        assertEquals(151f, f.state.top, 0.001f)
+        assertEquals(0f, f.state.scrollFraction, 0f)
+    }
+
     @Test fun navigationSupportsMixedPageSizesAndClampsIndices() {
         val f = Fixture(floatArrayOf(1.4f, 0.7f, 2f))
         f.viewport.goTo(2)

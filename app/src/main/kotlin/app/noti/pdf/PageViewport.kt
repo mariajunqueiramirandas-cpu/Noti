@@ -100,8 +100,8 @@ class PageViewport(private val marginPx: Float, private val onChange: (PagePlace
     }
 
     fun pinch(cx: Float, cy: Float, scale: Float, dx: Float, dy: Float) {
-        if (!ready() || !scale.isFinite() || scale <= 0 || !cx.isFinite() || !cy.isFinite()) return
-        val nextZoom = (zoom * scale).coerceIn(1f, MAX_ZOOM)
+        if (!ready() || !scale.isFinite() || scale <= 0 || !cx.isFinite() || !cy.isFinite() || !dx.isFinite() || !dy.isFinite()) return
+        val nextZoom = (zoom * scale).coerceIn(MIN_ZOOM, MAX_ZOOM)
         val k = nextZoom / zoom
         left = cx - (cx - left - dx) * k
         documentTop = cy - (cy - documentTop - dy) * k
@@ -154,5 +154,8 @@ class PageViewport(private val marginPx: Float, private val onChange: (PagePlace
             viewportFraction = (availableHeight / height).coerceIn(0f, 1f)))
     }
 
-    companion object { const val MAX_ZOOM = 6f }
+    companion object {
+        const val MIN_ZOOM = 0.25f
+        const val MAX_ZOOM = 6f
+    }
 }

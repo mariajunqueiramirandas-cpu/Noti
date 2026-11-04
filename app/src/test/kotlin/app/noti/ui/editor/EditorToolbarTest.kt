@@ -51,23 +51,79 @@ class EditorToolbarTest {
     @Test fun narrowWindowKeepsFloatingControlsApart() { render(360, ThemeMode.Dark); assertControls(); screenshot("narrow-dark") }
     @Test fun largeFontsKeepControlsInsideWindow() { render(800, ThemeMode.Light, 2f); assertControls(); screenshot("large-font") }
 
-    @Test fun radialSelectionPresetsAndOptionsWork() {
+    @Test fun radialSelectionKeepsPresetsBehindBrushOptions() {
         render(800, ThemeMode.Dark)
         compose.onNodeWithContentDescription("Pen").assertDoesNotExist()
         compose.onNodeWithContentDescription("Open tools").performClick()
+        compose.onNodeWithContentDescription("Color 2").assertDoesNotExist()
+        screenshot("radial-dark")
+        compose.onNodeWithContentDescription("Brush options").performClick()
         compose.onNodeWithContentDescription("Color 2").performClick()
         compose.onNodeWithContentDescription("Width 9.0").performClick()
         compose.runOnIdle { assertEquals(1, settings.penSlots.color); assertEquals(2, settings.penSlots.width) }
-        screenshot("radial-dark")
+        compose.onNodeWithText("Pressure sensitivity").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithContentDescription("Close tools").performClick()
+        compose.onNodeWithContentDescription("Open tools").performClick()
         compose.onNodeWithContentDescription("Highlighter").performClick()
         compose.onNodeWithContentDescription("Highlighter").assertDoesNotExist()
         compose.onNodeWithContentDescription("Open tools").performClick()
-        compose.onNodeWithContentDescription("Width 40.0").assertIsDisplayed().performClick()
-        compose.runOnIdle { assertEquals(Tool.Highlighter, settings.tool); assertEquals(2, settings.highlighterSlots.width) }
-        compose.onNodeWithContentDescription("Pen").performClick()
-        compose.onNodeWithContentDescription("Open tools").performClick()
         compose.onNodeWithContentDescription("Brush options").performClick()
-        compose.onNodeWithText("Pressure sensitivity").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Width 40.0").performClick()
+        compose.runOnIdle { assertEquals(Tool.Highlighter, settings.tool); assertEquals(2, settings.highlighterSlots.width) }
+        compose.onNodeWithText("Pressure sensitivity").assertDoesNotExist()
+    }
+
+    @Test fun fanAnimationKeepsLauncherFixedAndFinishesQuickly() {
+        render(800, ThemeMode.Light)
+        val before = compose.onNodeWithContentDescription("Open tools").fetchSemanticsNode().boundsInRoot
+        compose.mainClock.autoAdvance = false
+        compose.onNodeWithContentDescription("Open tools").performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.OnClick) { it() }
+        compose.runOnIdle { }
+        compose.mainClock.advanceTimeByFrame()
+        compose.mainClock.advanceTimeBy(80)
+        val during = compose.onNodeWithContentDescription("Close tools").fetchSemanticsNode().boundsInRoot
+        assertEquals(before, during)
+        compose.mainClock.advanceTimeBy(112)
+        listOf("Pen", "Highlighter", "Eraser", "Lasso").forEach {
+            compose.onNodeWithContentDescription(it).assertIsDisplayed()
+        }
+        compose.onNodeWithContentDescription("Close tools").performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.OnClick) { it() }
+        compose.runOnIdle { }
+        compose.mainClock.advanceTimeByFrame()
+        compose.mainClock.advanceTimeBy(208)
+        assertEquals(before, compose.onNodeWithContentDescription("Open tools").fetchSemanticsNode().boundsInRoot)
+        compose.onNodeWithContentDescription("Pen").assertDoesNotExist()
+        compose.mainClock.autoAdvance = true
+    }
+
+    @Test fun narrowFanStaysClearOfNavigationAndOtherTools() {
+        render(360, ThemeMode.Light)
+        compose.onNodeWithContentDescription("Open tools").performClick()
+        val labels = listOf("Pen", "Highlighter", "Eraser", "Lasso", "Brush options", "Close tools", "Pages",
+            "Zoom 175 percent. Reset to fit width")
+        val boxes = labels.map { it to compose.onNodeWithContentDescription(it).assertIsDisplayed().fetchSemanticsNode().boundsInRoot }
+        for ((i, a) in boxes.withIndex()) for (b in boxes.drop(i + 1)) {
+            assertFalse("Controls overlap: ${a.first} and ${b.first}", a.second.overlaps(b.second))
+        }
+        screenshot("radial-narrow")
+    }
+
+    @Test fun overflowKeepsSaveStatusAndPageActionsAccessible() {
+        render(360, ThemeMode.Light)
+        compose.onNodeWithText("Autosave on").assertDoesNotExist()
+        compose.onNodeWithContentDescription("More").performClick()
+        compose.onNodeWithText("Autosave on").assertIsDisplayed()
+        compose.onNodeWithText("Next page").performClick()
+        compose.runOnIdle { assertEquals(3, requestedPage) }
+        compose.onNodeWithContentDescription("More").performClick()
+        compose.onNodeWithText("Previous page").performClick()
+        compose.runOnIdle { assertEquals(1, requestedPage) }
+    }
+
+    @Test fun saveFailureExposesRetryWithoutOpeningMenu() {
+        render(360, ThemeMode.Light, saveStatus = "Save failed · tap to retry")
+        compose.onNodeWithContentDescription("Save failed · tap to retry").assertIsDisplayed().performClick()
+        compose.runOnIdle { assertEquals(1, saves) }
     }
 
     @Test
@@ -75,7 +131,7 @@ class EditorToolbarTest {
     fun brushOptionsFitShortNarrowWindowWithLargeFonts() {
         render(360, ThemeMode.Light, 1.5f)
         compose.onNodeWithContentDescription("Open tools").performClick()
-        compose.onNodeWithContentDescription("Brush options").performScrollTo().performClick()
+        compose.onNodeWithContentDescription("Brush options").performClick()
         compose.onNodeWithText("Width").performScrollTo().assertIsDisplayed()
         val popup = compose.onNode(isPopup()).fetchSemanticsNode().boundsInRoot
         assertTrue("Brush menu is wider than the window: $popup", popup.width <= 360f)
@@ -108,8 +164,10 @@ class EditorToolbarTest {
 
     private var resets = 0
     private var scrolled = 0f
+    private var requestedPage = -1
+    private var saves = 0
 
-    private fun render(width: Int, theme: ThemeMode, fontScale: Float = 1f, floating: Boolean = false) {
+    private fun render(width: Int, theme: ThemeMode, fontScale: Float = 1f, floating: Boolean = false, saveStatus: String = "Autosave on") {
         settings = SettingsStore(RuntimeEnvironment.getApplication()).also {
             it.tool = Tool.Pen; it.penSlots = SettingsStore.DEFAULT_PEN; it.highlighterSlots = SettingsStore.DEFAULT_HIGHLIGHTER
         }
@@ -129,7 +187,8 @@ class EditorToolbarTest {
                             EditorToolbar(
                                 title = "Ideas for a quieter day", settings = settings, pagesOpen = false,
                                 onBack = {}, onRename = {}, onTogglePages = {}, onPagePaper = {}, onFullScreen = {}, onSettings = {},
-                                pdfPage = 2 to 30, canUndo = true, canRedo = true, zoom = 1.75f,
+                                pdfPage = 2 to 30, onPage = { requestedPage = it }, canUndo = true, canRedo = true, zoom = 1.75f,
+                                saveStatus = saveStatus, onSave = { saves++ },
                                 scrollFraction = 0.3f, viewportFraction = 0.15f, onResetZoom = { resets++ }, onScroll = { scrolled = it },
                                 onUndo = { undos++ }, onRedo = { redos++ }, floatingWindows = floating,
                             )
@@ -142,7 +201,7 @@ class EditorToolbarTest {
 
     private fun assertControls() {
         val toolbar = compose.onNodeWithTag("toolbar").fetchSemanticsNode().boundsInRoot
-        val labels = listOf("Undo", "Redo", "Open tools", "Back to library", "Previous page", "Next page", "Pages", "More",
+        val labels = listOf("Undo", "Redo", "Open tools", "Back to library", "Pages", "More",
             "Document scroll", "Zoom 175 percent. Reset to fit width")
         val boxes = labels.map { label ->
             val node = compose.onNodeWithContentDescription(label).assertIsDisplayed().fetchSemanticsNode()
