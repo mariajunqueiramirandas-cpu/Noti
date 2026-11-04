@@ -26,8 +26,8 @@ The page counter, proportional scroll thumb and zoom percentage follow the live 
 Only visible pages are rendered; PDF neighbours are prefetched and zoomed detail is rendered after scrolling settles.
 Ink uses canonical page coordinates, so scrolling, zooming, rotation and reopening do not move annotations.
 
-**Writing**: tap the floating brush to fan out the pen, highlighter, stroke eraser and lasso; drag the launcher
-to reposition it. The launcher stays fixed through the short opening/closing animation. Tap the fan's brush-options
+**Writing**: tap the floating brush to reveal a ring of pen, highlighter, stroke eraser and lasso controls; drag the launcher
+to reposition it. The launcher keeps its position, size and brush icon while the separate controls fade in or out. Tap the ring's brush-options
 button for color and width presets, custom colors and pressure settings. Undo and redo share the compact header.
 Save status is in More, with a visible retry control when saving fails. Circle whole strokes with the lasso, then drag inside
 the selection to move them. Click the Focus Pen's writing button to toggle the eraser, or its screenshot button

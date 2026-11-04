@@ -62,7 +62,7 @@ class EditorToolbarTest {
         assertControls()
         compose.onNodeWithContentDescription("Open tools").performClick()
         val root = compose.onNodeWithTag("toolbar").fetchSemanticsNode().boundsInRoot
-        val obstacles = listOf("Back to library", "More", "Undo", "Redo", "Pages", "Zoom 175 percent. Reset to fit width")
+        val obstacles = listOf("Back to library", "More", "Undo", "Redo", "Pages", "Document scroll", "Zoom 175 percent. Reset to fit width")
             .map { it to compose.onNodeWithContentDescription(it).fetchSemanticsNode().boundsInRoot }
         listOf("Pen", "Highlighter", "Eraser", "Lasso", "Brush options", "Close tools").forEach { label ->
             val bounds = compose.onNodeWithContentDescription(label).assertIsDisplayed().fetchSemanticsNode().boundsInRoot
@@ -94,27 +94,66 @@ class EditorToolbarTest {
         compose.onNodeWithText("Pressure sensitivity").assertDoesNotExist()
     }
 
-    @Test fun fanAnimationKeepsLauncherFixedAndFinishesQuickly() {
-        render(800, ThemeMode.Light)
-        val before = compose.onNodeWithContentDescription("Open tools").fetchSemanticsNode().boundsInRoot
+    @Test fun ringAnimationKeepsLauncherFixedAndFinishesQuickly() = assertStableLauncher(floating = false)
+
+    @Test fun realPopupKeepsLauncherWindowAndScreenPositionThroughToggles() = assertStableLauncher(floating = true)
+
+    private fun assertStableLauncher(floating: Boolean) {
+        render(800, ThemeMode.Light, floating = floating)
+        val before = compose.onNodeWithContentDescription("Open tools").fetchSemanticsNode()
+        val screenPosition = before.positionOnScreen
+        val size = before.size
+        val rootSize = generateSequence(before) { it.parent }.last().size
+        fun assertUnchanged(label: String) {
+            val current = compose.onNodeWithContentDescription(label).fetchSemanticsNode()
+            assertSame("Launcher must keep the same window", before.root, current.root)
+            assertEquals(screenPosition, current.positionOnScreen)
+            assertEquals(size, current.size)
+            assertEquals("Launcher window must never resize", rootSize, generateSequence(current) { it.parent }.last().size)
+        }
+        compose.mainClock.autoAdvance = false
+        repeat(3) {
+            compose.onNodeWithContentDescription("Open tools").performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.OnClick) { it() }
+            compose.runOnIdle { }
+            compose.mainClock.advanceTimeByFrame()
+            repeat(8) {
+                compose.mainClock.advanceTimeByFrame()
+                assertUnchanged("Close tools")
+            }
+            listOf("Pen", "Highlighter", "Eraser", "Lasso").forEach {
+                compose.onNodeWithContentDescription(it).assertIsDisplayed().assertIsEnabled()
+            }
+            compose.onNodeWithContentDescription("Close tools").performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.OnClick) { it() }
+            compose.runOnIdle { }
+            compose.mainClock.advanceTimeByFrame()
+            repeat(8) {
+                compose.mainClock.advanceTimeByFrame()
+                assertUnchanged("Open tools")
+            }
+            compose.onNodeWithContentDescription("Pen").assertDoesNotExist()
+        }
+        compose.mainClock.autoAdvance = true
+    }
+
+    @Test fun ringTargetsStayStillAndCanBeSelectedDuringOpening() {
+        render(360, ThemeMode.Light)
         compose.mainClock.autoAdvance = false
         compose.onNodeWithContentDescription("Open tools").performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.OnClick) { it() }
         compose.runOnIdle { }
         compose.mainClock.advanceTimeByFrame()
-        compose.mainClock.advanceTimeBy(80)
-        val during = compose.onNodeWithContentDescription("Close tools").fetchSemanticsNode().boundsInRoot
-        assertEquals(before, during)
-        compose.mainClock.advanceTimeBy(112)
-        listOf("Pen", "Highlighter", "Eraser", "Lasso").forEach {
-            compose.onNodeWithContentDescription(it).assertIsDisplayed()
-        }
-        compose.onNodeWithContentDescription("Close tools").performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.OnClick) { it() }
-        compose.runOnIdle { }
         compose.mainClock.advanceTimeByFrame()
-        compose.mainClock.advanceTimeBy(208)
-        assertEquals(before, compose.onNodeWithContentDescription("Open tools").fetchSemanticsNode().boundsInRoot)
-        compose.onNodeWithContentDescription("Pen").assertDoesNotExist()
+        val labels = listOf("Pen", "Highlighter", "Eraser", "Lasso", "Brush options")
+        val positions = labels.map { compose.onNodeWithContentDescription(it).fetchSemanticsNode().positionOnScreen }
+        compose.mainClock.advanceTimeBy(32)
+        labels.forEachIndexed { i, label ->
+            val target = compose.onNodeWithContentDescription(label).assertIsEnabled().fetchSemanticsNode()
+            assertEquals("$label must fade in without flying out of the launcher", positions[i], target.positionOnScreen)
+        }
+        compose.onNodeWithContentDescription("Eraser").performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.OnClick) { it() }
+        compose.runOnIdle { assertEquals(Tool.Eraser, settings.tool) }
         compose.mainClock.autoAdvance = true
+        compose.onNodeWithContentDescription("Open tools").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Pen").assertDoesNotExist()
     }
 
     @Test fun narrowFanStaysClearOfNavigationAndOtherTools() {
@@ -168,6 +207,34 @@ class EditorToolbarTest {
         assertTrue(after.top < before.top - 70f)
         compose.onNodeWithContentDescription("Open tools").performClick()
         listOf("Pen", "Highlighter", "Eraser", "Lasso", "Close tools").forEach { compose.onNodeWithContentDescription(it).assertIsDisplayed() }
+    }
+
+    @Test fun draggingOpenRingToCanvasEdgesKeepsTargetsInsideAndApart() {
+        render(360, ThemeMode.Light)
+        compose.onNodeWithContentDescription("Open tools").performClick()
+        val canvas = compose.onNodeWithTag("toolbar").fetchSemanticsNode().boundsInRoot
+        val labels = listOf("Pen", "Highlighter", "Eraser", "Lasso", "Brush options", "Close tools")
+        listOf(
+            androidx.compose.ui.geometry.Offset(-1000f, -1000f),
+            androidx.compose.ui.geometry.Offset(1000f, -1000f),
+            androidx.compose.ui.geometry.Offset(1000f, 1000f),
+            androidx.compose.ui.geometry.Offset(-1000f, 1000f),
+        ).forEach { delta ->
+            compose.onNodeWithContentDescription("Close tools").performTouchInput { swipe(center, center + delta, 600) }
+            val boxes = labels.map { label ->
+                val bounds = compose.onNodeWithContentDescription(label).assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+                assertTrue("$label outside canvas after drag: $bounds", canvas.contains(bounds.topLeft) && canvas.contains(bounds.bottomRight))
+                label to bounds
+            }
+            val obstacles = listOf("Back to library", "More", "Pages", "Document scroll", "Zoom 175 percent. Reset to fit width")
+                .map { it to compose.onNodeWithContentDescription(it).fetchSemanticsNode().boundsInRoot }
+            boxes.forEach { (label, bounds) -> obstacles.forEach { (name, obstacle) ->
+                assertFalse("$label overlaps $name after drag", bounds.overlaps(obstacle))
+            } }
+            for ((i, a) in boxes.withIndex()) for (b in boxes.drop(i + 1)) {
+                assertFalse("${a.first} overlaps ${b.first} after drag", a.second.overlaps(b.second))
+            }
+        }
     }
 
     @Test fun realPopupIslandsReceiveActionsAndExposeLiveIndicators() {
