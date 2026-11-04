@@ -12,6 +12,8 @@ data class PagePlacement(
     val canvasHeight: Int,
     val settled: Boolean,
     val visiblePages: List<PagePlacement> = emptyList(),
+    val scrollFraction: Float = 0f,
+    val viewportFraction: Float = 1f,
 ) {
     val fitWidth get() = width / zoom
 }
@@ -28,6 +30,8 @@ class PageViewport(private val marginPx: Float, private val onChange: (PagePlace
     private var page = 0
     private var zoom = 1f
     private var left = 0f
+    private var topInset = marginPx
+    private var bottomInset = marginPx
     private var documentTop = marginPx
     private var moving = false
     private var totalHeight = 0f
@@ -57,7 +61,34 @@ class PageViewport(private val marginPx: Float, private val onChange: (PagePlace
         page = index.coerceIn(aspects.indices)
         zoom = 1f
         left = marginPx
-        documentTop = marginPx - starts[page]
+        documentTop = topInset - starts[page]
+        emit()
+    }
+
+    fun setVerticalInsets(top: Float, bottom: Float) {
+        if (!top.isFinite() || !bottom.isFinite()) return
+        val nextTop = top.coerceAtLeast(marginPx)
+        val nextBottom = bottom.coerceAtLeast(marginPx)
+        if (nextTop == topInset && nextBottom == bottomInset) return
+        documentTop += nextTop - topInset
+        topInset = nextTop; bottomInset = nextBottom
+        emit()
+    }
+
+    fun scrollTo(fraction: Float) {
+        if (!ready() || !fraction.isFinite()) return
+        val range = (totalHeight * zoom + topInset + bottomInset - canvasH).coerceAtLeast(0f)
+        documentTop = topInset - fraction.coerceIn(0f, 1f) * range
+        emit()
+    }
+
+    fun resetZoom() {
+        if (!ready()) return
+        // Keep the same document point under the viewport centre.
+        val centre = (canvasH / 2f - documentTop) / zoom
+        zoom = 1f
+        left = marginPx
+        documentTop = canvasH / 2f - centre
         emit()
     }
 
@@ -93,7 +124,9 @@ class PageViewport(private val marginPx: Float, private val onChange: (PagePlace
         val width = baseWidth * zoom
         left = if (width <= canvasW - 2 * marginPx) (canvasW - width) / 2 else left.coerceIn(canvasW - width - marginPx, marginPx)
         val height = totalHeight * zoom
-        documentTop = if (height < canvasH - 2 * marginPx) (canvasH - height) / 2 else documentTop.coerceIn(canvasH - height - marginPx, marginPx)
+        val availableHeight = (canvasH - topInset - bottomInset).coerceAtLeast(1f)
+        documentTop = if (height < availableHeight) topInset + (availableHeight - height) / 2
+            else documentTop.coerceIn((canvasH - height - bottomInset).coerceAtMost(topInset), topInset)
         // Binary search the page intersecting the viewport centre.
         val centre = (canvasH / 2f - documentTop) / zoom
         var lo = 0; var hi = starts.lastIndex
@@ -115,7 +148,10 @@ class PageViewport(private val marginPx: Float, private val onChange: (PagePlace
             if (p.top + p.height >= 0) visible.add(p)
             i++
         }
-        onChange(placement(page).copy(visiblePages = visible))
+        val range = (height + topInset + bottomInset - canvasH).coerceAtLeast(0f)
+        onChange(placement(page).copy(visiblePages = visible,
+            scrollFraction = if (range > 0f) ((topInset - documentTop) / range).coerceIn(0f, 1f) else 0f,
+            viewportFraction = (availableHeight / height).coerceIn(0f, 1f)))
     }
 
     companion object { const val MAX_ZOOM = 6f }

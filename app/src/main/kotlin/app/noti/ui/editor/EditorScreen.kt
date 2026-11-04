@@ -144,7 +144,14 @@ private fun EditorContent(notebook: Notebook, library: LibraryStore, settings: S
         }
     }
     Surface(color = MaterialTheme.colorScheme.background, modifier = Modifier.fillMaxSize()) {
-        Column(Modifier.fillMaxSize().then(if (fullScreen) Modifier else Modifier.windowInsetsPadding(WindowInsets.safeDrawing))) {
+        Box(Modifier.fillMaxSize().then(if (fullScreen) Modifier else Modifier.windowInsetsPadding(WindowInsets.safeDrawing))) {
+            InkCanvas(
+                paper = notebook.paper, brush = brush, engine = engine, modifier = Modifier.fillMaxSize(),
+                palm = palm, pdf = pdf, pages = pages, pageCount = notebook.pageCount, inkFile = inkFile,
+                tapUndo = settings.tapUndo, onLayer = { layer = it }, onRestoreError = { restoreError = true },
+                onTwoFingerDoubleTap = { fullScreen = false },
+                topClearance = if (fullScreen) 16.dp else 96.dp, bottomClearance = if (fullScreen) 16.dp else 88.dp,
+            )
             if (!fullScreen) {
                 EditorToolbar(
                     title = notebook.name, settings = settings, pagesOpen = pagesOpen,
@@ -159,27 +166,26 @@ private fun EditorContent(notebook: Notebook, library: LibraryStore, settings: S
                     onUndo = { layer?.documentAction(0) }, onRedo = { layer?.documentAction(1) },
                     onExport = { if (!exporting && layer != null) export.launch("${notebook.name.replace(Regex("[^a-zA-Z0-9 ._-]"), "_")}.pdf") },
                     onAddPage = if (notebook.isPdf) null else { { changePages(0, notebook.pageCount) } },
+                    zoom = pages.placement?.zoom ?: 1f, scrollFraction = pages.placement?.scrollFraction ?: 0f,
+                    viewportFraction = pages.placement?.viewportFraction ?: 1f, onResetZoom = pages::resetZoom, onScroll = pages::scrollTo,
                     saveStatus = saveStatus, onSave = { layer?.saveNow() }, selectionCount = pages.documentState[3].toInt(), isPdf = notebook.isPdf,
                 )
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             }
-            Row(Modifier.weight(1f).fillMaxWidth()) {
-                if (pagesOpen && !fullScreen) {
-                    if (pdf != null) {
-                        PdfPagesPanel(pdf, pages.page, pages::goTo, onClose = { pagesOpen = false })
-                    } else {
-                        PagesPanel(notebook, pages.page, pageBusy, pages::goTo, onClose = { pagesOpen = false },
-                            onAdd = { changePages(0, notebook.pageCount) }, onDuplicate = { changePages(1, it) },
-                            onDelete = { deletingPage = it }, onChangePaper = { choosingPaper = true })
+            if (pagesOpen && !fullScreen) {
+                androidx.compose.ui.window.Popup(alignment = Alignment.TopStart,
+                    offset = with(androidx.compose.ui.platform.LocalDensity.current) { androidx.compose.ui.unit.IntOffset(16.dp.roundToPx(), 154.dp.roundToPx()) },
+                    properties = androidx.compose.ui.window.PopupProperties(focusable = true),
+                    onDismissRequest = { pagesOpen = false }) {
+                    GlassSurface(Modifier.fillMaxHeight(0.7f), androidx.compose.foundation.shape.RoundedCornerShape(24.dp)) {
+                        if (pdf != null) {
+                            PdfPagesPanel(pdf, pages.page, pages::goTo, onClose = { pagesOpen = false })
+                        } else {
+                            PagesPanel(notebook, pages.page, pageBusy, pages::goTo, onClose = { pagesOpen = false },
+                                onAdd = { changePages(0, notebook.pageCount) }, onDuplicate = { changePages(1, it) },
+                                onDelete = { deletingPage = it }, onChangePaper = { choosingPaper = true })
+                        }
                     }
-                    VerticalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 }
-                InkCanvas(
-                    paper = notebook.paper, brush = brush, engine = engine, modifier = Modifier.weight(1f).fillMaxHeight(),
-                    palm = palm, pdf = pdf, pages = pages, pageCount = notebook.pageCount, inkFile = inkFile,
-                    tapUndo = settings.tapUndo, onLayer = { layer = it }, onRestoreError = { restoreError = true },
-                    onTwoFingerDoubleTap = { fullScreen = false },
-                )
             }
         }
     }
@@ -219,7 +225,7 @@ private fun PagesPanel(notebook: Notebook, current: Int, busy: Boolean, onPage: 
     LaunchedEffect(current) {
         if (current !in list.layoutInfo.visibleItemsInfo.map { it.index }) list.animateScrollToItem(current.coerceAtLeast(0))
     }
-    Column(Modifier.width(184.dp).fillMaxHeight().background(MaterialTheme.colorScheme.surface).padding(12.dp)) {
+    Column(Modifier.width(184.dp).fillMaxHeight().padding(12.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("Pages", style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
             IconButton(onClick = onClose) { Icon(Icons.Outlined.Close, "Close pages") }

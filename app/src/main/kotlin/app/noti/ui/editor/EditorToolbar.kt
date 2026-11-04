@@ -1,8 +1,9 @@
 package app.noti.ui.editor
 
-import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
+import androidx.compose.animation.animateContentSize
+import androidx.compose.foundation.*
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -13,195 +14,261 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.selected
-import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.SolidColor
-import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.*
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.path
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.*
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.*
+import androidx.compose.ui.window.Popup
+import androidx.compose.ui.window.PopupProperties
 import app.noti.data.SettingsStore
 import app.noti.data.Tool
 import app.noti.data.ToolSlots
+import kotlin.math.roundToInt
 
-/** Document actions stay fixed; drawing controls adapt without scrolling offscreen. */
+/** Each island is a sub-panel window: it remains above the native ink input panel. */
 @Composable
 internal fun EditorToolbar(
-    title: String,
-    settings: SettingsStore,
-    pagesOpen: Boolean,
-    onBack: () -> Unit,
-    onRename: () -> Unit,
-    onTogglePages: () -> Unit,
-    onPagePaper: () -> Unit,
-    onFullScreen: () -> Unit,
-    onSettings: () -> Unit,
-    pdfPage: Pair<Int, Int>? = null,
-    onPage: (Int) -> Unit = {},
-    canUndo: Boolean = false,
-    canRedo: Boolean = false,
-    onUndo: () -> Unit = {},
-    onRedo: () -> Unit = {},
-    onExport: () -> Unit = {},
-    onAddPage: (() -> Unit)? = null,
-    saveStatus: String = "Autosave on",
-    onSave: () -> Unit = {},
-    selectionCount: Int = 0,
-    isPdf: Boolean = false,
+    title: String, settings: SettingsStore, pagesOpen: Boolean,
+    onBack: () -> Unit, onRename: () -> Unit, onTogglePages: () -> Unit,
+    onPagePaper: () -> Unit, onFullScreen: () -> Unit, onSettings: () -> Unit,
+    pdfPage: Pair<Int, Int>? = null, onPage: (Int) -> Unit = {},
+    canUndo: Boolean = false, canRedo: Boolean = false,
+    onUndo: () -> Unit = {}, onRedo: () -> Unit = {}, onExport: () -> Unit = {},
+    onAddPage: (() -> Unit)? = null, saveStatus: String = "Autosave on", onSave: () -> Unit = {},
+    selectionCount: Int = 0, isPdf: Boolean = false,
+    zoom: Float = 1f, scrollFraction: Float = 0f, viewportFraction: Float = 1f,
+    onResetZoom: () -> Unit = {}, onScroll: (Float) -> Unit = {},
+    floatingWindows: Boolean = true,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
-    var optionsOpen by remember { mutableStateOf(false) }
     val colors = MaterialTheme.colorScheme
-    Surface(color = colors.surface) {
-        Column {
-            Row(Modifier.fillMaxWidth().heightIn(min = 64.dp).padding(horizontal = 12.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Back to library") }
-                Column(Modifier.weight(1f).clip(MaterialTheme.shapes.small).clickable(onClick = onRename).padding(horizontal = 8.dp)) {
-                    Text(title, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Text(saveStatus, style = MaterialTheme.typography.labelSmall, color = if (saveStatus.startsWith("Save failed")) colors.error else colors.onSurfaceVariant,
-                        modifier = Modifier.clickable(onClick = onSave), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                }
-                if (pdfPage != null) {
-                    val (page, count) = pdfPage
-                    IconButton(onClick = { onPage(page - 1) }, enabled = page > 0) { Icon(Icons.AutoMirrored.Outlined.KeyboardArrowLeft, "Previous page") }
-                    Text("${page + 1} / $count", style = MaterialTheme.typography.labelLarge)
-                    IconButton(onClick = { onPage(page + 1) }, enabled = page < count - 1) { Icon(Icons.AutoMirrored.Outlined.KeyboardArrowRight, "Next page") }
-                }
-                IconToggleButton(checked = pagesOpen, onCheckedChange = { onTogglePages() }) {
-                    Icon(Icons.AutoMirrored.Outlined.ViewSidebar, "Pages", tint = if (pagesOpen) colors.primary else colors.onSurfaceVariant)
-                }
-                Box {
-                    IconButton(onClick = { menuOpen = true }) { Icon(Icons.Outlined.MoreVert, "More") }
-                    DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-                        DropdownMenuItem(text = { Text("Export PDF") }, leadingIcon = { Icon(Icons.Outlined.IosShare, null) }, onClick = { menuOpen = false; onExport() })
-                        if (!isPdf) DropdownMenuItem(text = { Text("Page paper") }, leadingIcon = { Icon(Icons.Outlined.Description, null) }, onClick = { menuOpen = false; onPagePaper() })
-                        onAddPage?.let { add -> DropdownMenuItem(text = { Text("Add page") }, leadingIcon = { Icon(Icons.Outlined.Add, null) }, onClick = { menuOpen = false; add() }) }
-                        DropdownMenuItem(text = { Text("Full screen") }, leadingIcon = { Icon(Icons.Outlined.Fullscreen, null) }, onClick = { menuOpen = false; onFullScreen() })
-                        DropdownMenuItem(text = { Text("Settings") }, leadingIcon = { Icon(Icons.Outlined.Settings, null) }, onClick = { menuOpen = false; onSettings() })
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        val wide = maxWidth >= 600.dp
+        val density = LocalDensity.current
+        fun px(value: Dp) = with(density) { value.roundToPx() }
+        FloatingIsland(Alignment.TopStart, IntOffset(px(16.dp), px(16.dp)), floatingWindows) {
+            GlassSurface(Modifier.width(if (wide) 340.dp else (maxWidth - 32.dp).coerceAtLeast(240.dp))) {
+                Row(Modifier.padding(4.dp), verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Back to library") }
+                    Column(Modifier.weight(1f).padding(horizontal = 4.dp)) {
+                        Text(title, Modifier.clip(RoundedCornerShape(4.dp)).clickable(onClick = onRename),
+                            style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Row(Modifier.clip(CircleShape).clickable(onClick = onSave).padding(vertical = 3.dp),
+                            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                            Box(Modifier.size(5.dp).background(if (saveStatus.contains("failed", true)) colors.error else Color(0xFF5C9988), CircleShape))
+                            Text(saveStatus, style = MaterialTheme.typography.labelSmall,
+                                color = if (saveStatus.contains("failed", true)) colors.error else colors.onSurfaceVariant,
+                                maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                    }
+                    Box {
+                        IconButton(onClick = { menuOpen = true }) { Icon(Icons.Outlined.MoreHoriz, "More") }
+                        DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                            DropdownMenuItem(text = { Text("Export PDF") }, leadingIcon = { Icon(Icons.Outlined.IosShare, null) }, onClick = { menuOpen = false; onExport() })
+                            if (!isPdf) DropdownMenuItem(text = { Text("Page paper") }, leadingIcon = { Icon(Icons.Outlined.Description, null) }, onClick = { menuOpen = false; onPagePaper() })
+                            onAddPage?.let { add -> DropdownMenuItem(text = { Text("Add page") }, leadingIcon = { Icon(Icons.Outlined.Add, null) }, onClick = { menuOpen = false; add() }) }
+                            DropdownMenuItem(text = { Text("Full screen") }, leadingIcon = { Icon(Icons.Outlined.Fullscreen, null) }, onClick = { menuOpen = false; onFullScreen() })
+                            DropdownMenuItem(text = { Text("Settings") }, leadingIcon = { Icon(Icons.Outlined.Settings, null) }, onClick = { menuOpen = false; onSettings() })
+                        }
                     }
                 }
             }
-            HorizontalDivider(color = colors.outlineVariant.copy(alpha = 0.5f))
-            DrawingControls(settings, canUndo, canRedo, onUndo, onRedo, optionsOpen,
-                onOptions = { optionsOpen = true }, onCloseOptions = { optionsOpen = false }, selectionCount = selectionCount)
         }
+        FloatingIsland(if (wide) Alignment.TopEnd else Alignment.TopStart,
+            IntOffset(px(if (wide) (-16).dp else 16.dp), px(if (wide) 16.dp else 88.dp)), floatingWindows) {
+            GlassSurface {
+                Row(Modifier.padding(4.dp)) {
+                    IconButton(onClick = onUndo, enabled = canUndo) { Icon(Icons.AutoMirrored.Outlined.Undo, "Undo") }
+                    IconButton(onClick = onRedo, enabled = canRedo) { Icon(Icons.AutoMirrored.Outlined.Redo, "Redo") }
+                }
+            }
+        }
+        FloatingIsland(Alignment.BottomStart, IntOffset(px(16.dp), px((-16).dp)), floatingWindows) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                pdfPage?.let { (page, count) ->
+                    GlassSurface {
+                        Row(Modifier.padding(2.dp), verticalAlignment = Alignment.CenterVertically) {
+                            IconButton(onClick = { onPage(page - 1) }, enabled = page > 0) { Icon(Icons.AutoMirrored.Outlined.KeyboardArrowLeft, "Previous page") }
+                            TextButton(onClick = onTogglePages, contentPadding = PaddingValues(horizontal = 4.dp)) {
+                                Text("${page + 1} / $count", Modifier.semantics { contentDescription = "Pages" },
+                                    color = if (pagesOpen) colors.primary else colors.onSurface,
+                                    style = MaterialTheme.typography.labelLarge)
+                            }
+                            IconButton(onClick = { onPage(page + 1) }, enabled = page < count - 1) { Icon(Icons.AutoMirrored.Outlined.KeyboardArrowRight, "Next page") }
+                        }
+                    }
+                }
+                GlassSurface {
+                    TextButton(onClick = onResetZoom, modifier = Modifier.heightIn(min = 52.dp)
+                        .semantics { contentDescription = "Zoom ${(zoom * 100).roundToInt()} percent. Reset to fit width" }) {
+                        Text("${(zoom * 100).roundToInt()}%", style = MaterialTheme.typography.labelLarge)
+                    }
+                }
+            }
+        }
+        FloatingIsland(Alignment.CenterEnd, IntOffset(px((-12).dp), 0), floatingWindows) {
+            ScrollIndicator(scrollFraction, viewportFraction, onScroll, Modifier.height((maxHeight * 0.25f).coerceIn(96.dp, 200.dp)))
+        }
+        RadialTools(settings, selectionCount, maxWidth, maxHeight, floatingWindows)
     }
 }
 
-@OptIn(ExperimentalLayoutApi::class)
+/** Translucent tint, a specular edge and diffuse shadow; ink remains visible through it. */
 @Composable
-private fun DrawingControls(
-    settings: SettingsStore, canUndo: Boolean, canRedo: Boolean,
-    onUndo: () -> Unit, onRedo: () -> Unit, optionsOpen: Boolean,
-    onOptions: () -> Unit, onCloseOptions: () -> Unit, selectionCount: Int,
-) {
+internal fun GlassSurface(modifier: Modifier = Modifier, shape: Shape = RoundedCornerShape(24.dp), content: @Composable BoxScope.() -> Unit) {
+    val colors = MaterialTheme.colorScheme
+    val dark = colors.surface.luminance() < 0.5f
+    val glass = if (dark) Color(0xFF242B38) else Color(0xFFF7FAFF)
+    Box(modifier.shadow(16.dp, shape, ambientColor = Color(0xFF142239).copy(alpha = 0.12f),
+            spotColor = Color(0xFF142239).copy(alpha = 0.15f))
+        .clip(shape)
+        .background(Brush.linearGradient(listOf(glass.copy(alpha = 0.94f), glass.copy(alpha = 0.79f)), start = Offset.Zero, end = Offset(400f, 600f)))
+        .border(1.dp, Brush.linearGradient(listOf(Color.White.copy(alpha = if (dark) 0.24f else 0.95f),
+            colors.outlineVariant.copy(alpha = 0.22f))), shape)) {
+        CompositionLocalProvider(LocalContentColor provides colors.onSurface) { content() }
+    }
+}
+
+@Composable
+private fun BoxScope.FloatingIsland(alignment: Alignment, offset: IntOffset, floating: Boolean, content: @Composable () -> Unit) {
+    if (floating) {
+        // TYPE_APPLICATION_SUB_PANEL (Compose Popup) sorts above TYPE_APPLICATION_PANEL (ink).
+        Popup(alignment = alignment, offset = offset, properties = PopupProperties(focusable = false,
+            dismissOnBackPress = false, dismissOnClickOutside = false, clippingEnabled = true), content = content)
+    } else Box(Modifier.align(alignment).offset { offset }, contentAlignment = Alignment.Center) { content() }
+}
+
+@Composable
+private fun BoxScope.RadialTools(settings: SettingsStore, selectionCount: Int, width: Dp, height: Dp, floating: Boolean) {
+    var expanded by remember { mutableStateOf(false) }
+    var options by remember { mutableStateOf(false) }
+    var position by remember { mutableStateOf(Offset.Zero) }
+    val density = LocalDensity.current
+    val inset = with(density) { 20.dp.roundToPx() }
+    val availableW = with(density) { width.toPx() }
+    val availableH = with(density) { height.toPx() }
+    val panelW = with(density) { (if (expanded) 280.dp else 64.dp).toPx() }
+    val panelH = with(density) { (if (expanded) 402.dp.coerceAtMost(height - 160.dp) else 64.dp).toPx() }
+    val minX = -(availableW - panelW - inset * 2).coerceAtLeast(0f)
+    // Keep the launcher below the document/history islands and above navigation.
+    val bottom = with(density) { (if (width < 600.dp) 88.dp else 20.dp).roundToPx() }
+    val top = with(density) { (if (width < 600.dp) 152.dp else 88.dp).toPx() }
+    val minY = -(availableH - panelH - bottom - top).coerceAtLeast(0f)
+    val x = position.x.coerceIn(minX, 0f)
+    val y = position.y.coerceIn(minY, 0f)
     val drawing = settings.tool == Tool.Pen || settings.tool == Tool.Highlighter
-    BoxWithConstraints(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp)) {
-        // Keep 48dp targets. Labels yield to icons before controls need a second row.
-        val labels = maxWidth >= 1076.dp * LocalDensity.current.fontScale
-        val oneLine = maxWidth >= 736.dp
-        val narrow = maxWidth < 376.dp
-        val selectTool: (Tool) -> Unit = { tool ->
-            if (settings.tool == tool && drawing) onOptions()
-            else { settings.tool = tool; onCloseOptions() }
+    val drag = Modifier.pointerInput(availableW, availableH, expanded) {
+        detectDragGestures { change, amount ->
+            change.consume()
+            position = Offset((position.x + amount.x).coerceIn(minX, 0f), (position.y + amount.y).coerceIn(minY, 0f))
         }
-        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                if (!narrow) HistoryActions(canUndo, canRedo, onUndo, onRedo)
-                ToolGroup(settings.tool, labels, if (oneLine) Modifier else Modifier.weight(1f), selectTool)
-                if (oneLine && drawing) QuickSlots(settings, onOptions)
-                if (oneLine && !drawing) ToolHint(settings.tool, selectionCount, Modifier.weight(1f))
-                Box {
-                    IconButton(onClick = onOptions, enabled = drawing) { Icon(Icons.Outlined.Tune, "Brush options") }
-                    if (drawing && optionsOpen) ToolOptionsPopup(settings, onCloseOptions)
+    }
+    FloatingIsland(Alignment.BottomEnd, IntOffset(-inset + x.roundToInt(), -bottom + y.roundToInt()), floating) {
+        if (!expanded) {
+            GlassSurface(Modifier.size(64.dp).then(drag), CircleShape) {
+                IconButton(onClick = { expanded = true }, modifier = Modifier.fillMaxSize()
+                    .semantics { stateDescription = settings.tool.label }) {
+                    Icon(settings.tool.icon(), "Open tools", Modifier.size(26.dp), tint = MaterialTheme.colorScheme.primary)
                 }
+                Box(Modifier.align(Alignment.BottomCenter).padding(bottom = 7.dp).size(5.dp)
+                    .background(Color(settings.slots().currentColor), CircleShape))
             }
-            if (!oneLine) {
+        } else {
+            Column(Modifier.width(280.dp).heightIn(max = (height - 160.dp).coerceAtLeast(180.dp))
+                .verticalScroll(rememberScrollState()).animateContentSize(),
+                horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                GlassSurface(Modifier.size(264.dp), CircleShape) {
+                    Box(Modifier.size(244.dp).align(Alignment.Center)) {
+                        val positions = listOf(Alignment.TopCenter, Alignment.CenterEnd, Alignment.BottomCenter, Alignment.CenterStart)
+                        Tool.entries.forEachIndexed { i, tool ->
+                            Column(Modifier.align(positions[i]).width(88.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                                val active = settings.tool == tool
+                                IconButton(onClick = { settings.tool = tool; expanded = false; options = false },
+                                    modifier = Modifier.size(52.dp).clip(CircleShape)
+                                        .background(if (active) MaterialTheme.colorScheme.primaryContainer else Color.Transparent)
+                                        .semantics { selected = active }) {
+                                    Icon(tool.icon(), tool.label, tint = if (active) MaterialTheme.colorScheme.primary else LocalContentColor.current)
+                                }
+                                Text(tool.label, style = MaterialTheme.typography.labelSmall, maxLines = 1)
+                            }
+                        }
+                        Box(Modifier.align(Alignment.Center).size(64.dp).then(drag)) {
+                            IconButton(onClick = { expanded = false }, modifier = Modifier.fillMaxSize().clip(CircleShape)
+                                .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.65f))) {
+                                Icon(Icons.Outlined.Close, "Close tools")
+                            }
+                        }
+                    }
+                }
                 if (drawing) {
-                    FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp),
-                        verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        if (narrow) HistoryActions(canUndo, canRedo, onUndo, onRedo)
-                        ColorSlots(settings, onOptions)
-                        WidthSlots(settings, onOptions)
+                    GlassSurface(shape = RoundedCornerShape(28.dp)) {
+                        Column(Modifier.padding(8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                ColorSlots(settings) { options = true }
+                                IconButton(onClick = { options = true }) { Icon(Icons.Outlined.Tune, "Brush options") }
+                            }
+                            WidthSlots(settings) { options = true }
+                            if (options) ToolOptionsPopup(settings) { options = false }
+                        }
                     }
                 } else {
-                    if (narrow) HistoryActions(canUndo, canRedo, onUndo, onRedo)
-                    ToolHint(settings.tool, selectionCount)
+                    GlassSurface {
+                        Text(if (settings.tool == Tool.Eraser) "Erase whole strokes" else if (selectionCount > 0) "$selectionCount selected · drag to move" else "Circle ink to select",
+                            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp))
+                    }
                 }
             }
         }
     }
+    if (expanded) androidx.activity.compose.BackHandler { expanded = false; options = false }
 }
 
 @Composable
-private fun HistoryActions(canUndo: Boolean, canRedo: Boolean, onUndo: () -> Unit, onRedo: () -> Unit) {
-    Row {
-        IconButton(onClick = onUndo, enabled = canUndo) { Icon(Icons.AutoMirrored.Outlined.Undo, "Undo") }
-        IconButton(onClick = onRedo, enabled = canRedo) { Icon(Icons.AutoMirrored.Outlined.Redo, "Redo") }
-    }
-}
-
-@Composable
-private fun ToolGroup(current: Tool, labels: Boolean, modifier: Modifier, onTool: (Tool) -> Unit) {
-    val colors = MaterialTheme.colorScheme
-    Surface(modifier, shape = RoundedCornerShape(14.dp), color = colors.surfaceContainer) {
-        Row(Modifier.padding(4.dp)) {
-            Tool.entries.forEach { tool ->
-                val active = current == tool
-                Row(Modifier.clip(RoundedCornerShape(10.dp))
-                    .background(if (active) colors.primaryContainer else Color.Transparent)
-                    .clickable { onTool(tool) }
-                    .semantics { contentDescription = tool.label; selected = active }
-                    .heightIn(min = 48.dp).widthIn(min = 48.dp)
-                    .padding(horizontal = if (labels) 12.dp else 13.dp),
-                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Icon(tool.icon(), null, tint = if (active) colors.onPrimaryContainer else colors.onSurfaceVariant,
-                        modifier = Modifier.size(22.dp))
-                    if (labels) Text(tool.label, style = MaterialTheme.typography.labelLarge)
-                }
-            }
+internal fun ScrollIndicator(fraction: Float, visible: Float, onScroll: (Float) -> Unit, modifier: Modifier = Modifier) {
+    val current by rememberUpdatedState(fraction.coerceIn(0f, 1f))
+    val action by rememberUpdatedState(onScroll)
+    val thumbFraction = visible.coerceIn(0.12f, 1f)
+    GlassSurface(modifier.width(32.dp).semantics {
+        contentDescription = "Document scroll"
+        progressBarRangeInfo = ProgressBarRangeInfo(current, 0f..1f)
+        setProgress { action(it.coerceIn(0f, 1f)); true }
+    }.pointerInput(thumbFraction) {
+        var start = 0f
+        var travel = 0f
+        detectVerticalDragGestures(onDragStart = { start = current; travel = 0f }) { change, delta ->
+            change.consume(); travel += delta
+            val range = (size.height * (1f - thumbFraction) - 16.dp.toPx()).coerceAtLeast(1f)
+            action((start + travel / range).coerceIn(0f, 1f))
         }
-    }
-}
-
-@Composable
-private fun ToolHint(tool: Tool, count: Int, modifier: Modifier = Modifier) {
-    Text(if (tool == Tool.Eraser) "Erase whole strokes · undo to restore"
-        else if (count > 0) "$count selected · drag to move" else "Circle ink, then drag to move it",
-        modifier = modifier, style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
-}
-
-@Composable
-private fun QuickSlots(settings: SettingsStore, onOptions: () -> Unit) {
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-        ColorSlots(settings, onOptions)
-        WidthSlots(settings, onOptions)
+    }, CircleShape) {
+        Canvas(Modifier.fillMaxSize().padding(horizontal = 14.dp, vertical = 8.dp)) {
+            drawRoundRect(Color(0xFF8290AA).copy(alpha = 0.18f), cornerRadius = androidx.compose.ui.geometry.CornerRadius(8f))
+            val h = size.height * thumbFraction
+            drawRoundRect(Color(0xFF8290AA).copy(alpha = 0.85f), topLeft = Offset(0f, (size.height - h) * current),
+                size = androidx.compose.ui.geometry.Size(size.width, h), cornerRadius = androidx.compose.ui.geometry.CornerRadius(8f))
+        }
     }
 }
 
 private fun SettingsStore.slots() = if (tool == Tool.Highlighter) highlighterSlots else penSlots
-private fun SettingsStore.updateSlots(slots: ToolSlots) {
-    if (tool == Tool.Highlighter) highlighterSlots = slots else penSlots = slots
-}
+private fun SettingsStore.updateSlots(value: ToolSlots) { if (tool == Tool.Highlighter) highlighterSlots = value else penSlots = value }
 
 @Composable
 private fun ColorSlots(settings: SettingsStore, onOptions: () -> Unit) {
     val slots = settings.slots()
-    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+    Row {
         slots.colors.forEachIndexed { i, color ->
-            Slot(i == slots.color, {
-                if (i == slots.color) onOptions() else settings.updateSlots(slots.copy(color = i))
-            }, "Color ${i + 1}") {
-                Box(Modifier.size(24.dp).clip(CircleShape).background(Color(color))
-                    .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.4f), CircleShape))
+            Slot(i == slots.color, { if (i == slots.color) onOptions() else settings.updateSlots(slots.copy(color = i)) }, "Color ${i + 1}") {
+                Box(Modifier.size(22.dp).clip(CircleShape).background(Color(color))
+                    .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.3f), CircleShape))
             }
         }
     }
@@ -210,27 +277,23 @@ private fun ColorSlots(settings: SettingsStore, onOptions: () -> Unit) {
 @Composable
 private fun WidthSlots(settings: SettingsStore, onOptions: () -> Unit) {
     val slots = settings.slots()
-    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+    Row {
         slots.widths.forEachIndexed { i, width ->
-            Slot(i == slots.width, {
-                if (i == slots.width) onOptions() else settings.updateSlots(slots.copy(width = i))
-            }, "Width $width") {
-                Box(Modifier.width(20.dp).height((2 + 7 * width / slots.widths.max()).dp)
-                    .clip(CircleShape).background(MaterialTheme.colorScheme.onSurface))
+            Slot(i == slots.width, { if (i == slots.width) onOptions() else settings.updateSlots(slots.copy(width = i)) }, "Width $width") {
+                Box(Modifier.width(20.dp).height((2 + 5 * width / slots.widths.max()).dp).clip(CircleShape).background(MaterialTheme.colorScheme.onSurface))
             }
         }
     }
 }
 
 @Composable
-private fun Slot(active: Boolean, onClick: () -> Unit, label: String, content: @Composable () -> Unit) {
+private fun Slot(active: Boolean, onClick: () -> Unit, label: String, content: @Composable BoxScope.() -> Unit) {
     Box(Modifier.size(48.dp).clip(CircleShape)
-        .border(if (active) 2.dp else 0.dp, if (active) MaterialTheme.colorScheme.primary else Color.Transparent, CircleShape)
+        .background(if (active) MaterialTheme.colorScheme.primary.copy(alpha = 0.09f) else Color.Transparent)
         .clickable(onClick = onClick).semantics { contentDescription = label; selected = active },
-        contentAlignment = Alignment.Center) { content() }
+        contentAlignment = Alignment.Center, content = content)
 }
-
-private fun Tool.icon(): ImageVector = when (this) {
+internal fun Tool.icon(): ImageVector = when (this) {
     Tool.Pen -> Icons.Outlined.Create
     Tool.Highlighter -> Icons.Outlined.BorderColor
     Tool.Eraser -> EraserIcon

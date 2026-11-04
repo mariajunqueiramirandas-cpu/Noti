@@ -46,20 +46,26 @@ class EditorToolbarTest {
     private var undos = 0
     private var redos = 0
 
-    @Test fun portraitTabletKeepsEveryControlVisibleInDarkMode() { render(800, ThemeMode.Dark); assertControls(); screenshot("portrait-dark") }
-    @Test fun landscapeTabletKeepsEveryControlVisibleInLightMode() { render(1200, ThemeMode.Light); assertControls(); screenshot("landscape-light") }
-    @Test fun narrowWindowWrapsControlsInsteadOfHidingThem() { render(360, ThemeMode.Dark); assertControls(); screenshot("narrow-dark") }
+    @Test fun portraitTabletKeepsFloatingControlsVisibleInDarkMode() { render(800, ThemeMode.Dark); assertControls(); screenshot("portrait-dark") }
+    @Test fun landscapeTabletKeepsFloatingControlsVisibleInLightMode() { render(1200, ThemeMode.Light); assertControls(); screenshot("landscape-light") }
+    @Test fun narrowWindowKeepsFloatingControlsApart() { render(360, ThemeMode.Dark); assertControls(); screenshot("narrow-dark") }
     @Test fun largeFontsKeepControlsInsideWindow() { render(800, ThemeMode.Light, 2f); assertControls(); screenshot("large-font") }
 
-    @Test fun brushOptionsAndPresetsRemainUsableInPortrait() {
+    @Test fun radialSelectionPresetsAndOptionsWork() {
         render(800, ThemeMode.Dark)
+        compose.onNodeWithContentDescription("Pen").assertDoesNotExist()
+        compose.onNodeWithContentDescription("Open tools").performClick()
         compose.onNodeWithContentDescription("Color 2").performClick()
         compose.onNodeWithContentDescription("Width 9.0").performClick()
         compose.runOnIdle { assertEquals(1, settings.penSlots.color); assertEquals(2, settings.penSlots.width) }
+        screenshot("radial-dark")
         compose.onNodeWithContentDescription("Highlighter").performClick()
+        compose.onNodeWithContentDescription("Highlighter").assertDoesNotExist()
+        compose.onNodeWithContentDescription("Open tools").performClick()
         compose.onNodeWithContentDescription("Width 40.0").assertIsDisplayed().performClick()
         compose.runOnIdle { assertEquals(Tool.Highlighter, settings.tool); assertEquals(2, settings.highlighterSlots.width) }
         compose.onNodeWithContentDescription("Pen").performClick()
+        compose.onNodeWithContentDescription("Open tools").performClick()
         compose.onNodeWithContentDescription("Brush options").performClick()
         compose.onNodeWithText("Pressure sensitivity").assertIsDisplayed()
     }
@@ -68,14 +74,42 @@ class EditorToolbarTest {
     @Config(qualifiers = "w360dp-h640dp-mdpi")
     fun brushOptionsFitShortNarrowWindowWithLargeFonts() {
         render(360, ThemeMode.Light, 1.5f)
-        compose.onNodeWithContentDescription("Brush options").performClick()
+        compose.onNodeWithContentDescription("Open tools").performClick()
+        compose.onNodeWithContentDescription("Brush options").performScrollTo().performClick()
         compose.onNodeWithText("Width").performScrollTo().assertIsDisplayed()
         val popup = compose.onNode(isPopup()).fetchSemanticsNode().boundsInRoot
         assertTrue("Brush menu is wider than the window: $popup", popup.width <= 360f)
         assertTrue("Brush menu is taller than the window: $popup", popup.height <= 640f)
     }
 
-    private fun render(width: Int, theme: ThemeMode, fontScale: Float = 1f) {
+    @Test fun radialLauncherCanBeMovedAndAllToolsStayInsideCanvas() {
+        render(800, ThemeMode.Light)
+        val before = compose.onNodeWithContentDescription("Open tools").fetchSemanticsNode().boundsInRoot
+        compose.onNodeWithContentDescription("Open tools").performTouchInput { swipe(center, center + androidx.compose.ui.geometry.Offset(-220f, -150f), 600) }
+        val after = compose.onNodeWithContentDescription("Open tools").fetchSemanticsNode().boundsInRoot
+        assertTrue(after.left < before.left - 100f)
+        assertTrue(after.top < before.top - 70f)
+        compose.onNodeWithContentDescription("Open tools").performClick()
+        listOf("Pen", "Highlighter", "Eraser", "Lasso", "Close tools").forEach { compose.onNodeWithContentDescription(it).assertIsDisplayed() }
+    }
+
+    @Test fun realPopupIslandsReceiveActionsAndExposeLiveIndicators() {
+        render(800, ThemeMode.Light, floating = true)
+        compose.onNodeWithContentDescription("Open tools").performClick()
+        compose.onNodeWithContentDescription("Lasso").performClick()
+        compose.runOnIdle { assertEquals(Tool.Lasso, settings.tool) }
+        compose.onNodeWithContentDescription("Zoom 175 percent. Reset to fit width").assertIsDisplayed().performClick()
+        compose.onNodeWithContentDescription("Document scroll").performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.SetProgress) { it(0.75f) }
+        compose.runOnIdle { assertEquals(1, resets); assertEquals(0.75f, scrolled, 0.001f) }
+        compose.onNodeWithContentDescription("Undo").performClick()
+        compose.onNodeWithContentDescription("Redo").performClick()
+        compose.runOnIdle { assertEquals(1, undos); assertEquals(1, redos) }
+    }
+
+    private var resets = 0
+    private var scrolled = 0f
+
+    private fun render(width: Int, theme: ThemeMode, fontScale: Float = 1f, floating: Boolean = false) {
         settings = SettingsStore(RuntimeEnvironment.getApplication()).also {
             it.tool = Tool.Pen; it.penSlots = SettingsStore.DEFAULT_PEN; it.highlighterSlots = SettingsStore.DEFAULT_HIGHLIGHTER
         }
@@ -87,17 +121,18 @@ class EditorToolbarTest {
             SideEffect { renderView = view }
             CompositionLocalProvider(LocalDensity provides Density(1f, fontScale)) {
                 NotiTheme(theme) {
-                    Column(Modifier.requiredWidth(width.dp).background(Color.Gray).testTag("editor")) {
-                        Box(Modifier.testTag("toolbar")) {
-                            EditorToolbar(
-                                title = "SPRINT 02 - Argumentação Blindada", settings = settings, pagesOpen = false,
-                                onBack = {}, onRename = {}, onTogglePages = {}, onPagePaper = {}, onFullScreen = {}, onSettings = {},
-                                pdfPage = 2 to 30, canUndo = true, canRedo = true,
-                                onUndo = { undos++ }, onRedo = { redos++ },
-                            )
-                        }
-                        DocumentViewport(Modifier.fillMaxWidth().height(500.dp)) {
+                    Box(Modifier.requiredWidth(width.dp).height(800.dp).background(Color.Gray).testTag("editor")) {
+                        DocumentViewport(Modifier.fillMaxSize()) {
                             DocumentBackground(Paper(), images, page.copy(visiblePages = listOf(page)), Modifier.fillMaxSize())
+                        }
+                        Box(Modifier.fillMaxSize().testTag("toolbar")) {
+                            EditorToolbar(
+                                title = "Ideas for a quieter day", settings = settings, pagesOpen = false,
+                                onBack = {}, onRename = {}, onTogglePages = {}, onPagePaper = {}, onFullScreen = {}, onSettings = {},
+                                pdfPage = 2 to 30, canUndo = true, canRedo = true, zoom = 1.75f,
+                                scrollFraction = 0.3f, viewportFraction = 0.15f, onResetZoom = { resets++ }, onScroll = { scrolled = it },
+                                onUndo = { undos++ }, onRedo = { redos++ }, floatingWindows = floating,
+                            )
                         }
                     }
                 }
@@ -107,13 +142,15 @@ class EditorToolbarTest {
 
     private fun assertControls() {
         val toolbar = compose.onNodeWithTag("toolbar").fetchSemanticsNode().boundsInRoot
-        val labels = listOf("Undo", "Redo", "Pen", "Highlighter", "Eraser", "Lasso", "Color 1", "Color 2", "Color 3",
-            "Width 3.0", "Width 5.0", "Width 9.0", "Brush options", "Back to library", "Previous page", "Next page", "Pages", "More")
+        val labels = listOf("Undo", "Redo", "Open tools", "Back to library", "Previous page", "Next page", "Pages", "More",
+            "Document scroll", "Zoom 175 percent. Reset to fit width")
         val boxes = labels.map { label ->
             val node = compose.onNodeWithContentDescription(label).assertIsDisplayed().fetchSemanticsNode()
             val b = node.boundsInRoot
             assertTrue("$label extends past the left edge: $b", b.left >= toolbar.left - 0.5f)
             assertTrue("$label extends past the right edge: $b", b.right <= toolbar.right + 0.5f)
+            assertTrue("$label extends past the top edge: $b", b.top >= toolbar.top - 0.5f)
+            assertTrue("$label extends past the bottom edge: $b", b.bottom <= toolbar.bottom + 0.5f)
             label to b
         }
         for ((i, a) in boxes.withIndex()) for (b in boxes.drop(i + 1)) {

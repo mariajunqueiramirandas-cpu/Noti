@@ -60,7 +60,7 @@ private val HighlighterColors = listOf(
 )
 
 /**
- * Options of the current drawing tool, dropped down under the toolbar. They edit the
+ * Options of the current drawing tool, opened from the radial selector. They edit the
  * selected color and width slots in place.
  *
  * The popup is its own window, added after the ink window, so it sits above it and gets
@@ -77,14 +77,8 @@ internal fun ToolOptionsPopup(settings: SettingsStore, onDismiss: () -> Unit) {
     var custom by remember { mutableStateOf(slots.currentColor !in presets) }
     // Material's anchored menu stays inside the visible window and scrolls when
     // font scaling or a short landscape display leaves less vertical room.
-    DropdownMenu(expanded = true, onDismissRequest = onDismiss) {
-        Surface(
-            shape = MaterialTheme.shapes.large,
-            color = MaterialTheme.colorScheme.surface,
-            shadowElevation = 8.dp,
-            tonalElevation = 2.dp,
-            modifier = Modifier.width(320.dp),
-        ) {
+    DropdownMenu(expanded = true, onDismissRequest = onDismiss, containerColor = Color.Transparent, shadowElevation = 0.dp) {
+        GlassSurface(modifier = Modifier.width(320.dp), shape = MaterialTheme.shapes.large) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text(settings.tool.label, style = MaterialTheme.typography.titleSmall)
 
