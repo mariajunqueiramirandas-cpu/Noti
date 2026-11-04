@@ -1,6 +1,5 @@
 package app.noti.ui.editor
 
-import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.*
@@ -14,6 +13,7 @@ import androidx.compose.material.icons.automirrored.outlined.*
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.AbsoluteAlignment
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -145,70 +145,75 @@ private fun BoxScope.FloatingIsland(alignment: Alignment, offset: IntOffset, flo
     } else Box(Modifier.align(alignment).offset { offset }, contentAlignment = Alignment.Center) { content() }
 }
 
-/** The launcher stays anchored while four targets fan out. No animated window resizing. */
+/** Each target has its own fixed-size window; opening the ring never relays out the launcher. */
 @Composable
 private fun BoxScope.RadialTools(settings: SettingsStore, selectionCount: Int, width: Dp, height: Dp, floating: Boolean) {
     var expanded by remember { mutableStateOf(false) }
     var options by remember { mutableStateOf(false) }
     var position by remember { mutableStateOf(Offset.Zero) }
-    val progress by animateFloatAsState(if (expanded) 1f else 0f,
-        animationSpec = tween(160, easing = FastOutSlowInEasing), label = "Tool fan")
+    val opacity by animateFloatAsState(if (expanded) 1f else 0f,
+        animationSpec = tween(100), label = "Tool ring opacity")
     val density = LocalDensity.current
     fun px(value: Dp) = with(density) { value.toPx() }
-    val fanSize = 180.dp
-    val fanLift = if (width < 600.dp) 60.dp else 0.dp
-    val fanHeight = fanSize + fanLift
-    // Reserve room for the full fan even when collapsed, so opening never moves the launcher.
-    val minX = -(px(width - fanSize - 24.dp)).coerceAtLeast(0f)
-    val minY = -(px(height - fanHeight - 84.dp)).coerceAtLeast(0f)
+    // Keep the ring below the header, above page navigation and left of the scroll control.
+    // Center margins: left 116, right 164 (including the scroll gutter), top 184, bottom 160 dp.
+    // These limits are identical whether the ring is open or closed.
+    val minX = -px((width - 280.dp).coerceAtLeast(0.dp))
+    val minY = -px((height - 344.dp).coerceAtLeast(0.dp))
     val x = position.x.coerceIn(minX, 0f)
     val y = position.y.coerceIn(minY, 0f)
+    val launcherOffset = IntOffset((x - px(138.dp)).roundToInt(), (y - px(134.dp)).roundToInt())
+    // A 48 dp target needs a 2 dp inset to share the 52 dp launcher's center.
+    fun targetOffset(dx: Dp, dy: Dp) = launcherOffset + IntOffset(px(dx - 2.dp).roundToInt(), px(dy - 2.dp).roundToInt())
     val drawing = settings.tool == Tool.Pen || settings.tool == Tool.Highlighter
     val drag = Modifier.pointerInput(minX, minY) {
-        detectDragGestures { change, amount ->
+        detectDragGestures(onDragStart = { options = false }) { change, amount ->
             change.consume()
-            position = Offset((position.x + amount.x).coerceIn(minX, 0f), (position.y + amount.y).coerceIn(minY, 0f))
+            position = Offset(
+                (position.x.coerceIn(minX, 0f) + amount.x).coerceIn(minX, 0f),
+                (position.y.coerceIn(minY, 0f) + amount.y).coerceIn(minY, 0f),
+            )
         }
     }
-    FloatingIsland(Alignment.BottomEnd, IntOffset((-px(12.dp) + x).roundToInt(), (-px(12.dp) + y).roundToInt()), floating) {
-        val visible = expanded || progress > 0f
-        Box(Modifier.size(if (visible) fanSize else 52.dp, if (visible) fanHeight else 52.dp)) {
-            if (visible) {
-                val offsets = listOf(Offset(-128f, 0f), Offset(-112f, -64f), Offset(-64f, -112f), Offset(0f, -128f))
-                Tool.entries.forEachIndexed { i, tool ->
-                    val active = settings.tool == tool
-                    GlassSurface(Modifier.align(Alignment.BottomEnd).offset {
-                        IntOffset(px(offsets[i].x.dp * progress).roundToInt(), px((offsets[i].y.dp - fanLift) * progress).roundToInt())
-                    }.size(48.dp).graphicsLayer { alpha = progress }, CircleShape) {
-                        IconButton(onClick = { settings.tool = tool; expanded = false; options = false },
-                            enabled = expanded && progress >= 0.999f, modifier = Modifier.fillMaxSize().semantics { selected = active }
-                                .background(if (active) MaterialTheme.colorScheme.primaryContainer else Color.Transparent)) {
-                            Icon(tool.icon(), tool.label, Modifier.size(22.dp),
-                                tint = if (active) MaterialTheme.colorScheme.primary else LocalContentColor.current)
-                        }
+
+    // This window and its contents survive every toggle. Only the surrounding targets fade.
+    FloatingIsland(AbsoluteAlignment.BottomRight, launcherOffset, floating) {
+        GlassSurface(Modifier.size(52.dp).then(drag), CircleShape) {
+            IconButton(onClick = { expanded = !expanded; options = false }, modifier = Modifier.fillMaxSize().semantics {
+                stateDescription = if (expanded) "${settings.tool.label}. Tools expanded" else if (settings.tool == Tool.Lasso && selectionCount > 0)
+                    "$selectionCount selected. Drag ink to move" else settings.tool.label
+            }) {
+                Icon(settings.tool.icon(), if (expanded) "Close tools" else "Open tools", Modifier.size(22.dp))
+            }
+            if (drawing) Box(Modifier.align(Alignment.BottomCenter).padding(bottom = 6.dp).size(4.dp)
+                .background(Color(if (settings.tool == Tool.Highlighter) settings.highlighterSlots.currentColor else settings.penSlots.currentColor), CircleShape))
+        }
+    }
+    if (expanded || opacity > 0f) {
+        // Evenly spaced around the launcher, with a reserved fifth position for brush options.
+        // No translation, scaling, stagger, or expanding transparent window over the ink canvas.
+        val offsets = listOf(0.dp to (-84).dp, 80.dp to (-26).dp, 49.dp to 68.dp, (-49).dp to 68.dp)
+        Tool.entries.forEachIndexed { i, tool ->
+            val active = settings.tool == tool
+            FloatingIsland(AbsoluteAlignment.BottomRight, targetOffset(offsets[i].first, offsets[i].second), floating) {
+                GlassSurface(Modifier.size(48.dp).graphicsLayer { alpha = opacity }, CircleShape) {
+                    IconButton(onClick = { settings.tool = tool; expanded = false; options = false },
+                        enabled = expanded, modifier = Modifier.fillMaxSize().semantics { selected = active }
+                            .background(if (active) MaterialTheme.colorScheme.primaryContainer else Color.Transparent)) {
+                        Icon(tool.icon(), tool.label, Modifier.size(22.dp),
+                            tint = if (active) MaterialTheme.colorScheme.onPrimaryContainer else LocalContentColor.current)
                     }
-                }
-                if (drawing) Box(Modifier.align(Alignment.BottomEnd).offset {
-                    IntOffset(px((-58).dp * progress).roundToInt(), px(((-58).dp - fanLift / 2) * progress).roundToInt())
-                }.graphicsLayer { alpha = progress }) {
-                    GlassSurface(Modifier.size(48.dp), CircleShape) {
-                        IconButton(onClick = { options = true }, enabled = expanded && progress >= 0.999f, modifier = Modifier.fillMaxSize()) {
-                            Icon(Icons.Outlined.Tune, "Brush options", Modifier.size(20.dp))
-                        }
-                    }
-                    if (options) ToolOptionsPopup(settings) { options = false }
                 }
             }
-            GlassSurface(Modifier.align(Alignment.BottomEnd).size(52.dp).then(drag), CircleShape) {
-                IconButton(onClick = { expanded = !expanded; options = false }, modifier = Modifier.fillMaxSize().semantics {
-                    stateDescription = if (expanded) "Tools expanded" else if (settings.tool == Tool.Lasso && selectionCount > 0)
-                        "$selectionCount selected. Drag ink to move" else settings.tool.label
-                }) {
-                    Icon(if (expanded) Icons.Outlined.Close else settings.tool.icon(),
-                        if (expanded) "Close tools" else "Open tools", Modifier.size(22.dp))
+        }
+        if (drawing) FloatingIsland(AbsoluteAlignment.BottomRight, targetOffset((-80).dp, (-26).dp), floating) {
+            Box {
+                GlassSurface(Modifier.size(48.dp).graphicsLayer { alpha = opacity }, CircleShape) {
+                    IconButton(onClick = { options = !options }, enabled = expanded, modifier = Modifier.fillMaxSize()) {
+                        Icon(Icons.Outlined.Tune, "Brush options", Modifier.size(20.dp))
+                    }
                 }
-                if (!expanded && drawing) Box(Modifier.align(Alignment.BottomCenter).padding(bottom = 6.dp).size(4.dp)
-                    .background(Color(if (settings.tool == Tool.Highlighter) settings.highlighterSlots.currentColor else settings.penSlots.currentColor), CircleShape))
+                if (options) ToolOptionsPopup(settings) { options = false }
             }
         }
     }
