@@ -94,7 +94,7 @@ class EditorToolbarTest {
         compose.onNodeWithText("Pressure sensitivity").assertDoesNotExist()
     }
 
-    @Test fun ringAnimationKeepsLauncherFixedAndFinishesQuickly() = assertStableLauncher(floating = false)
+    @Test fun paletteAnimationKeepsLauncherFixedAndFinishesQuickly() = assertStableLauncher(floating = false)
 
     @Test fun realPopupKeepsLauncherWindowAndScreenPositionThroughToggles() = assertStableLauncher(floating = true)
 
@@ -135,7 +135,7 @@ class EditorToolbarTest {
         compose.mainClock.autoAdvance = true
     }
 
-    @Test fun ringTargetsStayStillAndCanBeSelectedDuringOpening() {
+    @Test fun paletteTargetsStayStillAndCanBeSelectedDuringOpening() {
         render(360, ThemeMode.Light)
         compose.mainClock.autoAdvance = false
         compose.onNodeWithContentDescription("Open tools").performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.OnClick) { it() }
@@ -156,7 +156,7 @@ class EditorToolbarTest {
         compose.onNodeWithContentDescription("Pen").assertDoesNotExist()
     }
 
-    @Test fun narrowFanStaysClearOfNavigationAndOtherTools() {
+    @Test fun narrowPaletteStaysClearOfNavigationAndOtherTools() {
         render(360, ThemeMode.Light)
         compose.onNodeWithContentDescription("Open tools").performClick()
         val labels = listOf("Pen", "Highlighter", "Eraser", "Lasso", "Brush options", "Close tools", "Pages",
@@ -209,32 +209,24 @@ class EditorToolbarTest {
         listOf("Pen", "Highlighter", "Eraser", "Lasso", "Close tools").forEach { compose.onNodeWithContentDescription(it).assertIsDisplayed() }
     }
 
-    @Test fun draggingOpenRingToCanvasEdgesKeepsTargetsInsideAndApart() {
-        render(360, ThemeMode.Light)
+    @Test fun draggingTucksPaletteAwayAndReopensAtNewAnchor() {
+        render(800, ThemeMode.Light, floating = true)
         compose.onNodeWithContentDescription("Open tools").performClick()
-        val canvas = compose.onNodeWithTag("toolbar").fetchSemanticsNode().boundsInRoot
-        val labels = listOf("Pen", "Highlighter", "Eraser", "Lasso", "Brush options", "Close tools")
-        listOf(
-            androidx.compose.ui.geometry.Offset(-1000f, -1000f),
-            androidx.compose.ui.geometry.Offset(1000f, -1000f),
-            androidx.compose.ui.geometry.Offset(1000f, 1000f),
-            androidx.compose.ui.geometry.Offset(-1000f, 1000f),
-        ).forEach { delta ->
-            compose.onNodeWithContentDescription("Close tools").performTouchInput { swipe(center, center + delta, 600) }
-            val boxes = labels.map { label ->
-                val bounds = compose.onNodeWithContentDescription(label).assertIsDisplayed().fetchSemanticsNode().boundsInRoot
-                assertTrue("$label outside canvas after drag: $bounds", canvas.contains(bounds.topLeft) && canvas.contains(bounds.bottomRight))
-                label to bounds
-            }
-            val obstacles = listOf("Back to library", "More", "Pages", "Document scroll", "Zoom 175 percent. Reset to fit width")
-                .map { it to compose.onNodeWithContentDescription(it).fetchSemanticsNode().boundsInRoot }
-            boxes.forEach { (label, bounds) -> obstacles.forEach { (name, obstacle) ->
-                assertFalse("$label overlaps $name after drag", bounds.overlaps(obstacle))
-            } }
-            for ((i, a) in boxes.withIndex()) for (b in boxes.drop(i + 1)) {
-                assertFalse("${a.first} overlaps ${b.first} after drag", a.second.overlaps(b.second))
-            }
+        val before = compose.onNodeWithContentDescription("Close tools").fetchSemanticsNode().positionOnScreen
+        compose.onNodeWithContentDescription("Close tools").performTouchInput {
+            swipe(center, center + androidx.compose.ui.geometry.Offset(-220f, -150f), 600)
         }
+        compose.onNodeWithContentDescription("Pen").assertDoesNotExist()
+        val after = compose.onNodeWithContentDescription("Open tools").fetchSemanticsNode().positionOnScreen
+        // Allow touch slop, but reject the half-speed drift caused by moving local coordinates.
+        assertEquals(before.x - 220f, after.x, 32f)
+        assertEquals(before.y - 150f, after.y, 32f)
+        compose.onNodeWithContentDescription("Open tools").performClick()
+        val pen = compose.onNodeWithContentDescription("Pen").assertIsDisplayed().fetchSemanticsNode()
+        val lasso = compose.onNodeWithContentDescription("Lasso").assertIsDisplayed().fetchSemanticsNode()
+        assertSame("Tools share one palette window", pen.root, lasso.root)
+        compose.onNodeWithContentDescription("Lasso").performClick()
+        compose.runOnIdle { assertEquals(Tool.Lasso, settings.tool) }
     }
 
     @Test fun realPopupIslandsReceiveActionsAndExposeLiveIndicators() {
