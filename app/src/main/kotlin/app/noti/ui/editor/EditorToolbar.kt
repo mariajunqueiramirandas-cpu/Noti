@@ -13,6 +13,9 @@ import androidx.compose.material.icons.automirrored.outlined.*
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.window.PopupPositionProvider
 import androidx.compose.ui.AbsoluteAlignment
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -145,75 +148,96 @@ private fun BoxScope.FloatingIsland(alignment: Alignment, offset: IntOffset, flo
     } else Box(Modifier.align(alignment).offset { offset }, contentAlignment = Alignment.Center) { content() }
 }
 
-/** Each target has its own fixed-size window; opening the ring never relays out the launcher. */
+/** Read drag position during placement, without recomposing the toolbar on every pointer event. */
+@Composable
+private fun BoxScope.MovableToolIsland(
+    position: State<Offset>, minX: Float, minY: Float, inset: IntOffset,
+    floating: Boolean, content: @Composable () -> Unit,
+) {
+    val provider = remember(position, minX, minY, inset) {
+        object : PopupPositionProvider {
+            override fun calculatePosition(anchorBounds: IntRect, windowSize: IntSize,
+                layoutDirection: LayoutDirection, popupContentSize: IntSize): IntOffset {
+                val offset = position.value
+                return IntOffset(anchorBounds.right - popupContentSize.width + inset.x + offset.x.coerceIn(minX, 0f).roundToInt(),
+                    anchorBounds.bottom - popupContentSize.height + inset.y + offset.y.coerceIn(minY, 0f).roundToInt())
+            }
+        }
+    }
+    if (floating) Popup(popupPositionProvider = provider, properties = PopupProperties(
+        focusable = false, dismissOnBackPress = false, dismissOnClickOutside = false), content = content)
+    else Box(Modifier.align(AbsoluteAlignment.BottomRight).absoluteOffset {
+        IntOffset(position.value.x.coerceIn(minX, 0f).roundToInt(), position.value.y.coerceIn(minY, 0f).roundToInt()) + inset
+    }) { content() }
+}
+
 @Composable
 private fun BoxScope.RadialTools(settings: SettingsStore, selectionCount: Int, width: Dp, height: Dp, floating: Boolean) {
     var expanded by remember { mutableStateOf(false) }
     var options by remember { mutableStateOf(false) }
-    var position by remember { mutableStateOf(Offset.Zero) }
-    val opacity by animateFloatAsState(if (expanded) 1f else 0f,
-        animationSpec = tween(100), label = "Tool ring opacity")
+    var dragging by remember { mutableStateOf(false) }
+    val position = remember { mutableStateOf(Offset.Zero) }
+    val opacity by animateFloatAsState(if (expanded) 1f else 0f, tween(100), label = "Tool palette opacity")
     val density = LocalDensity.current
-    fun px(value: Dp) = with(density) { value.toPx() }
-    // Keep the ring below the header, above page navigation and left of the scroll control.
-    // Center margins: left 116, right 164 (including the scroll gutter), top 184, bottom 160 dp.
-    // These limits are identical whether the ring is open or closed.
-    val minX = -px((width - 280.dp).coerceAtLeast(0.dp))
-    val minY = -px((height - 344.dp).coerceAtLeast(0.dp))
-    val x = position.x.coerceIn(minX, 0f)
-    val y = position.y.coerceIn(minY, 0f)
-    val launcherOffset = IntOffset((x - px(138.dp)).roundToInt(), (y - px(134.dp)).roundToInt())
-    // A 48 dp target needs a 2 dp inset to share the 52 dp launcher's center.
-    fun targetOffset(dx: Dp, dy: Dp) = launcherOffset + IntOffset(px(dx - 2.dp).roundToInt(), px(dy - 2.dp).roundToInt())
+    fun px(value: Dp) = with(density) { value.roundToPx() }
+    // Reserve the compact palette's footprint in both states. Keep clear of the scroll gutter.
+    val minX = -px((width - 332.dp).coerceAtLeast(0.dp)).toFloat()
+    val minY = -px((height - 272.dp).coerceAtLeast(0.dp)).toFloat()
+    val inset = IntOffset(-px(60.dp), -px(80.dp))
     val drawing = settings.tool == Tool.Pen || settings.tool == Tool.Highlighter
-    val drag = Modifier.pointerInput(minX, minY) {
-        detectDragGestures(onDragStart = { options = false }) { change, amount ->
+    val colors = MaterialTheme.colorScheme
+    var coordinates by remember { mutableStateOf<LayoutCoordinates?>(null) }
+    val drag = Modifier.onGloballyPositioned { coordinates = it }.pointerInput(minX, minY) {
+        var startScreen = Offset.Zero
+        var startPosition = Offset.Zero
+        detectDragGestures(
+            onDragStart = { local ->
+                startScreen = coordinates?.localToScreen(local) ?: local
+                startPosition = Offset(position.value.x.coerceIn(minX, 0f), position.value.y.coerceIn(minY, 0f))
+                dragging = true; expanded = false; options = false
+            },
+            onDragEnd = { dragging = false }, onDragCancel = { dragging = false },
+        ) { change, _ ->
             change.consume()
-            position = Offset(
-                (position.x.coerceIn(minX, 0f) + amount.x).coerceIn(minX, 0f),
-                (position.y.coerceIn(minY, 0f) + amount.y).coerceIn(minY, 0f),
-            )
+            val screen = coordinates?.localToScreen(change.position) ?: change.position
+            val next = startPosition + screen - startScreen
+            position.value = Offset(next.x.coerceIn(minX, 0f), next.y.coerceIn(minY, 0f))
         }
     }
-
-    // This window and its contents survive every toggle. Only the surrounding targets fade.
-    FloatingIsland(AbsoluteAlignment.BottomRight, launcherOffset, floating) {
-        GlassSurface(Modifier.size(52.dp).then(drag), CircleShape) {
+    MovableToolIsland(position, minX, minY, inset, floating) {
+        GlassSurface(Modifier.size(52.dp).then(drag), RoundedCornerShape(18.dp)) {
             IconButton(onClick = { expanded = !expanded; options = false }, modifier = Modifier.fillMaxSize().semantics {
                 stateDescription = if (expanded) "${settings.tool.label}. Tools expanded" else if (settings.tool == Tool.Lasso && selectionCount > 0)
                     "$selectionCount selected. Drag ink to move" else settings.tool.label
             }) {
                 Icon(settings.tool.icon(), if (expanded) "Close tools" else "Open tools", Modifier.size(22.dp))
             }
-            if (drawing) Box(Modifier.align(Alignment.BottomCenter).padding(bottom = 6.dp).size(4.dp)
+            if (drawing) Box(Modifier.align(Alignment.BottomCenter).padding(bottom = 7.dp).size(12.dp, 3.dp)
                 .background(Color(if (settings.tool == Tool.Highlighter) settings.highlighterSlots.currentColor else settings.penSlots.currentColor), CircleShape))
         }
     }
-    if (expanded || opacity > 0f) {
-        // Evenly spaced around the launcher, with a reserved fifth position for brush options.
-        // No translation, scaling, stagger, or expanding transparent window over the ink canvas.
-        val offsets = listOf(0.dp to (-84).dp, 80.dp to (-26).dp, 49.dp to 68.dp, (-49).dp to 68.dp)
-        Tool.entries.forEachIndexed { i, tool ->
-            val active = settings.tool == tool
-            FloatingIsland(AbsoluteAlignment.BottomRight, targetOffset(offsets[i].first, offsets[i].second), floating) {
-                GlassSurface(Modifier.size(48.dp).graphicsLayer { alpha = opacity }, CircleShape) {
-                    IconButton(onClick = { settings.tool = tool; expanded = false; options = false },
-                        enabled = expanded, modifier = Modifier.fillMaxSize().semantics { selected = active }
-                            .background(if (active) MaterialTheme.colorScheme.primaryContainer else Color.Transparent)) {
-                        Icon(tool.icon(), tool.label, Modifier.size(22.dp),
-                            tint = if (active) MaterialTheme.colorScheme.onPrimaryContainer else LocalContentColor.current)
+    if (!dragging && (expanded || opacity > 0f)) {
+        MovableToolIsland(position, minX, minY, inset + IntOffset(0, -px(60.dp)), floating) {
+            GlassSurface(Modifier.graphicsLayer { alpha = opacity }, RoundedCornerShape(20.dp)) {
+                Row(Modifier.padding(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Tool.entries.forEach { tool ->
+                        val active = settings.tool == tool
+                        IconButton(onClick = { settings.tool = tool; expanded = false; options = false },
+                            enabled = expanded, modifier = Modifier.size(48.dp).clip(RoundedCornerShape(14.dp))
+                                .background(if (active) colors.primaryContainer else Color.Transparent)
+                                .semantics { selected = active }) {
+                            Icon(tool.icon(), tool.label, Modifier.size(22.dp),
+                                tint = if (active) colors.onPrimaryContainer else colors.onSurfaceVariant)
+                        }
+                    }
+                    Box(Modifier.padding(horizontal = 4.dp).width(1.dp).height(24.dp).background(colors.outlineVariant))
+                    Box {
+                        IconButton(onClick = { options = !options }, enabled = expanded && drawing, modifier = Modifier.size(48.dp)) {
+                            Icon(Icons.Outlined.Tune, "Brush options", Modifier.size(20.dp))
+                        }
+                        if (options) ToolOptionsPopup(settings) { options = false }
                     }
                 }
-            }
-        }
-        if (drawing) FloatingIsland(AbsoluteAlignment.BottomRight, targetOffset((-80).dp, (-26).dp), floating) {
-            Box {
-                GlassSurface(Modifier.size(48.dp).graphicsLayer { alpha = opacity }, CircleShape) {
-                    IconButton(onClick = { options = !options }, enabled = expanded, modifier = Modifier.fillMaxSize()) {
-                        Icon(Icons.Outlined.Tune, "Brush options", Modifier.size(20.dp))
-                    }
-                }
-                if (options) ToolOptionsPopup(settings) { options = false }
             }
         }
     }
