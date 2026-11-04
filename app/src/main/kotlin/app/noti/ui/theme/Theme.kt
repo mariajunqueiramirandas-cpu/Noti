@@ -11,28 +11,28 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.unit.dp
 import app.noti.data.ThemeMode
 
-// Calm, close to paper: warm off-white chrome, one ink-blue accent.
+// Pearl and slate chrome with a single periwinkle accent.
 private val Light = lightColorScheme(
     primary = Color(0xFF2D5BD3),
     onPrimary = Color.White,
     primaryContainer = Color(0xFFDDE5FA),
     onPrimaryContainer = Color(0xFF0F2A73),
     secondary = Color(0xFF5B6070),
-    secondaryContainer = Color(0xFFE6E4DF),
+    secondaryContainer = Color(0xFFE2E7F0),
     onSecondaryContainer = Color(0xFF26282E),
-    background = Color(0xFFF2F0EB),
+    background = Color(0xFFEDF0F6),
     onBackground = Color(0xFF1E1F24),
-    surface = Color(0xFFFAF9F6),
+    surface = Color(0xFFF8FAFE),
     onSurface = Color(0xFF1E1F24),
-    surfaceVariant = Color(0xFFE9E7E2),
+    surfaceVariant = Color(0xFFE7EBF3),
     onSurfaceVariant = Color(0xFF5E616B),
     surfaceContainerLowest = Color(0xFFFFFFFF),
-    surfaceContainerLow = Color(0xFFF7F6F2),
-    surfaceContainer = Color(0xFFF2F0EB),
-    surfaceContainerHigh = Color(0xFFECEAE5),
-    surfaceContainerHighest = Color(0xFFE6E4DF),
-    outline = Color(0xFFB9B7B1),
-    outlineVariant = Color(0xFFDAD8D2),
+    surfaceContainerLow = Color(0xFFF0F3F8),
+    surfaceContainer = Color(0xFFEDF0F6),
+    surfaceContainerHigh = Color(0xFFE8ECF4),
+    surfaceContainerHighest = Color(0xFFE2E7F0),
+    outline = Color(0xFFADB8CA),
+    outlineVariant = Color(0xFFD6DEEB),
 )
 
 private val Dark = darkColorScheme(
@@ -43,14 +43,14 @@ private val Dark = darkColorScheme(
     secondary = Color(0xFFC3C6D2),
     secondaryContainer = Color(0xFF34363C),
     onSecondaryContainer = Color(0xFFE3E4EA),
-    background = Color(0xFF151619),
+    background = Color(0xFF121721),
     onBackground = Color(0xFFE6E6EA),
-    surface = Color(0xFF1C1D21),
+    surface = Color(0xFF1B2230),
     onSurface = Color(0xFFE6E6EA),
     surfaceVariant = Color(0xFF2A2C31),
     onSurfaceVariant = Color(0xFFA9ACB6),
     surfaceContainerLowest = Color(0xFF111214),
-    surfaceContainerLow = Color(0xFF1A1B1F),
+    surfaceContainerLow = Color(0xFF171E2A),
     surfaceContainer = Color(0xFF1E1F23),
     surfaceContainerHigh = Color(0xFF26272C),
     surfaceContainerHighest = Color(0xFF2E3035),

@@ -42,6 +42,7 @@ import androidx.compose.ui.platform.LocalInspectionMode
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.viewinterop.AndroidView
 import app.noti.data.InkFile
 import app.noti.data.Tool
@@ -89,6 +90,12 @@ class PageController {
     val page get() = placement?.page ?: 0
     internal var requestedPage by mutableStateOf<Int?>(null)
 
+    internal var requestedScroll by mutableStateOf<Float?>(null)
+    internal var resetZoomRequested by mutableStateOf(false)
+
+    fun scrollTo(fraction: Float) { requestedScroll = fraction }
+    fun resetZoom() { resetZoomRequested = true }
+
     fun goTo(page: Int) {
         requestedPage = page
     }
@@ -98,7 +105,8 @@ class PageController {
  * Paper (or a PDF page) plus the low-latency ink engine on top of it.
  *
  * The engine puts its own input window over this composable's bounds, so nothing
- * touchable may be drawn over it: toolbars and panels are docked beside it. Each
+ * touchable may be drawn over it in the activity window. Floating controls use
+ * Compose Popup sub-panel windows above the ink panel. Each
  * InkCanvas owns one engine instance and writes canonical snapshots through [inkFile].
  *
  * Fingers go through the engine's palm rejection first: only deliberate touches pan,
@@ -125,6 +133,8 @@ fun InkCanvas(
     tapUndo: Boolean = false,
     onDocumentState: ((DoubleArray) -> Unit)? = null,
     onRestoreError: (() -> Unit)? = null,
+    topClearance: Dp = 16.dp,
+    bottomClearance: Dp = 16.dp,
 
 ) {
     // Previews and screenshot tests have no native engine: paper only.
@@ -217,6 +227,22 @@ fun InkCanvas(
             }
             controller.requestedPage = null
         }
+    }
+    val topPx = with(LocalDensity.current) { topClearance.toPx() }
+    val bottomPx = with(LocalDensity.current) { bottomClearance.toPx() }
+    LaunchedEffect(topPx, bottomPx) {
+        layer.runOnInkThread { rig.viewport.setVerticalInsets(topPx, bottomPx) }
+    }
+    LaunchedEffect(controller.requestedScroll, controller.resetZoomRequested) {
+        val scroll = controller.requestedScroll
+        val reset = controller.resetZoomRequested
+        if (scroll != null || reset) layer.runOnInkThread {
+            rig.gestures.stopMotion()
+            if (reset) rig.viewport.resetZoom()
+            if (scroll != null) rig.viewport.scrollTo(scroll)
+        }
+        controller.requestedScroll = null
+        controller.resetZoomRequested = false
     }
     if (pdf != null) {
         val placement = controller.placement

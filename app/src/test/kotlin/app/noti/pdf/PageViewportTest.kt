@@ -91,4 +91,53 @@ class PageViewportTest {
         assertTrue(f.state.top.isFinite())
         assertTrue(f.state.height > 0f)
     }
+    @Test fun scrollIndicatorTracksContinuousPositionAndScrubsMixedPages() {
+        val f = Fixture(floatArrayOf(1.4f, 0.7f, 2f))
+        assertEquals(0f, f.state.scrollFraction, 0.001f)
+        assertTrue(f.state.viewportFraction in 0f..1f)
+        f.viewport.scrollTo(0.5f)
+        assertEquals(0.5f, f.state.scrollFraction, 0.001f)
+        f.viewport.pinch(150f, 200f, 2f, 0f, 0f)
+        val zoomedVisible = f.state.viewportFraction
+        f.viewport.scrollTo(1f)
+        assertEquals(1f, f.state.scrollFraction, 0.001f)
+        assertEquals(2f, f.state.zoom, 0.001f)
+        assertTrue(zoomedVisible < 0.5f)
+        val last = f.state.visiblePages.last()
+        assertEquals(390f, last.top + last.height, 0.001f)
+        f.viewport.scrollTo(Float.NaN)
+        assertEquals(1f, f.state.scrollFraction, 0.001f)
+    }
+
+    @Test fun zoomResetPreservesDocumentPointAtViewportCentre() {
+        val f = Fixture(FloatArray(20) { 1.4f })
+        f.viewport.goTo(8)
+        f.viewport.pinch(150f, 200f, 3f, 0f, 0f)
+        val before = f.state
+        f.viewport.resetZoom()
+        assertEquals(1f, f.state.zoom, 0.001f)
+        assertEquals(before.page, f.state.page)
+        assertEquals((200f - before.top) / before.width, (200f - f.state.top) / f.state.width, 0.001f)
+    }
+
+    @Test fun shortDocumentHasFullScrollThumbAndFinitePosition() {
+        val f = Fixture(floatArrayOf(0.2f))
+        f.viewport.scrollTo(1f)
+        assertEquals(0f, f.state.scrollFraction, 0f)
+        assertEquals(1f, f.state.viewportFraction, 0f)
+    }
+
+    @Test fun floatingChromeLeavesFirstAndLastPageContentReachable() {
+        val f = Fixture()
+        f.viewport.setVerticalInsets(96f, 88f)
+        f.viewport.scrollTo(0f)
+        assertEquals(96f, f.state.visiblePages.first().top, 0.001f)
+        f.viewport.scrollTo(1f)
+        val last = f.state.visiblePages.last()
+        assertEquals(312f, last.top + last.height, 0.001f)
+        f.viewport.setVerticalInsets(10f, 10f)
+        f.viewport.scrollTo(1f)
+        assertEquals(390f, f.state.visiblePages.last().let { it.top + it.height }, 0.001f)
+    }
+
 }
