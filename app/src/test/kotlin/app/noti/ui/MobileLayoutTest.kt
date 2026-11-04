@@ -127,6 +127,9 @@ class MobileLayoutTest {
         assertInside(compose.onNodeWithText("Clear", substring = false))
         compose.onNodeWithText("Prediction", substring = false).performScrollTo().assertIsDisplayed()
         screenshot("phone-pen-settings")
+        chooseSection("Pen buttons")
+        compose.onNodeWithText("Writing button click").performScrollTo().assertIsDisplayed()
+        assertInside(compose.onNodeWithText("Clear ink", substring = false))
         chooseSection("Writing")
         compose.onNodeWithText("Draw with finger").assertIsDisplayed()
         chooseSection("Pages")
@@ -147,7 +150,7 @@ class MobileLayoutTest {
     fun landscapeSettingsKeepScrollableControlsAndCanvasVisible() {
         render(fontScale = 1.5f, inspection = true) { SettingsScreen(SettingsStore(context), onBack = {}) }
         // Short landscape windows use the phone section menu and put the canvas beside the controls.
-        compose.onNodeWithText("Pen buttons").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Button shortcuts").performScrollTo().assertIsDisplayed()
         assertInside(compose.onNodeWithText("Clear", substring = false))
         chooseSection("Pages")
         compose.onNodeWithText("Endless", substring = false).performScrollTo().performClick()

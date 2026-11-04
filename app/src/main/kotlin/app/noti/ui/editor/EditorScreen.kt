@@ -144,13 +144,18 @@ private fun EditorContent(notebook: Notebook, library: LibraryStore, settings: S
         }
     }
     Surface(color = MaterialTheme.colorScheme.background, modifier = Modifier.fillMaxSize()) {
-        BoxWithConstraints(Modifier.fillMaxSize().then(if (fullScreen) Modifier else Modifier.windowInsetsPadding(WindowInsets.safeDrawing))) {
+        Box(Modifier.fillMaxSize().then(if (fullScreen) Modifier else Modifier.windowInsetsPadding(WindowInsets.safeDrawing))) {
             InkCanvas(
                 paper = notebook.paper, brush = brush, engine = engine, modifier = Modifier.fillMaxSize(),
                 palm = palm, pdf = pdf, pages = pages, pageCount = notebook.pageCount, inkFile = inkFile,
                 tapUndo = settings.tapUndo, onLayer = { layer = it }, onRestoreError = { restoreError = true },
                 onTwoFingerDoubleTap = { fullScreen = false },
-                topClearance = if (fullScreen) 16.dp else if (maxWidth < 600.dp) 160.dp else 96.dp, bottomClearance = if (fullScreen) 16.dp else 88.dp,
+                topClearance = if (fullScreen) 16.dp else 72.dp, bottomClearance = if (fullScreen) 16.dp else 72.dp,
+                buttons = settings.penButtonOptions(enabled = !settingsOpen && !renaming && !choosingPaper &&
+                    !confirmingLeave && !restoreError && deletingPage == null && !leaving && !exporting && !pageBusy && !pagesOpen),
+                onButtonClick = { button ->
+                    settings.performButtonAction(settings.buttonAction(button)) { layer?.documentAction(it) }
+                },
             )
             if (!fullScreen) {
                 EditorToolbar(
@@ -173,7 +178,7 @@ private fun EditorContent(notebook: Notebook, library: LibraryStore, settings: S
             }
             if (pagesOpen && !fullScreen) {
                 androidx.compose.ui.window.Popup(alignment = Alignment.TopStart,
-                    offset = with(androidx.compose.ui.platform.LocalDensity.current) { androidx.compose.ui.unit.IntOffset(16.dp.roundToPx(), 154.dp.roundToPx()) },
+                    offset = with(androidx.compose.ui.platform.LocalDensity.current) { androidx.compose.ui.unit.IntOffset(12.dp.roundToPx(), 72.dp.roundToPx()) },
                     properties = androidx.compose.ui.window.PopupProperties(focusable = true),
                     onDismissRequest = { pagesOpen = false }) {
                     GlassSurface(Modifier.fillMaxHeight(0.7f), androidx.compose.foundation.shape.RoundedCornerShape(24.dp)) {

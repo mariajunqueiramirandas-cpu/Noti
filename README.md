@@ -13,24 +13,30 @@ from `engine/android/kotlin`. Only arm64 and Android 13+ are supported.
 
 The UI is Jetpack Compose (Material 3): library, editor, settings. Phone windows, including the Poco X8 Pro, use a navigation drawer,
 a full-width search field, a compact selection menu and an adaptive notebook grid. Settings use a section menu
-and stack the stationary pen/palm test canvas below scrollable controls when space is narrow. Paper choices wrap,
+and stack the stationary pen/palm/button test canvas below scrollable controls when space is narrow. Paper choices wrap,
 and dialogs scroll on short screens or with larger text. Layouts follow Android's available dp size rather than
 physical screen pixels, so display scaling, rotation and split-screen are supported.
 
-The editor is a full canvas with translucent glass
-islands and a draggable radial tool selector. Floating controls use sub-panel popup windows above the native
+The editor is a full canvas with a compact
+header, a combined page/zoom control and a draggable tool launcher. Floating controls use sub-panel popup windows above the native
 ink input panel, so taps reach the controls without changing the low-latency drawing path (`ui/common/InkCanvas.kt`).
 **Pages**: notebooks and imported PDFs scroll vertically as a continuous document. Drag to scroll,
-pinch to zoom, drag the right-hand scroll indicator, and use page arrows or the floating pages panel to jump.
+pinch to zoom from 25% to 600%, drag the slim right-hand scroll indicator, and use the pages panel or page actions in More to jump.
 The page counter, proportional scroll thumb and zoom percentage follow the live viewport; tap zoom to fit width. Momentum stops when the pen touches down.
 Only visible pages are rendered; PDF neighbours are prefetched and zoomed detail is rendered after scrolling settles.
 Ink uses canonical page coordinates, so scrolling, zooming, rotation and reopening do not move annotations.
 
-**Writing**: tap the floating brush to open the radial pen, highlighter, stroke eraser and lasso selector; drag its
-centre to reposition it. Quick colors, widths and brush options live inside the expanded selector. A separate
-floating undo/redo island keeps editing history accessible. Circle whole strokes with the lasso, then drag inside
-the selection to move them. Hold a primary stylus button (or use the eraser tip) for erasing; the secondary button
-selects. Two-finger tap undoes (configurable); two-finger double-tap exits full screen.
+**Writing**: tap the floating brush to fan out the pen, highlighter, stroke eraser and lasso; drag the launcher
+to reposition it. The launcher stays fixed through the short opening/closing animation. Tap the fan's brush-options
+button for color and width presets, custom colors and pressure settings. Undo and redo share the compact header.
+Save status is in More, with a visible retry control when saving fails. Circle whole strokes with the lasso, then drag inside
+the selection to move them. Click the Focus Pen's writing button to toggle the eraser, or its screenshot button
+to toggle the lasso; click again to return to your last pen/highlighter. Genuine held buttons temporarily erase/select
+for strokes begun while pressed; an eraser tip also erases. Configure shortcuts and test your tablet in
+**Settings → Pen buttons**. Xiaomi firmware that reports instant clicks cannot supply hold duration.
+The Focus/Spotlight button stays with the system unless assigned and delivered to the app.
+See [pen button support and device verification](docs/PEN_BUTTONS.md).
+Two-finger tap undoes (configurable); two-finger double-tap exits full screen.
 
 **Saving**: completed edits are autosaved to versioned `.noti` files with `AtomicFile` on a separate IO executor.
 Snapshots run between strokes; pause, leaving and release also save. Invalid archives are preserved instead of being

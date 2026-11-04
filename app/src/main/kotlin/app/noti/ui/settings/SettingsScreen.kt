@@ -75,6 +75,10 @@ import app.noti.data.Paper
 import app.noti.data.Predictor
 import app.noti.data.SettingsStore
 import app.noti.data.ThemeMode
+import app.noti.data.PenButtonAction
+import app.noti.data.Tool
+import app.noti.data.penButtonOptions
+import app.noti.ui.common.StylusDialogKeys
 import app.noti.ui.common.BrushSpec
 import app.noti.ui.common.EngineSpec
 import app.noti.ui.common.InkCanvas
@@ -83,6 +87,7 @@ import app.noti.ui.common.greyedOut
 
 private enum class Section(val label: String, val icon: ImageVector) {
     Pen("Pen", Icons.Outlined.Create),
+    Buttons("Pen buttons", Icons.Outlined.TouchApp),
     Writing("Writing", Icons.Outlined.TouchApp),
     Palm("Palm rejection", Icons.Outlined.PanTool),
     Pages("Pages", Icons.Outlined.Description),
@@ -92,6 +97,7 @@ private enum class Section(val label: String, val icon: ImageVector) {
 
 @Composable
 fun SettingsScreen(settings: SettingsStore, onBack: () -> Unit) {
+    StylusDialogKeys()
     var section by remember { mutableStateOf(Section.Pen) }
     var sectionMenu by remember { mutableStateOf(false) }
     BackHandler(onBack = onBack)
@@ -139,6 +145,7 @@ fun SettingsScreen(settings: SettingsStore, onBack: () -> Unit) {
                         key(section) {
                             when (section) {
                                 Section.Pen -> PenSection(settings)
+                                Section.Buttons -> PenButtonsSection(settings)
                                 Section.Writing -> Pane { WritingSection(settings) }
                                 Section.Palm -> PalmSection(settings)
                                 Section.Pages -> Pane { PagesSection(settings) }
@@ -227,8 +234,9 @@ private fun PenSection(settings: SettingsStore) {
                 }
             }
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text("Pen buttons", style = MaterialTheme.typography.titleSmall)
-                Text("Hold the primary stylus button to erase, or the secondary button to select ink. Release to return to your tool.",
+                Text("Button shortcuts", style = MaterialTheme.typography.titleSmall)
+                Text("By default, click the writing button to toggle the eraser, or the screenshot button to toggle the lasso. " +
+                    "Change these shortcuts and test held buttons in Pen buttons.",
                     style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
@@ -249,6 +257,7 @@ private fun PenSection(settings: SettingsStore) {
                     ),
                     engine = EngineSpec(settings.predictor.engineId, settings.inkFeelMs),
                     palm = settings.palmSpec(),
+                    buttons = settings.penButtonOptions().copy(captureFocus = false),
                     modifier = Modifier
                         .fillMaxSize()
                         .clip(MaterialTheme.shapes.medium)
@@ -257,6 +266,77 @@ private fun PenSection(settings: SettingsStore) {
             }
         }
     })
+}
+
+/** A local, bounded tester: no logging during normal writing and no notebook changes. */
+@Composable
+private fun PenButtonsSection(settings: SettingsStore) {
+    var events by remember { mutableStateOf(emptyList<String>()) }
+    var clears by remember { mutableIntStateOf(0) }
+    SettingsSplit(controls = { paneModifier ->
+        Column(paneModifier.verticalScroll(rememberScrollState()).padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            SwitchRow("Pen shortcuts", "Use the pen buttons while a canvas is open.", settings.penButtonsEnabled) {
+                settings.penButtonsEnabled = it
+            }
+            ButtonActionRow("Writing button click", settings.primaryButtonAction) { settings.primaryButtonAction = it }
+            ButtonActionRow("Screenshot button click", settings.secondaryButtonAction) { settings.secondaryButtonAction = it }
+            ButtonActionRow("Focus button click", settings.focusButtonAction) { settings.focusButtonAction = it }
+            Text("The Focus button normally stays with Xiaomi's pointer and camera controls. An assigned action works only if Xiaomi sends the press to Noti.",
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            SwitchRow("Hold to erase or select", "Hold writing to erase, or screenshot to lasso. Your selected tool returns on the next stroke after release.",
+                settings.penButtonHolds) { settings.penButtonHolds = it }
+            SwitchRow("Xiaomi button compatibility", "Recognize pen buttons sent as Page Down and Page Up. Keyboard page navigation stays available.",
+                settings.penLegacyKeys) { settings.penLegacyKeys = it }
+            SwitchRow("Swap Xiaomi button order", "Use this if the writing and screenshot buttons are reversed on your tablet.",
+                settings.penSwapLegacyKeys) { settings.penSwapLegacyKeys = it }
+            HorizontalDivider()
+            Text("Test click and hold", style = MaterialTheme.typography.titleSmall)
+            Text("Click each button, then hold it for two seconds, both away from and near the screen. " +
+                "If a click is reported before you release a held button, your tablet exposes clicks only; use toggle shortcuts. " +
+                "A long press or use while writing does not also trigger the click action.", style = MaterialTheme.typography.bodyMedium)
+            Text("The scratch area tests temporary erase/select. Click results appear below without changing your notebook or selected tool.",
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            TextButton(onClick = { events = emptyList() }) { Text("Clear button history") }
+            if (events.isEmpty()) Text("Waiting for pen button input…", style = MaterialTheme.typography.bodySmall)
+            events.forEach { Text(it, style = MaterialTheme.typography.bodySmall) }
+        }
+    }, preview = { paneModifier ->
+        Column(paneModifier.padding(16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Scratch area", style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
+                TextButton(onClick = { clears++ }) { Text("Clear ink") }
+            }
+            Spacer(Modifier.height(8.dp))
+            key(clears) {
+                val slots = settings.penSlots
+                InkCanvas(
+                    paper = Paper(), brush = BrushSpec(slots.currentColor, 1f, slots.currentWidth,
+                        if (settings.pressureOn) settings.pressureGamma else null, Tool.Pen),
+                    engine = EngineSpec(settings.predictor.engineId, settings.inkFeelMs),
+                    palm = settings.palmSpec(),
+                    buttons = settings.penButtonOptions(),
+                    onButtonClick = { button -> events = (listOf("${button.label}: click received") + events).take(16) },
+                    onButtonDiagnostic = { line -> events = (listOf(line) + events).take(16) },
+                    modifier = Modifier.fillMaxSize().clip(MaterialTheme.shapes.medium)
+                        .border(1.dp, MaterialTheme.colorScheme.outlineVariant, MaterialTheme.shapes.medium),
+                )
+            }
+        }
+    })
+}
+
+@Composable
+private fun ButtonActionRow(title: String, action: PenButtonAction, onChange: (PenButtonAction) -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    Column {
+        ValueRow(title, action.label) { open = true }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            PenButtonAction.entries.forEach { value ->
+                DropdownMenuItem(text = { Text(value.label) }, onClick = { onChange(value); open = false })
+            }
+        }
+    }
 }
 
 @Composable
@@ -409,6 +489,7 @@ private fun PalmSection(settings: SettingsStore) {
                     paper = Paper(),
                     brush = BrushSpec(slots.currentColor, 1f, slots.currentWidth, if (settings.pressureOn) settings.pressureGamma else null),
                     engine = EngineSpec(settings.predictor.engineId, settings.inkFeelMs),
+                    buttons = settings.penButtonOptions().copy(captureFocus = false),
                     palm = run {
                         val gen = modelGeneration
                         PalmSpec(settings.fingerDrawing, settings.palmModel) { m -> if (gen == modelGeneration) settings.palmModel = m }
