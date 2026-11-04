@@ -11,7 +11,13 @@ The lowest-latency PDF annotator and note-taking app for the **Xiaomi Pad 7 + Xi
 `app/` is the Android app (Gradle, AGP 9). It builds `engine/` through CMake and compiles the ink Kotlin sources
 from `engine/android/kotlin`. Only arm64 and Android 13+ are supported.
 
-The UI is Jetpack Compose (Material 3): library, editor, settings. The editor is a full canvas with translucent glass
+The UI is Jetpack Compose (Material 3): library, editor, settings. Phone windows, including the Poco X8 Pro, use a navigation drawer,
+a full-width search field, a compact selection menu and an adaptive notebook grid. Settings use a section menu
+and stack the stationary pen/palm test canvas below scrollable controls when space is narrow. Paper choices wrap,
+and dialogs scroll on short screens or with larger text. Layouts follow Android's available dp size rather than
+physical screen pixels, so display scaling, rotation and split-screen are supported.
+
+The editor is a full canvas with translucent glass
 islands and a draggable radial tool selector. Floating controls use sub-panel popup windows above the native
 ink input panel, so taps reach the controls without changing the low-latency drawing path (`ui/common/InkCanvas.kt`).
 **Pages**: notebooks and imported PDFs scroll vertically as a continuous document. Drag to scroll,
@@ -89,6 +95,9 @@ Android graphics regression tests run with Robolectric and native Skia as part o
 They render scrolled/zoomed PDF bitmaps, paper and selection overlays to verify that pixels stay inside
 the document viewport, and exercise toolbar controls at portrait, landscape, narrow-window and large-font sizes.
 The native window's anchor is also tested after ancestor movement without an anchor layout change.
-Rendered editor screenshots are written to `app/build/reports/editor-ui/`.
+Rendered editor screenshots are written to `app/build/reports/editor-ui/`. Phone library, settings and paper-picker
+regressions cover 412 × 915 dp, 360 × 640 dp with 1.5× text, and 915 × 412 dp landscape. A 423 × 919 dp
+profile at 3× density approximates the Poco X8 Pro’s [1268 × 2756 display](https://www.mi.com/global/product/poco-x8-pro/specs/)
+to whole dp. Their screenshots are in `app/build/reports/mobile-ui/`.
 The Android UI regressions workflow runs these checks on PRs and uploads the reports and screenshots.
 These host tests do not replace Focus Pen or SurfaceFlinger testing on the tablet.

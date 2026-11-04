@@ -54,7 +54,7 @@ internal fun EditorToolbar(
         val density = LocalDensity.current
         fun px(value: Dp) = with(density) { value.roundToPx() }
         FloatingIsland(Alignment.TopStart, IntOffset(px(16.dp), px(16.dp)), floatingWindows) {
-            GlassSurface(Modifier.width(if (wide) 340.dp else (maxWidth - 32.dp).coerceAtLeast(240.dp))) {
+            GlassSurface(Modifier.width(if (wide) 340.dp else (maxWidth - 32.dp).coerceAtLeast(0.dp))) {
                 Row(Modifier.padding(4.dp), verticalAlignment = Alignment.CenterVertically) {
                     IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Back to library") }
                     Column(Modifier.weight(1f).padding(horizontal = 4.dp)) {
@@ -91,15 +91,16 @@ internal fun EditorToolbar(
             }
         }
         FloatingIsland(Alignment.BottomStart, IntOffset(px(16.dp), px((-16).dp)), floatingWindows) {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Row(Modifier.widthIn(max = (maxWidth - 32.dp).coerceAtLeast(0.dp)),
+                horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 pdfPage?.let { (page, count) ->
-                    GlassSurface {
+                    GlassSurface(Modifier.weight(1f, fill = false)) {
                         Row(Modifier.padding(2.dp), verticalAlignment = Alignment.CenterVertically) {
                             IconButton(onClick = { onPage(page - 1) }, enabled = page > 0) { Icon(Icons.AutoMirrored.Outlined.KeyboardArrowLeft, "Previous page") }
-                            TextButton(onClick = onTogglePages, contentPadding = PaddingValues(horizontal = 4.dp)) {
+                            TextButton(onClick = onTogglePages, modifier = Modifier.weight(1f, fill = false), contentPadding = PaddingValues(horizontal = 4.dp)) {
                                 Text("${page + 1} / $count", Modifier.semantics { contentDescription = "Pages" },
                                     color = if (pagesOpen) colors.primary else colors.onSurface,
-                                    style = MaterialTheme.typography.labelLarge)
+                                    style = MaterialTheme.typography.labelLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             }
                             IconButton(onClick = { onPage(page + 1) }, enabled = page < count - 1) { Icon(Icons.AutoMirrored.Outlined.KeyboardArrowRight, "Next page") }
                         }
@@ -154,8 +155,10 @@ private fun BoxScope.RadialTools(settings: SettingsStore, selectionCount: Int, w
     val inset = with(density) { 20.dp.roundToPx() }
     val availableW = with(density) { width.toPx() }
     val availableH = with(density) { height.toPx() }
+    val compact = width < 600.dp
+    val panelMaxHeight = (height - if (compact) 240.dp else 108.dp).coerceAtLeast(64.dp)
     val panelW = with(density) { (if (expanded) 280.dp else 64.dp).toPx() }
-    val panelH = with(density) { (if (expanded) 402.dp.coerceAtMost(height - 160.dp) else 64.dp).toPx() }
+    val panelH = with(density) { (if (expanded) 402.dp.coerceAtMost(panelMaxHeight) else 64.dp).toPx() }
     val minX = -(availableW - panelW - inset * 2).coerceAtLeast(0f)
     // Keep the launcher below the document/history islands and above navigation.
     val bottom = with(density) { (if (width < 600.dp) 88.dp else 20.dp).roundToPx() }
@@ -181,7 +184,7 @@ private fun BoxScope.RadialTools(settings: SettingsStore, selectionCount: Int, w
                     .background(Color(settings.slots().currentColor), CircleShape))
             }
         } else {
-            Column(Modifier.width(280.dp).heightIn(max = (height - 160.dp).coerceAtLeast(180.dp))
+            Column(Modifier.width(280.dp).heightIn(max = panelMaxHeight)
                 .verticalScroll(rememberScrollState()).animateContentSize(),
                 horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 GlassSurface(Modifier.size(264.dp), CircleShape) {
@@ -236,7 +239,7 @@ internal fun ScrollIndicator(fraction: Float, visible: Float, onScroll: (Float) 
     val current by rememberUpdatedState(fraction.coerceIn(0f, 1f))
     val action by rememberUpdatedState(onScroll)
     val thumbFraction = visible.coerceIn(0.12f, 1f)
-    GlassSurface(modifier.width(32.dp).semantics {
+    GlassSurface(modifier.width(48.dp).semantics {
         contentDescription = "Document scroll"
         progressBarRangeInfo = ProgressBarRangeInfo(current, 0f..1f)
         setProgress { action(it.coerceIn(0f, 1f)); true }
@@ -249,7 +252,7 @@ internal fun ScrollIndicator(fraction: Float, visible: Float, onScroll: (Float) 
             action((start + travel / range).coerceIn(0f, 1f))
         }
     }, CircleShape) {
-        Canvas(Modifier.fillMaxSize().padding(horizontal = 14.dp, vertical = 8.dp)) {
+        Canvas(Modifier.fillMaxSize().padding(horizontal = 22.dp, vertical = 8.dp)) {
             drawRoundRect(Color(0xFF8290AA).copy(alpha = 0.18f), cornerRadius = androidx.compose.ui.geometry.CornerRadius(8f))
             val h = size.height * thumbFraction
             drawRoundRect(Color(0xFF8290AA).copy(alpha = 0.85f), topLeft = Offset(0f, (size.height - h) * current),

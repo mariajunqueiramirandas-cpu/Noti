@@ -144,13 +144,13 @@ private fun EditorContent(notebook: Notebook, library: LibraryStore, settings: S
         }
     }
     Surface(color = MaterialTheme.colorScheme.background, modifier = Modifier.fillMaxSize()) {
-        Box(Modifier.fillMaxSize().then(if (fullScreen) Modifier else Modifier.windowInsetsPadding(WindowInsets.safeDrawing))) {
+        BoxWithConstraints(Modifier.fillMaxSize().then(if (fullScreen) Modifier else Modifier.windowInsetsPadding(WindowInsets.safeDrawing))) {
             InkCanvas(
                 paper = notebook.paper, brush = brush, engine = engine, modifier = Modifier.fillMaxSize(),
                 palm = palm, pdf = pdf, pages = pages, pageCount = notebook.pageCount, inkFile = inkFile,
                 tapUndo = settings.tapUndo, onLayer = { layer = it }, onRestoreError = { restoreError = true },
                 onTwoFingerDoubleTap = { fullScreen = false },
-                topClearance = if (fullScreen) 16.dp else 96.dp, bottomClearance = if (fullScreen) 16.dp else 88.dp,
+                topClearance = if (fullScreen) 16.dp else if (maxWidth < 600.dp) 160.dp else 96.dp, bottomClearance = if (fullScreen) 16.dp else 88.dp,
             )
             if (!fullScreen) {
                 EditorToolbar(
@@ -198,7 +198,7 @@ private fun EditorContent(notebook: Notebook, library: LibraryStore, settings: S
     if (choosingPaper) {
         var paper by remember { mutableStateOf(notebook.paper) }
         AlertDialog(onDismissRequest = { choosingPaper = false }, title = { Text("Page paper") },
-            text = { PaperPicker(paper, onChange = { paper = it }, showSize = false) },
+            text = { Column(Modifier.verticalScroll(rememberScrollState())) { PaperPicker(paper, onChange = { paper = it }, showSize = false) } },
             confirmButton = { TextButton(onClick = { library.setPaper(notebook.id, paper); choosingPaper = false }) { Text("Apply") } },
             dismissButton = { TextButton(onClick = { choosingPaper = false }) { Text("Cancel") } })
     }

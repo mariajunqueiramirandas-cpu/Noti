@@ -51,6 +51,26 @@ class EditorToolbarTest {
     @Test fun narrowWindowKeepsFloatingControlsApart() { render(360, ThemeMode.Dark); assertControls(); screenshot("narrow-dark") }
     @Test fun largeFontsKeepControlsInsideWindow() { render(800, ThemeMode.Light, 2f); assertControls(); screenshot("large-font") }
 
+    @Test
+    @Config(qualifiers = "w412dp-h915dp-mdpi")
+    fun phoneWithLargeTextKeepsEditorActionsApart() { render(412, ThemeMode.Light, 1.5f); assertControls(); screenshot("phone-large-text") }
+
+    @Test
+    @Config(qualifiers = "w915dp-h412dp-mdpi")
+    fun shortLandscapeToolsStayBelowHeaderAndAboveFooter() {
+        render(915, ThemeMode.Light, height = 412)
+        assertControls()
+        compose.onNodeWithContentDescription("Open tools").performClick()
+        val top = compose.onNodeWithContentDescription("More").fetchSemanticsNode().boundsInRoot.bottom
+        val bottom = compose.onNodeWithContentDescription("Next page").fetchSemanticsNode().boundsInRoot.top
+        listOf("Pen", "Highlighter", "Eraser", "Lasso", "Close tools").forEach {
+            val bounds = compose.onNodeWithContentDescription(it).assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+            assertTrue("$it overlaps the header", bounds.top >= top)
+            assertTrue("$it overlaps the footer", bounds.bottom <= bottom)
+        }
+        screenshot("phone-landscape-tools")
+    }
+
     @Test fun radialSelectionPresetsAndOptionsWork() {
         render(800, ThemeMode.Dark)
         compose.onNodeWithContentDescription("Pen").assertDoesNotExist()
@@ -109,7 +129,7 @@ class EditorToolbarTest {
     private var resets = 0
     private var scrolled = 0f
 
-    private fun render(width: Int, theme: ThemeMode, fontScale: Float = 1f, floating: Boolean = false) {
+    private fun render(width: Int, theme: ThemeMode, fontScale: Float = 1f, floating: Boolean = false, height: Int = 800) {
         settings = SettingsStore(RuntimeEnvironment.getApplication()).also {
             it.tool = Tool.Pen; it.penSlots = SettingsStore.DEFAULT_PEN; it.highlighterSlots = SettingsStore.DEFAULT_HIGHLIGHTER
         }
@@ -121,7 +141,7 @@ class EditorToolbarTest {
             SideEffect { renderView = view }
             CompositionLocalProvider(LocalDensity provides Density(1f, fontScale)) {
                 NotiTheme(theme) {
-                    Box(Modifier.requiredWidth(width.dp).height(800.dp).background(Color.Gray).testTag("editor")) {
+                    Box(Modifier.requiredWidth(width.dp).height(height.dp).background(Color.Gray).testTag("editor")) {
                         DocumentViewport(Modifier.fillMaxSize()) {
                             DocumentBackground(Paper(), images, page.copy(visiblePages = listOf(page)), Modifier.fillMaxSize())
                         }

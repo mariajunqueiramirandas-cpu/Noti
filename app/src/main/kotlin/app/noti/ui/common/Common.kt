@@ -2,16 +2,15 @@ package app.noti.ui.common
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
@@ -36,6 +35,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.TextFieldValue
@@ -84,7 +84,11 @@ fun PaperPicker(paper: Paper, onChange: (Paper) -> Unit, showSize: Boolean = tru
         LabeledRow("Paper") {
             PaperTemplate.entries.forEach { t ->
                 val selected = paper.template == t
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier.selectable(selected = selected, role = Role.RadioButton,
+                        onClick = { onChange(paper.copy(template = t)) }),
+                ) {
                     PaperPreview(
                         paper.copy(template = t),
                         modifier = Modifier
@@ -95,13 +99,11 @@ fun PaperPicker(paper: Paper, onChange: (Paper) -> Unit, showSize: Boolean = tru
                                 if (selected) 2.dp else 1.dp,
                                 if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
                                 MaterialTheme.shapes.small,
-                            )
-                            .clickable { onChange(paper.copy(template = t)) },
+                            ),
                     )
                     Spacer(Modifier.height(4.dp))
                     Text(t.label, style = MaterialTheme.typography.labelMedium)
                 }
-                Spacer(Modifier.width(12.dp))
             }
         }
         LabeledRow("Color") {
@@ -117,7 +119,6 @@ fun PaperPicker(paper: Paper, onChange: (Paper) -> Unit, showSize: Boolean = tru
                         )
                     },
                 )
-                Spacer(Modifier.width(8.dp))
             }
         }
         if (showSize) {
@@ -128,7 +129,6 @@ fun PaperPicker(paper: Paper, onChange: (Paper) -> Unit, showSize: Boolean = tru
                         onClick = { onChange(paper.copy(size = s)) },
                         label = { Text(s.label) },
                     )
-                    Spacer(Modifier.width(8.dp))
                 }
             }
         }
@@ -137,13 +137,12 @@ fun PaperPicker(paper: Paper, onChange: (Paper) -> Unit, showSize: Boolean = tru
 
 @Composable
 private fun LabeledRow(label: String, content: @Composable () -> Unit) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Text(
-            label,
-            style = MaterialTheme.typography.labelLarge,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.width(64.dp).padding(end = 8.dp),
-        )
-        Row(verticalAlignment = Alignment.Top) { content() }
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+        Text(label, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.fillMaxWidth(),
+        ) { content() }
     }
 }
