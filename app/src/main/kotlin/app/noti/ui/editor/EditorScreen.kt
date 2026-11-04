@@ -150,7 +150,7 @@ private fun EditorContent(notebook: Notebook, library: LibraryStore, settings: S
                 palm = palm, pdf = pdf, pages = pages, pageCount = notebook.pageCount, inkFile = inkFile,
                 tapUndo = settings.tapUndo, onLayer = { layer = it }, onRestoreError = { restoreError = true },
                 onTwoFingerDoubleTap = { fullScreen = false },
-                topClearance = if (fullScreen) 16.dp else 96.dp, bottomClearance = if (fullScreen) 16.dp else 88.dp,
+                topClearance = if (fullScreen) 16.dp else 72.dp, bottomClearance = if (fullScreen) 16.dp else 72.dp,
             )
             if (!fullScreen) {
                 EditorToolbar(
@@ -173,7 +173,7 @@ private fun EditorContent(notebook: Notebook, library: LibraryStore, settings: S
             }
             if (pagesOpen && !fullScreen) {
                 androidx.compose.ui.window.Popup(alignment = Alignment.TopStart,
-                    offset = with(androidx.compose.ui.platform.LocalDensity.current) { androidx.compose.ui.unit.IntOffset(16.dp.roundToPx(), 154.dp.roundToPx()) },
+                    offset = with(androidx.compose.ui.platform.LocalDensity.current) { androidx.compose.ui.unit.IntOffset(12.dp.roundToPx(), 72.dp.roundToPx()) },
                     properties = androidx.compose.ui.window.PopupProperties(focusable = true),
                     onDismissRequest = { pagesOpen = false }) {
                     GlassSurface(Modifier.fillMaxHeight(0.7f), androidx.compose.foundation.shape.RoundedCornerShape(24.dp)) {

@@ -11,18 +11,19 @@ The lowest-latency PDF annotator and note-taking app for the **Xiaomi Pad 7 + Xi
 `app/` is the Android app (Gradle, AGP 9). It builds `engine/` through CMake and compiles the ink Kotlin sources
 from `engine/android/kotlin`. Only arm64 and Android 13+ are supported.
 
-The UI is Jetpack Compose (Material 3): library, editor, settings. The editor is a full canvas with translucent glass
-islands and a draggable radial tool selector. Floating controls use sub-panel popup windows above the native
+The UI is Jetpack Compose (Material 3): library, editor, settings. The editor is a full canvas with a compact
+header, a combined page/zoom control and a draggable tool launcher. Floating controls use sub-panel popup windows above the native
 ink input panel, so taps reach the controls without changing the low-latency drawing path (`ui/common/InkCanvas.kt`).
 **Pages**: notebooks and imported PDFs scroll vertically as a continuous document. Drag to scroll,
-pinch to zoom, drag the right-hand scroll indicator, and use page arrows or the floating pages panel to jump.
+pinch to zoom from 25% to 600%, drag the slim right-hand scroll indicator, and use the pages panel or page actions in More to jump.
 The page counter, proportional scroll thumb and zoom percentage follow the live viewport; tap zoom to fit width. Momentum stops when the pen touches down.
 Only visible pages are rendered; PDF neighbours are prefetched and zoomed detail is rendered after scrolling settles.
 Ink uses canonical page coordinates, so scrolling, zooming, rotation and reopening do not move annotations.
 
-**Writing**: tap the floating brush to open the radial pen, highlighter, stroke eraser and lasso selector; drag its
-centre to reposition it. Quick colors, widths and brush options live inside the expanded selector. A separate
-floating undo/redo island keeps editing history accessible. Circle whole strokes with the lasso, then drag inside
+**Writing**: tap the floating brush to fan out the pen, highlighter, stroke eraser and lasso; drag the launcher
+to reposition it. The launcher stays fixed through the short opening/closing animation. Tap the fan's brush-options
+button for color and width presets, custom colors and pressure settings. Undo and redo share the compact header.
+Save status is in More, with a visible retry control when saving fails. Circle whole strokes with the lasso, then drag inside
 the selection to move them. Hold a primary stylus button (or use the eraser tip) for erasing; the secondary button
 selects. Two-finger tap undoes (configurable); two-finger double-tap exits full screen.
 

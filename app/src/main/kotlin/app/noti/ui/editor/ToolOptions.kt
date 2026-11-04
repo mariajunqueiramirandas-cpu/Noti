@@ -43,6 +43,9 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import app.noti.data.SettingsStore
 import app.noti.data.Tool
@@ -81,6 +84,22 @@ internal fun ToolOptionsPopup(settings: SettingsStore, onDismiss: () -> Unit) {
         GlassSurface(modifier = Modifier.width(320.dp), shape = MaterialTheme.shapes.large) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text(settings.tool.label, style = MaterialTheme.typography.titleSmall)
+                Row {
+                    slots.colors.forEachIndexed { index, color ->
+                        PresetSlot("Color ${index + 1}", index == slots.color,
+                            onClick = { update(slots.copy(color = index)) }) {
+                            Box(Modifier.size(18.dp).clip(CircleShape).background(Color(color))
+                                .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.4f), CircleShape))
+                        }
+                    }
+                    slots.widths.forEachIndexed { index, width ->
+                        PresetSlot("Width $width", index == slots.width,
+                            onClick = { update(slots.copy(width = index)) }) {
+                            Box(Modifier.width(18.dp).height((2 + 5 * width / slots.widths.max()).dp)
+                                .clip(CircleShape).background(MaterialTheme.colorScheme.onSurface))
+                        }
+                    }
+                }
 
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     presets.forEach { c ->
@@ -132,6 +151,14 @@ internal fun ToolOptionsPopup(settings: SettingsStore, onDismiss: () -> Unit) {
             }
         }
     }
+}
+
+@Composable
+private fun PresetSlot(label: String, active: Boolean, onClick: () -> Unit, content: @Composable () -> Unit) {
+    Box(Modifier.size(48.dp).clip(CircleShape)
+        .background(if (active) MaterialTheme.colorScheme.primary.copy(alpha = 0.1f) else Color.Transparent)
+        .clickable(onClick = onClick).semantics { contentDescription = label; selected = active },
+        contentAlignment = Alignment.Center) { content() }
 }
 
 private fun ToolSlots.withColor(c: Long) = copy(colors = colors.toMutableList().also { it[color] = c })
