@@ -7,6 +7,9 @@ import android.os.Handler
 import android.os.HandlerThread
 import android.os.Process
 import android.view.View
+import android.view.KeyEvent
+import android.view.ViewConfiguration
+import android.hardware.input.InputManager
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
@@ -49,6 +52,9 @@ class InkLayer(
     private val onSnapshot: ((ByteArray) -> Unit)? = null,
     private val onDocumentState: ((DoubleArray) -> Unit)? = null,
     private val onRestoreError: (() -> Unit)? = null,
+    stylusOptions: StylusButtonOptions = StylusButtonOptions(),
+    private val onButtonClick: ((PenButton) -> Unit)? = null,
+    private val onButtonDiagnostic: ((String) -> Unit)? = null,
 ) {
     private val thread = HandlerThread("noti-ink", Process.THREAD_PRIORITY_URGENT_DISPLAY).apply { start() }
     private val ink = Handler(thread.looper)
@@ -56,6 +62,29 @@ class InkLayer(
     private val handle = NotiInk.nativeCreate(initialHorizonMs, gpuTiming, flipY, probe)
     private var window: InkWindow? = null  // ink thread only
     @Volatile private var released = false
+    @Volatile private var stylusOptions = stylusOptions
+    @Volatile private var buttonGeneration = 0
+    private var buttonEventGeneration = 0 // ink thread: generation of the key being processed
+    private val buttons = StylusButtons(
+        ViewConfiguration.getLongPressTimeout().toLong(),
+        onClick = { button ->
+            val generation = buttonEventGeneration
+            main.post { if (!released && stylusOptions.enabled && generation == buttonGeneration) onButtonClick?.invoke(button) }
+        },
+        onDiagnostic = onButtonDiagnostic?.let { report -> { line -> main.post { if (!released) report(line) } } },
+    ).apply { options = stylusOptions }
+    private val inputManager = anchor.context.getSystemService(InputManager::class.java)
+    private val deviceListener = object : InputManager.InputDeviceListener {
+        override fun onInputDeviceAdded(deviceId: Int) {}
+        override fun onInputDeviceChanged(deviceId: Int) = onInputDeviceRemoved(deviceId)
+        override fun onInputDeviceRemoved(deviceId: Int) {
+            ink.post { if (!released) buttons.removeDevice(deviceId) }
+        }
+    }
+    private val keyRegistration = (anchor.context.findActivity() as? StylusKeyHost)?.stylusKeys?.register(
+        key = ::dispatchStylusKey,
+        reset = ::resetButtons,
+    )
     private var fingerDrawing = fingerDrawing
     private val initialModel = palmModel?.copyOf()
     private val initialInk = initialInk
@@ -96,6 +125,7 @@ class InkLayer(
     }
 
     init {
+        inputManager.registerInputDeviceListener(deviceListener, main)
         if (anchor.isAttachedToWindow) attach() else anchor.addOnAttachStateChangeListener(attachListener)
     }
 
@@ -117,7 +147,7 @@ class InkLayer(
             ink.post(documentPoll)
             initialModel?.let { NotiInk.nativeSetPalmModel(handle, it) }
             NotiInk.nativeSetFingerInk(handle, fingerDrawing)
-            window = InkWindow(context, handle, ink, gestures, ::flushPage).also { it.add(token, bounds) }
+            window = InkWindow(context, handle, ink, gestures, ::flushPage, buttons).also { it.add(token, bounds) }
         }
     }
 
@@ -204,6 +234,40 @@ class InkLayer(
         ink.post { if (!released) NotiInk.nativeSetTool(handle, tool) }
     }
 
+    fun setStylusOptions(options: StylusButtonOptions) {
+        if (stylusOptions == options) return
+        buttonGeneration++
+        stylusOptions = options
+        ink.post { if (!released) buttons.options = options }
+    }
+
+    private fun dispatchStylusKey(event: KeyEvent): Boolean {
+        if (released || (event.action != KeyEvent.ACTION_DOWN && event.action != KeyEvent.ACTION_UP)) return false
+        val button = StylusButtonKeys.button(event.keyCode, event.source, event.device?.name, stylusOptions) ?: return false
+        // KeyEvent instances belong to Android; never retain them across the thread hand-off.
+        val device = event.deviceId
+        val action = event.action
+        val time = event.eventTime
+        val downTime = event.downTime
+        val repeat = event.repeatCount
+        val canceled = event.isCanceled
+        val code = event.keyCode
+        val generation = buttonGeneration
+        ink.post {
+            if (!released && generation == buttonGeneration) {
+                buttonEventGeneration = generation
+                onButtonDiagnostic?.let { report -> main.post { if (!released) report("Key $code · ${button.label} · device $device") } }
+                buttons.key(button, device, action, time, repeat, canceled, downTime)
+            }
+        }
+        return true
+    }
+
+    private fun resetButtons() {
+        buttonGeneration++
+        ink.post { if (!released) buttons.reset() }
+    }
+
     fun documentAction(action: Int, page: Int = 0, onDone: ((Boolean) -> Unit)? = null) {
         ink.post {
             if (released) return@post
@@ -283,10 +347,13 @@ class InkLayer(
     fun release() {
         if (released) return
         released = true
+        keyRegistration?.close()
+        inputManager.unregisterInputDeviceListener(deviceListener)
         anchor.removeOnAttachStateChangeListener(attachListener)
         boundsObserver.stop()
         ink.removeCallbacks(documentPoll)
         ink.post {
+            buttons.reset()
             NotiInk.nativeIdle(handle)
             NotiInk.nativeDocumentAction(handle, 5, 0)
             if (persistenceEnabled) onSnapshot?.invoke(NotiInk.nativeSnapshot(handle))

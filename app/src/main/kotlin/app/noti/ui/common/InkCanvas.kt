@@ -48,6 +48,8 @@ import app.noti.data.InkFile
 import app.noti.data.Tool
 import app.noti.data.Paper
 import app.noti.ink.InkLayer
+import app.noti.ink.PenButton
+import app.noti.ink.StylusButtonOptions
 import app.noti.pdf.PageViewport
 import app.noti.pdf.PagePlacement
 import app.noti.pdf.PdfDocument
@@ -135,7 +137,9 @@ fun InkCanvas(
     onRestoreError: (() -> Unit)? = null,
     topClearance: Dp = 16.dp,
     bottomClearance: Dp = 16.dp,
-
+    buttons: StylusButtonOptions = StylusButtonOptions(),
+    onButtonClick: ((PenButton) -> Unit)? = null,
+    onButtonDiagnostic: ((String) -> Unit)? = null,
 ) {
     // Previews and screenshot tests have no native engine: paper only.
     if (LocalInspectionMode.current) {
@@ -150,6 +154,8 @@ fun InkCanvas(
     val undoTap = rememberUpdatedState(tapUndo)
     val documentState = rememberUpdatedState(onDocumentState)
     val restoreError = rememberUpdatedState(onRestoreError)
+    val buttonClick = rememberUpdatedState(onButtonClick)
+    val buttonDiagnostic = rememberUpdatedState(onButtonDiagnostic)
     val controller = pages ?: remember { PageController() }
 
     val rig = remember(pdf, inkFile) {
@@ -186,6 +192,10 @@ fun InkCanvas(
             onSnapshot = inkFile?.let { file -> { bytes -> file.save(bytes) } },
             onDocumentState = { controller.documentState = it; documentState.value?.invoke(it) },
             onRestoreError = { restoreError.value?.invoke() },
+            stylusOptions = buttons,
+            onButtonClick = { buttonClick.value?.invoke(it) },
+            // Normal writing never formats or posts diagnostic events.
+            onButtonDiagnostic = if (onButtonDiagnostic == null) null else { line -> buttonDiagnostic.value?.invoke(line) },
         )
         Rig(created, viewport, gestures)
     }
@@ -214,6 +224,7 @@ fun InkCanvas(
         layer.setPredictor(engine.predictor)
         layer.setDisplayTiming(panelMs = engine.inkFeelMs)
         layer.setFingerDrawing(palm.fingerDrawing)
+        layer.setStylusOptions(buttons)
     }
 
     val aspects = pdf?.pageSizes?.map { it.height / it.width }
