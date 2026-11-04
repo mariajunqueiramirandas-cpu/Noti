@@ -4,6 +4,9 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -27,6 +30,10 @@ import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Palette
 import androidx.compose.material.icons.outlined.PanTool
 import androidx.compose.material3.Button
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.FilterChip
+import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.runtime.LaunchedEffect
 import android.widget.Toast
@@ -45,17 +52,12 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationDrawerItem
 import androidx.compose.material3.NavigationDrawerItemDefaults
 import androidx.compose.material3.RadioButton
-import androidx.compose.material3.SegmentedButton
-import androidx.compose.material3.SegmentedButtonDefaults
-import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.VerticalDivider
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
@@ -97,39 +99,83 @@ private enum class Section(val label: String, val icon: ImageVector) {
 fun SettingsScreen(settings: SettingsStore, onBack: () -> Unit) {
     StylusDialogKeys()
     var section by remember { mutableStateOf(Section.Pen) }
+    var sectionMenu by remember { mutableStateOf(false) }
     BackHandler(onBack = onBack)
     Surface(color = MaterialTheme.colorScheme.background, modifier = Modifier.fillMaxSize()) {
-        Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing)) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.fillMaxWidth().height(56.dp).padding(horizontal = 8.dp),
-            ) {
-                IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "Back") }
-                Text("Settings", style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(start = 8.dp))
-            }
-            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-            Row(Modifier.fillMaxSize()) {
-                Column(Modifier.width(220.dp).fillMaxHeight().padding(12.dp)) {
-                    Section.entries.forEach { s ->
-                        NavigationDrawerItem(
-                            label = { Text(s.label) },
-                            icon = { Icon(s.icon, null) },
-                            selected = section == s,
-                            onClick = { section = s },
-                            colors = NavigationDrawerItemDefaults.colors(unselectedContainerColor = MaterialTheme.colorScheme.background),
-                        )
+        BoxWithConstraints(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing)) {
+            val compact = maxWidth < 840.dp || maxHeight < 480.dp
+            Column(Modifier.fillMaxSize()) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp),
+                ) {
+                    IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "Back") }
+                    Text("Settings", style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f).padding(start = 8.dp))
+                }
+                if (compact) {
+                    Box(Modifier.padding(horizontal = 16.dp)) {
+                        TextButton(onClick = { sectionMenu = true }) {
+                            Icon(section.icon, null)
+                            Text(section.label, Modifier.padding(horizontal = 8.dp))
+                            Icon(Icons.Outlined.ExpandMore, "Choose settings section")
+                        }
+                        DropdownMenu(expanded = sectionMenu, onDismissRequest = { sectionMenu = false }) {
+                            Section.entries.forEach { s ->
+                                DropdownMenuItem(text = { Text(s.label) }, leadingIcon = { Icon(s.icon, null) },
+                                    onClick = { section = s; sectionMenu = false })
+                            }
+                        }
                     }
                 }
-                VerticalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                when (section) {
-                    Section.Pen -> PenSection(settings)
-                    Section.Buttons -> PenButtonsSection(settings)
-                    Section.Writing -> Pane { WritingSection(settings) }
-                    Section.Palm -> PalmSection(settings)
-                    Section.Pages -> Pane { PagesSection(settings) }
-                    Section.Appearance -> Pane { AppearanceSection(settings) }
-                    Section.About -> Pane { AboutSection() }
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                Row(Modifier.weight(1f).fillMaxWidth()) {
+                    if (!compact) {
+                        Column(Modifier.width(220.dp).fillMaxHeight().verticalScroll(rememberScrollState()).padding(12.dp)) {
+                            Section.entries.forEach { s ->
+                                NavigationDrawerItem(
+                                    label = { Text(s.label) }, icon = { Icon(s.icon, null) },
+                                    selected = section == s, onClick = { section = s },
+                                    colors = NavigationDrawerItemDefaults.colors(unselectedContainerColor = MaterialTheme.colorScheme.background),
+                                )
+                            }
+                        }
+                        VerticalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                    }
+                    Box(Modifier.weight(1f).fillMaxHeight()) {
+                        key(section) {
+                            when (section) {
+                                Section.Pen -> PenSection(settings)
+                                Section.Buttons -> PenButtonsSection(settings)
+                                Section.Writing -> Pane { WritingSection(settings) }
+                                Section.Palm -> PalmSection(settings)
+                                Section.Pages -> Pane { PagesSection(settings) }
+                                Section.Appearance -> Pane { AppearanceSection(settings) }
+                                Section.About -> Pane { AboutSection() }
+                            }
+                        }
+                    }
                 }
+            }
+        }
+    }
+}
+
+/** Keep the native scratch canvas stationary while its settings scroll, even on a phone. */
+@Composable
+private fun SettingsSplit(controls: @Composable (Modifier) -> Unit, preview: @Composable (Modifier) -> Unit) {
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        if (maxWidth < 720.dp) {
+            val previewHeight = (maxHeight * 0.35f).coerceIn(128.dp, 240.dp)
+            Column(Modifier.fillMaxSize()) {
+                controls(Modifier.weight(1f).fillMaxWidth())
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                preview(Modifier.fillMaxWidth().height(previewHeight))
+            }
+        } else {
+            Row(Modifier.fillMaxSize()) {
+                controls(Modifier.weight(1f).fillMaxHeight())
+                VerticalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                preview(Modifier.weight(1f).fillMaxHeight())
             }
         }
     }
@@ -150,10 +196,10 @@ private fun Pane(content: @Composable () -> Unit) {
 @Composable
 private fun PenSection(settings: SettingsStore) {
     var clears by remember { mutableIntStateOf(0) }
-    Row(Modifier.fillMaxSize()) {
+    SettingsSplit(controls = { paneModifier ->
         Column(
             verticalArrangement = Arrangement.spacedBy(20.dp),
-            modifier = Modifier.weight(1f).fillMaxHeight().verticalScroll(rememberScrollState()).padding(24.dp),
+            modifier = paneModifier.verticalScroll(rememberScrollState()).padding(16.dp),
         ) {
             SwitchRow("Pressure sensitivity", "Line width follows how hard you press.", settings.pressureOn) {
                 settings.pressureOn = it
@@ -181,13 +227,9 @@ private fun PenSection(settings: SettingsStore) {
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                SingleChoiceSegmentedButtonRow {
-                    Predictor.entries.forEachIndexed { i, p ->
-                        SegmentedButton(
-                            selected = settings.predictor == p,
-                            onClick = { settings.predictor = p },
-                            shape = SegmentedButtonDefaults.itemShape(i, Predictor.entries.size),
-                        ) { Text(p.label) }
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Predictor.entries.forEach { p ->
+                        FilterChip(selected = settings.predictor == p, onClick = { settings.predictor = p }, label = { Text(p.label) })
                     }
                 }
             }
@@ -198,8 +240,8 @@ private fun PenSection(settings: SettingsStore) {
                     style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
-        VerticalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-        Column(Modifier.weight(1f).fillMaxHeight().padding(24.dp)) {
+    }, preview = { paneModifier ->
+        Column(paneModifier.padding(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("Try it here", style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
                 TextButton(onClick = { clears++ }) { Text("Clear") }
@@ -223,7 +265,7 @@ private fun PenSection(settings: SettingsStore) {
                 )
             }
         }
-    }
+    })
 }
 
 /** A local, bounded tester: no logging during normal writing and no notebook changes. */
@@ -231,8 +273,8 @@ private fun PenSection(settings: SettingsStore) {
 private fun PenButtonsSection(settings: SettingsStore) {
     var events by remember { mutableStateOf(emptyList<String>()) }
     var clears by remember { mutableIntStateOf(0) }
-    Row(Modifier.fillMaxSize()) {
-        Column(Modifier.weight(1f).fillMaxHeight().verticalScroll(rememberScrollState()).padding(24.dp),
+    SettingsSplit(controls = { paneModifier ->
+        Column(paneModifier.verticalScroll(rememberScrollState()).padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)) {
             SwitchRow("Pen shortcuts", "Use the pen buttons while a canvas is open.", settings.penButtonsEnabled) {
                 settings.penButtonsEnabled = it
@@ -259,8 +301,8 @@ private fun PenButtonsSection(settings: SettingsStore) {
             if (events.isEmpty()) Text("Waiting for pen button input…", style = MaterialTheme.typography.bodySmall)
             events.forEach { Text(it, style = MaterialTheme.typography.bodySmall) }
         }
-        VerticalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-        Column(Modifier.weight(1f).fillMaxHeight().padding(24.dp)) {
+    }, preview = { paneModifier ->
+        Column(paneModifier.padding(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("Scratch area", style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
                 TextButton(onClick = { clears++ }) { Text("Clear ink") }
@@ -281,7 +323,7 @@ private fun PenButtonsSection(settings: SettingsStore) {
                 )
             }
         }
-    }
+    })
 }
 
 @Composable
@@ -344,10 +386,10 @@ private fun PalmSection(settings: SettingsStore) {
             delay(500)
         }
     }
-    Row(Modifier.fillMaxSize()) {
+    SettingsSplit(controls = { paneModifier ->
         Column(
             verticalArrangement = Arrangement.spacedBy(16.dp),
-            modifier = Modifier.weight(1f).fillMaxHeight().verticalScroll(rememberScrollState()).padding(24.dp),
+            modifier = paneModifier.verticalScroll(rememberScrollState()).padding(16.dp),
         ) {
             Text(
                 "Only the pen and deliberate touches get through. Every finger contact is scored from the pen's state, " +
@@ -391,18 +433,14 @@ private fun PalmSection(settings: SettingsStore) {
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                SingleChoiceSegmentedButtonRow {
-                    PalmScenario.entries.forEachIndexed { i, s ->
-                        SegmentedButton(
-                            selected = scenario == s,
-                            onClick = { if (!recording) scenario = s },
-                            enabled = !recording || scenario == s,
-                            shape = SegmentedButtonDefaults.itemShape(i, PalmScenario.entries.size),
-                        ) { Text(s.title) }
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    PalmScenario.entries.forEach { s ->
+                        FilterChip(selected = scenario == s, onClick = { if (!recording) scenario = s },
+                            enabled = !recording || scenario == s, label = { Text(s.title) })
                     }
                 }
                 Text(scenario.hint, style = MaterialTheme.typography.bodyMedium)
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     if (!recording) {
                         Button(onClick = {
                             layer?.setPalmRecording(true, scenario.label)
@@ -438,8 +476,8 @@ private fun PalmSection(settings: SettingsStore) {
                 )
             }
         }
-        VerticalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-        Column(Modifier.weight(1f).fillMaxHeight().padding(24.dp)) {
+    }, preview = { paneModifier ->
+        Column(paneModifier.padding(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("Try it here", style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
                 TextButton(onClick = { clears++ }, enabled = !recording) { Text("Clear") }
@@ -464,13 +502,13 @@ private fun PalmSection(settings: SettingsStore) {
                 )
             }
         }
-    }
+    })
 }
 
 @Composable
 private fun StatRow(label: String, value: String) {
-    Row(Modifier.fillMaxWidth()) {
-        Text(label, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+    Column(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+        Text(label, style = MaterialTheme.typography.bodyMedium)
         Text(value, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
@@ -568,10 +606,10 @@ private fun LabeledSlider(
     Column(Modifier.greyedOut(!enabled)) {
         Text(title, style = MaterialTheme.typography.titleSmall)
         Text(description, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(start, style = MaterialTheme.typography.labelMedium, modifier = Modifier.width(84.dp))
-            Slider(value = value, onValueChange = onChange, valueRange = range, enabled = enabled, modifier = Modifier.weight(1f))
-            Text(end, style = MaterialTheme.typography.labelMedium, modifier = Modifier.width(84.dp).padding(start = 12.dp))
+        Slider(value = value, onValueChange = onChange, valueRange = range, enabled = enabled, modifier = Modifier.fillMaxWidth())
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text(start, style = MaterialTheme.typography.labelMedium, modifier = Modifier.weight(1f))
+            Text(end, style = MaterialTheme.typography.labelMedium, modifier = Modifier.weight(1f), textAlign = androidx.compose.ui.text.style.TextAlign.End)
         }
     }
 }

@@ -51,6 +51,27 @@ class EditorToolbarTest {
     @Test fun narrowWindowKeepsFloatingControlsApart() { render(360, ThemeMode.Dark); assertControls(); screenshot("narrow-dark") }
     @Test fun largeFontsKeepControlsInsideWindow() { render(800, ThemeMode.Light, 2f); assertControls(); screenshot("large-font") }
 
+    @Test
+    @Config(qualifiers = "w412dp-h915dp-mdpi")
+    fun phoneWithLargeTextKeepsEditorActionsApart() { render(412, ThemeMode.Light, 1.5f); assertControls(); screenshot("phone-large-text") }
+
+    @Test
+    @Config(qualifiers = "w915dp-h412dp-mdpi")
+    fun shortLandscapeToolsStayClearOfHeaderAndNavigation() {
+        render(915, ThemeMode.Light, height = 412)
+        assertControls()
+        compose.onNodeWithContentDescription("Open tools").performClick()
+        val root = compose.onNodeWithTag("toolbar").fetchSemanticsNode().boundsInRoot
+        val obstacles = listOf("Back to library", "More", "Undo", "Redo", "Pages", "Zoom 175 percent. Reset to fit width")
+            .map { it to compose.onNodeWithContentDescription(it).fetchSemanticsNode().boundsInRoot }
+        listOf("Pen", "Highlighter", "Eraser", "Lasso", "Brush options", "Close tools").forEach { label ->
+            val bounds = compose.onNodeWithContentDescription(label).assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+            assertTrue("$label extends outside the screen: $bounds", bounds.left >= root.left && bounds.right <= root.right && bounds.top >= root.top && bounds.bottom <= root.bottom)
+            obstacles.forEach { (name, obstacle) -> assertFalse("$label overlaps $name", bounds.overlaps(obstacle)) }
+        }
+        screenshot("phone-landscape-tools")
+    }
+
     @Test fun radialSelectionKeepsPresetsBehindBrushOptions() {
         render(800, ThemeMode.Dark)
         compose.onNodeWithContentDescription("Pen").assertDoesNotExist()
@@ -167,7 +188,7 @@ class EditorToolbarTest {
     private var requestedPage = -1
     private var saves = 0
 
-    private fun render(width: Int, theme: ThemeMode, fontScale: Float = 1f, floating: Boolean = false, saveStatus: String = "Autosave on") {
+    private fun render(width: Int, theme: ThemeMode, fontScale: Float = 1f, floating: Boolean = false, saveStatus: String = "Autosave on", height: Int = 800) {
         settings = SettingsStore(RuntimeEnvironment.getApplication()).also {
             it.tool = Tool.Pen; it.penSlots = SettingsStore.DEFAULT_PEN; it.highlighterSlots = SettingsStore.DEFAULT_HIGHLIGHTER
         }
@@ -179,7 +200,7 @@ class EditorToolbarTest {
             SideEffect { renderView = view }
             CompositionLocalProvider(LocalDensity provides Density(1f, fontScale)) {
                 NotiTheme(theme) {
-                    Box(Modifier.requiredWidth(width.dp).height(800.dp).background(Color.Gray).testTag("editor")) {
+                    Box(Modifier.requiredWidth(width.dp).height(height.dp).background(Color.Gray).testTag("editor")) {
                         DocumentViewport(Modifier.fillMaxSize()) {
                             DocumentBackground(Paper(), images, page.copy(visiblePages = listOf(page)), Modifier.fillMaxSize())
                         }

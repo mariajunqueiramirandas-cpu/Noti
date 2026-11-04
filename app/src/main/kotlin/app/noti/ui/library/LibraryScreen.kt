@@ -13,6 +13,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import app.noti.pdf.PdfImport
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -24,6 +25,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -34,6 +36,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
@@ -61,6 +64,7 @@ import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.IosShare
 import androidx.compose.material.icons.automirrored.outlined.LibraryBooks
 import androidx.compose.material.icons.outlined.MoreVert
+import androidx.compose.material.icons.outlined.Menu
 import androidx.compose.material.icons.outlined.PictureAsPdf
 import androidx.compose.material.icons.outlined.RestoreFromTrash
 import androidx.compose.material.icons.outlined.Search
@@ -69,6 +73,10 @@ import androidx.compose.material.icons.automirrored.outlined.Sort
 import androidx.compose.material.icons.outlined.Star
 import androidx.compose.material.icons.outlined.StarBorder
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.ModalNavigationDrawer
+import androidx.compose.material3.ModalDrawerSheet
+import androidx.compose.material3.DrawerValue
+import androidx.compose.material3.rememberDrawerState
 import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -85,6 +93,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -140,6 +149,7 @@ fun LibraryScreen(
     var importing by remember { mutableStateOf(false) }
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val drawer = rememberDrawerState(DrawerValue.Closed)
     val importPdf = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
         importing = true
@@ -218,96 +228,113 @@ fun LibraryScreen(
     }
 
     Surface(color = MaterialTheme.colorScheme.background, modifier = Modifier.fillMaxSize()) {
-        Row(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing)) {
-            Sidebar(
-                library = library,
-                filter = filter,
-                onFilter = {
-                    filter = it
-                    selection = emptySet()
-                },
-                onNewFolder = { creatingFolder = true },
-                onRenameFolder = { renamingFolder = it },
-                onSettings = onSettings,
-            )
-            VerticalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-            Column(Modifier.weight(1f).fillMaxHeight()) {
-                if (selection.isEmpty()) {
-                    TopBar(
-                        title = title,
-                        query = query,
-                        onQuery = { query = it },
-                        sort = sort,
-                        onSort = { sort = it },
-                        showSort = filter != Filter.Recent,
-                        inTrash = inTrash,
-                        trashNotEmpty = visible.isNotEmpty(),
-                        onNew = { creating = true },
-                        onImportPdf = onImportPdf,
-                        onEmptyTrash = { confirmDeleteForever = visible.map { it.id }.toSet() },
-                    )
-                } else {
-                    SelectionBar(
-                        count = selection.size,
-                        inTrash = inTrash,
-                        allFavorite = selection.all { id -> library.notebook(id)?.favorite == true },
-                        onClear = { selection = emptySet() },
-                        onFavorite = { fav -> library.setFavorite(selection, fav) },
-                        onMove = { moving = true },
-                        onRename = { renamingNotebook = library.notebook(selection.first()) },
-                        onExport = {
-                            if (!exporting) {
-                                exportNotebooks = library.notebooks.filter { it.id in selection }
-                                if (exportNotebooks.size == 1) exportPdf.launch("${exportNotebooks.single().name.replace(Regex("[^a-zA-Z0-9 ._-]"), "_")}.pdf")
-                                else exportZip.launch("Noti notebooks.zip")
-                            }
-                        },
-                        onDuplicate = {
-                            library.duplicate(selection)
-                            selection = emptySet()
-                        },
-                        onDelete = {
-                            library.trash(selection)
-                            selection = emptySet()
-                        },
-                        onRestore = {
-                            library.restore(selection)
-                            selection = emptySet()
-                        },
-                        onDeleteForever = { confirmDeleteForever = selection },
-                    )
-                }
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-
-                if (visible.isEmpty()) {
-                    EmptyState(filter, query.isNotBlank(), onNew = { creating = true }, onImportPdf = onImportPdf)
-                } else {
-                    val showRecentRow = filter == Filter.All && query.isBlank() && visible.size > 6
-                    val recent = if (showRecentRow) visible.sortedByDescending { it.openedAt }.take(6) else emptyList()
-                    val onTap: (Notebook) -> Unit = { nb ->
-                        when {
-                            selection.isNotEmpty() -> selection = selection.toggle(nb.id)
-                            inTrash -> selection = setOf(nb.id)
-                            else -> onOpen(nb.id)
-                        }
+        BoxWithConstraints(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).imePadding()) {
+            val compact = maxWidth < 840.dp || maxHeight < 480.dp
+            LaunchedEffect(compact) { if (!compact) drawer.close() }
+            val navigation: @Composable () -> Unit = {
+                Sidebar(
+                    library = library,
+                    filter = filter,
+                    onFilter = {
+                        filter = it
+                        selection = emptySet()
+                        scope.launch { drawer.close() }
+                    },
+                    onNewFolder = { creatingFolder = true; scope.launch { drawer.close() } },
+                    onRenameFolder = { renamingFolder = it; scope.launch { drawer.close() } },
+                    onSettings = { scope.launch { drawer.close() }; onSettings() },
+                )
+            }
+            ModalNavigationDrawer(
+                drawerState = drawer,
+                gesturesEnabled = compact,
+                drawerContent = { if (compact) ModalDrawerSheet { navigation() } },
+            ) {
+                Row(Modifier.fillMaxSize()) {
+                    if (!compact) {
+                        navigation()
+                        VerticalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                     }
-                    val onLongPress: (Notebook) -> Unit = { selection = selection.toggle(it.id) }
-                    LazyVerticalGrid(
-                        columns = GridCells.Adaptive(168.dp),
-                        contentPadding = PaddingValues(24.dp),
-                        horizontalArrangement = Arrangement.spacedBy(20.dp),
-                        verticalArrangement = Arrangement.spacedBy(20.dp),
-                        modifier = Modifier.fillMaxSize(),
-                    ) {
-                        if (showRecentRow) {
-                            item(span = { GridItemSpan(maxLineSpan) }) { SectionLabel("Recent") }
-                            items(recent, key = { "r-" + it.id }) { nb ->
-                                NotebookCard(nb, library.thumbnailFile(nb), nb.id in selection, inTrash, onTap, onLongPress)
-                            }
-                            item(span = { GridItemSpan(maxLineSpan) }) { SectionLabel("All") }
+                    Column(Modifier.weight(1f).fillMaxHeight()) {
+                        if (selection.isEmpty()) {
+                            TopBar(
+                                title = title,
+                                onNavigation = if (compact) ({ scope.launch { drawer.open() }; Unit }) else null,
+                                query = query,
+                                onQuery = { query = it },
+                                sort = sort,
+                                onSort = { sort = it },
+                                showSort = filter != Filter.Recent,
+                                inTrash = inTrash,
+                                trashNotEmpty = visible.isNotEmpty(),
+                                onNew = { creating = true },
+                                onImportPdf = onImportPdf,
+                                onEmptyTrash = { confirmDeleteForever = visible.map { it.id }.toSet() },
+                            )
+                        } else {
+                            SelectionBar(
+                                count = selection.size,
+                                inTrash = inTrash,
+                                allFavorite = selection.all { id -> library.notebook(id)?.favorite == true },
+                                onClear = { selection = emptySet() },
+                                onFavorite = { fav -> library.setFavorite(selection, fav) },
+                                onMove = { moving = true },
+                                onRename = { renamingNotebook = library.notebook(selection.first()) },
+                                onExport = {
+                                    if (!exporting) {
+                                        exportNotebooks = library.notebooks.filter { it.id in selection }
+                                        if (exportNotebooks.size == 1) exportPdf.launch("${exportNotebooks.single().name.replace(Regex("[^a-zA-Z0-9 ._-]"), "_")}.pdf")
+                                        else exportZip.launch("Noti notebooks.zip")
+                                    }
+                                },
+                                onDuplicate = {
+                                    library.duplicate(selection)
+                                    selection = emptySet()
+                                },
+                                onDelete = {
+                                    library.trash(selection)
+                                    selection = emptySet()
+                                },
+                                onRestore = {
+                                    library.restore(selection)
+                                    selection = emptySet()
+                                },
+                                onDeleteForever = { confirmDeleteForever = selection },
+                            )
                         }
-                        items(visible, key = { it.id }) { nb ->
-                            NotebookCard(nb, library.thumbnailFile(nb), nb.id in selection, inTrash, onTap, onLongPress)
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+
+                        if (visible.isEmpty()) {
+                            EmptyState(filter, query.isNotBlank(), onNew = { creating = true }, onImportPdf = onImportPdf)
+                        } else {
+                            val showRecentRow = filter == Filter.All && query.isBlank() && visible.size > 6
+                            val recent = if (showRecentRow) visible.sortedByDescending { it.openedAt }.take(6) else emptyList()
+                            val onTap: (Notebook) -> Unit = { nb ->
+                                when {
+                                    selection.isNotEmpty() -> selection = selection.toggle(nb.id)
+                                    inTrash -> selection = setOf(nb.id)
+                                    else -> onOpen(nb.id)
+                                }
+                            }
+                            val onLongPress: (Notebook) -> Unit = { selection = selection.toggle(it.id) }
+                            LazyVerticalGrid(
+                                columns = GridCells.Adaptive(if (compact) 140.dp else 168.dp),
+                                contentPadding = PaddingValues(if (compact) 16.dp else 24.dp),
+                                horizontalArrangement = Arrangement.spacedBy(if (compact) 12.dp else 20.dp),
+                                verticalArrangement = Arrangement.spacedBy(20.dp),
+                                modifier = Modifier.fillMaxSize(),
+                            ) {
+                                if (showRecentRow) {
+                                    item(span = { GridItemSpan(maxLineSpan) }) { SectionLabel("Recent") }
+                                    items(recent, key = { "r-" + it.id }) { nb ->
+                                        NotebookCard(nb, library.thumbnailFile(nb), nb.id in selection, inTrash, onTap, onLongPress)
+                                    }
+                                    item(span = { GridItemSpan(maxLineSpan) }) { SectionLabel("All") }
+                                }
+                                items(visible, key = { it.id }) { nb ->
+                                    NotebookCard(nb, library.thumbnailFile(nb), nb.id in selection, inTrash, onTap, onLongPress)
+                                }
+                            }
                         }
                     }
                 }
@@ -438,7 +465,7 @@ private fun Sidebar(
                 SideItem(
                     f.name, Icons.Outlined.Folder, filter == Filter.InFolder(f.id),
                     badge = {
-                        IconButton(onClick = { menu = true }, modifier = Modifier.size(32.dp)) {
+                        IconButton(onClick = { menu = true }, modifier = Modifier.size(48.dp)) {
                             Icon(Icons.Outlined.MoreVert, contentDescription = "Folder options", modifier = Modifier.size(18.dp))
                         }
                     },
@@ -494,6 +521,7 @@ private fun SideItem(
 @Composable
 private fun TopBar(
     title: String,
+    onNavigation: (() -> Unit)?,
     query: String,
     onQuery: (String) -> Unit,
     sort: SortOrder,
@@ -507,73 +535,74 @@ private fun TopBar(
 ) {
     var sortMenu by remember { mutableStateOf(false) }
     var newMenu by remember { mutableStateOf(false) }
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        modifier = Modifier.fillMaxWidth().height(72.dp).padding(horizontal = 24.dp),
-    ) {
-        Text(
-            title,
-            style = MaterialTheme.typography.titleLarge,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f),
-        )
-        OutlinedTextField(
-            value = query,
-            onValueChange = onQuery,
-            placeholder = { Text("Search") },
-            leadingIcon = { Icon(Icons.Outlined.Search, null) },
-            trailingIcon = {
-                if (query.isNotEmpty()) {
-                    IconButton(onClick = { onQuery("") }) { Icon(Icons.Outlined.Close, contentDescription = "Clear search") }
+    BoxWithConstraints(Modifier.fillMaxWidth()) {
+        val stacked = maxWidth < 720.dp * LocalDensity.current.fontScale
+        val search: @Composable () -> Unit = {
+            OutlinedTextField(
+                value = query,
+                onValueChange = onQuery,
+                placeholder = { Text("Search") },
+                leadingIcon = { Icon(Icons.Outlined.Search, null) },
+                trailingIcon = {
+                    if (query.isNotEmpty()) {
+                        IconButton(onClick = { onQuery("") }) { Icon(Icons.Outlined.Close, contentDescription = "Clear search") }
+                    }
+                },
+                singleLine = true,
+                shape = CircleShape,
+                colors = TextFieldDefaults.colors(
+                    unfocusedContainerColor = MaterialTheme.colorScheme.surface,
+                    focusedContainerColor = MaterialTheme.colorScheme.surface,
+                    unfocusedIndicatorColor = MaterialTheme.colorScheme.outlineVariant,
+                ),
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+        Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                onNavigation?.let { open ->
+                    IconButton(onClick = open) { Icon(Icons.Outlined.Menu, "Open navigation") }
                 }
-            },
-            singleLine = true,
-            shape = CircleShape,
-            colors = TextFieldDefaults.colors(
-                unfocusedContainerColor = MaterialTheme.colorScheme.surface,
-                focusedContainerColor = MaterialTheme.colorScheme.surface,
-                unfocusedIndicatorColor = MaterialTheme.colorScheme.outlineVariant,
-            ),
-            modifier = Modifier.width(280.dp),
-        )
-        if (showSort) {
-            Box {
-                TextButton(onClick = { sortMenu = true }) {
-                    Icon(Icons.AutoMirrored.Outlined.Sort, null)
-                    Spacer(Modifier.width(6.dp))
-                    Text(sort.label)
+                Text(title, style = MaterialTheme.typography.titleLarge, maxLines = 1,
+                    overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                if (!stacked) Box(Modifier.width(240.dp)) { search() }
+                if (showSort) {
+                    Box {
+                        IconButton(onClick = { sortMenu = true }) {
+                            Icon(Icons.AutoMirrored.Outlined.Sort, contentDescription = "Sort: ${sort.label}")
+                        }
+                        DropdownMenu(expanded = sortMenu, onDismissRequest = { sortMenu = false }) {
+                            SortOrder.entries.forEach { s ->
+                                DropdownMenuItem(text = { Text(s.label) }, onClick = { sortMenu = false; onSort(s) })
+                            }
+                        }
+                    }
                 }
-                DropdownMenu(expanded = sortMenu, onDismissRequest = { sortMenu = false }) {
-                    SortOrder.entries.forEach { s ->
-                        DropdownMenuItem(text = { Text(s.label) }, onClick = { sortMenu = false; onSort(s) })
+                if (inTrash) {
+                    TextButton(onClick = onEmptyTrash, enabled = trashNotEmpty) { Text("Empty trash") }
+                } else {
+                    Box {
+                        Button(onClick = { newMenu = true }) {
+                            Icon(Icons.Outlined.Add, null)
+                            Spacer(Modifier.width(6.dp))
+                            Text("New")
+                        }
+                        DropdownMenu(expanded = newMenu, onDismissRequest = { newMenu = false }) {
+                            DropdownMenuItem(
+                                text = { Text("Notebook") },
+                                leadingIcon = { Icon(Icons.Outlined.Description, null) },
+                                onClick = { newMenu = false; onNew() },
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Import PDF") },
+                                leadingIcon = { Icon(Icons.Outlined.PictureAsPdf, null) },
+                                onClick = { newMenu = false; onImportPdf() },
+                            )
+                        }
                     }
                 }
             }
-        }
-        if (inTrash) {
-            TextButton(onClick = onEmptyTrash, enabled = trashNotEmpty) { Text("Empty trash") }
-        } else {
-            Box {
-                Button(onClick = { newMenu = true }) {
-                    Icon(Icons.Outlined.Add, null)
-                    Spacer(Modifier.width(6.dp))
-                    Text("New")
-                }
-                DropdownMenu(expanded = newMenu, onDismissRequest = { newMenu = false }) {
-                    DropdownMenuItem(
-                        text = { Text("Notebook") },
-                        leadingIcon = { Icon(Icons.Outlined.Description, null) },
-                        onClick = { newMenu = false; onNew() },
-                    )
-                    DropdownMenuItem(
-                        text = { Text("Import PDF") },
-                        leadingIcon = { Icon(Icons.Outlined.PictureAsPdf, null) },
-                        onClick = { newMenu = false; onImportPdf() },
-                    )
-                }
-            }
+            if (stacked) search()
         }
     }
 }
@@ -593,30 +622,53 @@ private fun SelectionBar(
     onRestore: () -> Unit,
     onDeleteForever: () -> Unit,
 ) {
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(4.dp),
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(72.dp)
-            .background(MaterialTheme.colorScheme.primaryContainer)
-            .padding(horizontal = 16.dp),
-    ) {
-        IconButton(onClick = onClear) { Icon(Icons.Outlined.Close, contentDescription = "Clear selection") }
-        Text("$count selected", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
-        if (inTrash) {
-            BarAction("Restore", Icons.Outlined.RestoreFromTrash, onClick = onRestore)
-            BarAction("Delete forever", Icons.Outlined.DeleteForever, onClick = onDeleteForever)
-        } else {
-            BarAction(
-                if (allFavorite) "Unfavorite" else "Favorite",
-                if (allFavorite) Icons.Outlined.Star else Icons.Outlined.StarBorder,
-            ) { onFavorite(!allFavorite) }
-            BarAction("Move", Icons.AutoMirrored.Outlined.DriveFileMove, onClick = onMove)
-            if (count == 1) BarAction("Rename", Icons.Outlined.DriveFileRenameOutline, onClick = onRename)
-            BarAction("Duplicate", Icons.Outlined.ContentCopy, onClick = onDuplicate)
-            BarAction("Export", Icons.Outlined.IosShare, onClick = onExport)
-            BarAction("Delete", Icons.Outlined.Delete, onClick = onDelete)
+    var menu by remember { mutableStateOf(false) }
+    BoxWithConstraints(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.primaryContainer)) {
+        val compact = maxWidth < 1000.dp * LocalDensity.current.fontScale
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+        ) {
+            IconButton(onClick = onClear) { Icon(Icons.Outlined.Close, contentDescription = "Clear selection") }
+            Text("$count selected", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+            if (compact) {
+                Box {
+                    IconButton(onClick = { menu = true }) { Icon(Icons.Outlined.MoreVert, "Selection actions") }
+                    DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                        val action: @Composable (String, ImageVector, () -> Unit) -> Unit = { label, icon, run ->
+                            DropdownMenuItem(text = { Text(label) }, leadingIcon = { Icon(icon, null) },
+                                onClick = { menu = false; run() })
+                        }
+                        if (inTrash) {
+                            action("Restore", Icons.Outlined.RestoreFromTrash, onRestore)
+                            action("Delete forever", Icons.Outlined.DeleteForever, onDeleteForever)
+                        } else {
+                            action(if (allFavorite) "Unfavorite" else "Favorite", if (allFavorite) Icons.Outlined.Star else Icons.Outlined.StarBorder) { onFavorite(!allFavorite) }
+                            action("Move", Icons.AutoMirrored.Outlined.DriveFileMove, onMove)
+                            if (count == 1) action("Rename", Icons.Outlined.DriveFileRenameOutline, onRename)
+                            action("Duplicate", Icons.Outlined.ContentCopy, onDuplicate)
+                            action("Export", Icons.Outlined.IosShare, onExport)
+                            action("Delete", Icons.Outlined.Delete, onDelete)
+                        }
+                    }
+                }
+            } else {
+                if (inTrash) {
+                    BarAction("Restore", Icons.Outlined.RestoreFromTrash, onClick = onRestore)
+                    BarAction("Delete forever", Icons.Outlined.DeleteForever, onClick = onDeleteForever)
+                } else {
+                    BarAction(
+                        if (allFavorite) "Unfavorite" else "Favorite",
+                        if (allFavorite) Icons.Outlined.Star else Icons.Outlined.StarBorder,
+                    ) { onFavorite(!allFavorite) }
+                    BarAction("Move", Icons.AutoMirrored.Outlined.DriveFileMove, onClick = onMove)
+                    if (count == 1) BarAction("Rename", Icons.Outlined.DriveFileRenameOutline, onClick = onRename)
+                    BarAction("Duplicate", Icons.Outlined.ContentCopy, onClick = onDuplicate)
+                    BarAction("Export", Icons.Outlined.IosShare, onClick = onExport)
+                    BarAction("Delete", Icons.Outlined.Delete, onClick = onDelete)
+                }
+            }
         }
     }
 }
@@ -728,7 +780,7 @@ private fun EmptyState(filter: Filter, searching: Boolean, onNew: () -> Unit, on
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
-        modifier = Modifier.fillMaxSize().padding(24.dp),
+        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp),
     ) {
         Text(headline, style = MaterialTheme.typography.titleLarge)
         Spacer(Modifier.height(6.dp))
@@ -761,7 +813,7 @@ private fun NewNotebookDialog(initialPaper: Paper, onDismiss: () -> Unit, onCrea
         onDismissRequest = onDismiss,
         title = { Text("New notebook") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(20.dp)) {
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(20.dp)) {
                 OutlinedTextField(
                     value = name,
                     onValueChange = { name = it },
@@ -794,7 +846,7 @@ private fun MoveDialog(
         onDismissRequest = onDismiss,
         title = { Text("Move to") },
         text = {
-            Column {
+            Column(Modifier.verticalScroll(rememberScrollState())) {
                 MoveRow("No folder", Icons.AutoMirrored.Outlined.LibraryBooks) { onMove(null) }
                 folders.sortedBy { it.name.lowercase() }.forEach { f -> MoveRow(f.name, Icons.Outlined.Folder) { onMove(f.id) } }
                 MoveRow("New folder…", Icons.Outlined.CreateNewFolder) { naming = true }

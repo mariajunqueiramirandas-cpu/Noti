@@ -88,17 +88,17 @@ internal fun EditorToolbar(
             }
         }
         FloatingIsland(Alignment.BottomStart, IntOffset(px(12.dp), px((-12).dp)), floatingWindows) {
-            GlassSurface {
+            GlassSurface(Modifier.widthIn(max = (maxWidth - 24.dp).coerceAtLeast(0.dp))) {
                 Row(Modifier.padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                     pdfPage?.let { (page, count) ->
                         TextButton(onClick = onTogglePages, contentPadding = PaddingValues(horizontal = 12.dp),
-                            modifier = Modifier.heightIn(min = 48.dp).semantics {
+                            modifier = Modifier.weight(1f, fill = false).heightIn(min = 48.dp).semantics {
                                 contentDescription = "Pages"; stateDescription = "Page ${page + 1} of $count"
                             }) {
                             Icon(Icons.Outlined.Layers, null, Modifier.size(18.dp))
                             Spacer(Modifier.width(8.dp))
                             Text("${page + 1} / $count", color = if (pagesOpen) colors.primary else colors.onSurfaceVariant,
-                                style = MaterialTheme.typography.labelMedium)
+                                style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
                         Box(Modifier.width(1.dp).height(16.dp).background(colors.outlineVariant))
                     }
@@ -221,7 +221,7 @@ internal fun ScrollIndicator(fraction: Float, visible: Float, onScroll: (Float) 
     val action by rememberUpdatedState(onScroll)
     val thumbFraction = visible.coerceIn(0.12f, 1f)
     val color = MaterialTheme.colorScheme.onSurfaceVariant
-    Box(modifier.width(24.dp).semantics {
+    Box(modifier.width(48.dp).semantics {
         contentDescription = "Document scroll"
         progressBarRangeInfo = ProgressBarRangeInfo(current, 0f..1f)
         setProgress { action(it.coerceIn(0f, 1f)); true }
@@ -234,7 +234,7 @@ internal fun ScrollIndicator(fraction: Float, visible: Float, onScroll: (Float) 
             action((start + travel / range).coerceIn(0f, 1f))
         }
     }) {
-        Canvas(Modifier.fillMaxSize().padding(horizontal = 10.5.dp, vertical = 8.dp)) {
+        Canvas(Modifier.fillMaxSize().padding(horizontal = 22.5.dp, vertical = 8.dp)) {
             val h = size.height * thumbFraction
             drawRoundRect(color.copy(alpha = 0.4f), topLeft = Offset(0f, (size.height - h) * current),
                 size = androidx.compose.ui.geometry.Size(size.width, h), cornerRadius = androidx.compose.ui.geometry.CornerRadius(size.width))

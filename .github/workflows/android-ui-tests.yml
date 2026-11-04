@@ -37,7 +37,7 @@ jobs:
           export JAVA_HOME="$JAVA_HOME_21_X64"
           ./gradlew :app:testDebugUnitTest --no-daemon --max-workers=2 \
             -Dorg.gradle.jvmargs="-Xmx2g -XX:MaxMetaspaceSize=1g -XX:+UseParallelGC -Dfile.encoding=UTF-8"
-      - name: Upload test reports and rendered editor screenshots
+      - name: Upload test reports and rendered UI screenshots
         if: always()
         uses: actions/upload-artifact@v6
         with:
@@ -45,6 +45,7 @@ jobs:
           path: |
             app/build/reports/tests/testDebugUnitTest/
             app/build/reports/editor-ui/
+            app/build/reports/mobile-ui/
             app/build/test-results/testDebugUnitTest/
           retention-days: 7
           if-no-files-found: warn

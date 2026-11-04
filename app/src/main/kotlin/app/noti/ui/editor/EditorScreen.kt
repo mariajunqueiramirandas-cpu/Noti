@@ -203,7 +203,7 @@ private fun EditorContent(notebook: Notebook, library: LibraryStore, settings: S
     if (choosingPaper) {
         var paper by remember { mutableStateOf(notebook.paper) }
         AlertDialog(onDismissRequest = { choosingPaper = false }, title = { Text("Page paper") },
-            text = { PaperPicker(paper, onChange = { paper = it }, showSize = false) },
+            text = { Column(Modifier.verticalScroll(rememberScrollState())) { PaperPicker(paper, onChange = { paper = it }, showSize = false) } },
             confirmButton = { TextButton(onClick = { library.setPaper(notebook.id, paper); choosingPaper = false }) { Text("Apply") } },
             dismissButton = { TextButton(onClick = { choosingPaper = false }) { Text("Cancel") } })
     }
