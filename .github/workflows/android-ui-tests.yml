@@ -1,0 +1,50 @@
+name: Android UI regressions
+
+on:
+  pull_request:
+    paths:
+      - 'app/**'
+      - 'engine/android/**'
+      - '*.gradle.kts'
+      - 'gradle.properties'
+      - 'gradle/**'
+      - 'gradlew'
+      - '.github/workflows/android-ui-tests.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  android-ui-tests:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - name: Cache Gradle and Robolectric Android runtimes
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+            ~/.m2/repository/org/robolectric
+          key: ui-tests-gradle-${{ runner.os }}-${{ hashFiles('gradle/wrapper/gradle-wrapper.properties', 'gradle.properties', '**/*.gradle.kts') }}
+          restore-keys: |
+            ui-tests-gradle-${{ runner.os }}-
+            gradle-${{ runner.os }}-
+      - name: Run viewport, native-window bounds and Android rendering tests
+        run: |
+          export JAVA_HOME="$JAVA_HOME_21_X64"
+          ./gradlew :app:testDebugUnitTest --no-daemon --max-workers=2 \
+            -Dorg.gradle.jvmargs="-Xmx2g -XX:MaxMetaspaceSize=1g -XX:+UseParallelGC -Dfile.encoding=UTF-8"
+      - name: Upload test reports and rendered editor screenshots
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: android-ui-regressions
+          path: |
+            app/build/reports/tests/testDebugUnitTest/
+            app/build/reports/editor-ui/
+            app/build/test-results/testDebugUnitTest/
+          retention-days: 7
+          if-no-files-found: warn
