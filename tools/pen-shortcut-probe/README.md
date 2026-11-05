@@ -1,13 +1,16 @@
 # Noti pen shortcut probe
 
 An isolated Android test app for **Xiaomi Pad 7 / HyperOS 3.0.303.0**, investigating
-suppression of the original Focus Pen's system hold actions. This is an experiment,
-not a verified workaround. It is not included in Noti or its release build.
+suppression of the original Focus Pen's system hold actions. The note-window
+identity was confirmed to suppress Mi Canvas and deliver writing holds on this
+build. Screenshot protection produced warnings and did not yield usable holds.
+This is not a verified solution for both buttons. It is not included in Noti.
 
 The installed package is `app.noti.penprobe`. No Android permissions are declared;
 no root, ADB, accessibility service, network access, Xiaomi SDK, or global-setting
 changes are used. The app stores its last report in its own private data and copies
-reports only when you press a copy button.
+reports only when you press a copy button. Version 2 also offers an explicit
+user-selected ZIP export of a fixed list of readable system-code files.
 
 Four modes open fresh Activity windows:
 
@@ -17,8 +20,8 @@ Four modes open fresh Activity windows:
 4. Both attributes.
 
 The third mode changes a window attribute, not the installed app ID or UID. The
-hypothesis is that Xiaomi's note exemption trusts that attribute. Its acceptance
-and effects on the target firmware have **not** been tested. Screenshot protection
+hypothesis is that Xiaomi's note exemption trusts that attribute. The user has
+confirmed suppression of Mi Canvas with usable writing holds. Screenshot protection
 also blocks normal system screen capture of the test window; a screenshot error
 message or interrupted pen input counts as a failed workaround.
 
@@ -63,3 +66,22 @@ Rejecting the window attribute is a useful negative result. Do not infer system
 acceptance from the displayed requested attribute.
 
 See [the investigation](../../docs/XIAOMI_PEN_SHORTCUTS.md) for evidence and limits.
+
+## Export exact firmware without ADB
+
+In v2, open **Export pen firmware → Save firmware ZIP** and choose a destination.
+Keep the pen connected. Attach the resulting `noti-pen-firmware.zip` in the chat.
+There is no need to repeat the four hold modes for this export.
+
+The ZIP includes the build fingerprint, pen-device keyboard types/source masks,
+readable `miui-services.jar` / `miui-framework.jar` files, and code/manifest entries
+from `com.miui.screenshot` and `com.miui.securitycore` when available. It does not
+collect notes, accounts, personal files, settings or other apps' data. Nothing is
+uploaded automatically. Package visibility is declared for only those two system
+packages; no Android permissions are declared.
+
+Code payload is bounded to 24 MiB before compression. The report records hashes,
+read failures and size-budget skips; the ZIP can be incomplete or report-only on
+firmware that denies reads. Source-read failures are distinct from destination
+write failures, which are reported as an unsuccessful export. No system binaries
+are committed to this repository or published in the build artifact.

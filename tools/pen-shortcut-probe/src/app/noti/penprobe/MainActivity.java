@@ -43,6 +43,10 @@ public final class MainActivity extends Activity {
             button.setOnClickListener(v -> startActivity(new Intent(this, ProbeActivity.class).putExtra("mode", mode)));
             content.addView(button);
         }
+        Button export = new Button(this);
+        export.setText("Export pen firmware");
+        export.setOnClickListener(v -> startActivity(new Intent(this, FirmwareExportActivity.class)));
+        content.addView(export);
         Button lastReport = new Button(this);
         lastReport.setText("Copy last test / failure report");
         lastReport.setOnClickListener(v -> {

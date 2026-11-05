@@ -46,7 +46,7 @@ public final class ProbeActivity extends Activity {
         if ((mode & 1) != 0) attrs.flags |= WindowManager.LayoutParams.FLAG_SECURE;
         getWindow().setAttributes(attrs);
 
-        header = "Noti Pen Probe v1\n" + MainActivity.MODES[mode]
+        header = "Noti Pen Probe v2\n" + MainActivity.MODES[mode]
             + "\nDevice: " + Build.MANUFACTURER + " " + Build.MODEL
             + "\nAndroid: " + Build.VERSION.RELEASE + " / API " + Build.VERSION.SDK_INT
             + "\nBuild: " + Build.DISPLAY + "\nFingerprint: " + Build.FINGERPRINT
@@ -134,6 +134,9 @@ public final class ProbeActivity extends Activity {
             record("KEY " + action + " " + code
                 + " (" + KeyEvent.keyCodeToString(code) + ") device=" + event.getDeviceId()
                 + " name=" + name + " source=0x" + Integer.toHexString(event.getSource())
+                + " keyboardType=" + (device == null ? -1 : device.getKeyboardType())
+                + " fullKeyboard=" + (device != null && device.supportsSource(InputDevice.SOURCE_KEYBOARD)
+                    && device.getKeyboardType() == InputDevice.KEYBOARD_TYPE_ALPHABETIC)
                 + " held=" + (event.getEventTime() - event.getDownTime()) + "ms"
                 + " repeat=" + event.getRepeatCount() + " canceled=" + event.isCanceled());
         }
