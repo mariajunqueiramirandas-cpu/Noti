@@ -284,7 +284,7 @@ private fun PenButtonsSection(settings: SettingsStore) {
             ButtonActionRow("Focus button click", settings.focusButtonAction) { settings.focusButtonAction = it }
             Text("The Focus button normally stays with Xiaomi's pointer and camera controls. An assigned action works only if Xiaomi sends the press to Noti.",
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            SwitchRow("Hold to erase or select", "Hold writing to erase, or screenshot to lasso. Your selected tool returns on the next stroke after release.",
+            SwitchRow("Hold to erase", "Hold the writing button to erase. Your selected tool returns on the next stroke after release. HyperOS reserves the screenshot button's hold, so it stays click-only.",
                 settings.penButtonHolds) { settings.penButtonHolds = it }
             SwitchRow("Xiaomi button compatibility", "Recognize pen buttons sent as Page Down and Page Up. Keyboard page navigation stays available.",
                 settings.penLegacyKeys) { settings.penLegacyKeys = it }
@@ -292,10 +292,10 @@ private fun PenButtonsSection(settings: SettingsStore) {
                 settings.penSwapLegacyKeys) { settings.penSwapLegacyKeys = it }
             HorizontalDivider()
             Text("Test click and hold", style = MaterialTheme.typography.titleSmall)
-            Text("Click each button, then hold it for two seconds, both away from and near the screen. " +
-                "If a click is reported before you release a held button, your tablet exposes clicks only; use toggle shortcuts. " +
+            Text("Click each button, then hold the writing button for two seconds, both away from and near the screen. " +
+                "If a click is reported before you release the held button, your tablet exposes clicks only; use toggle shortcuts. " +
                 "A long press or use while writing does not also trigger the click action.", style = MaterialTheme.typography.bodyMedium)
-            Text("The scratch area tests temporary erase/select. Click results appear below without changing your notebook or selected tool.",
+            Text("The scratch area tests temporary erase. Click results appear below without changing your notebook or selected tool.",
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             TextButton(onClick = { events = emptyList() }) { Text("Clear button history") }
             if (events.isEmpty()) Text("Waiting for pen button input…", style = MaterialTheme.typography.bodySmall)

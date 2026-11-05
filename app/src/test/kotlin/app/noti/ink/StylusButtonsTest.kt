@@ -106,17 +106,18 @@ class StylusButtonsTest {
         assertEquals(0, buttons.flags(7, 0, true))
     }
 
-    @Test fun motionOnlyStylusRetainsTemporaryToolsWithoutInventingClicks() {
-        assertEquals(NotiInk.FLAG_BUTTON_SECONDARY, buttons.flags(7, MotionEvent.BUTTON_STYLUS_SECONDARY, true))
+    @Test fun holdsAreWritingButtonOnly() {
+        assertEquals(0, buttons.flags(7, MotionEvent.BUTTON_STYLUS_SECONDARY, true))
+        assertEquals(NotiInk.FLAG_BUTTON_PRIMARY, buttons.flags(7, MotionEvent.BUTTON_STYLUS_PRIMARY, true))
         assertEquals(0, buttons.flags(7, 0, true))
         assertTrue(clicks.isEmpty())
     }
 
     @Test fun simultaneousButtonsReleaseIndependently() {
         down(); down(PenButton.Secondary)
-        assertEquals(12, buttons.flags(7, 0, true))
+        assertEquals(NotiInk.FLAG_BUTTON_PRIMARY, buttons.flags(7, 0, true))
         up()
-        assertEquals(8, buttons.flags(7, 0, true))
+        assertEquals(0, buttons.flags(7, 0, true))
         up(PenButton.Secondary)
         assertEquals(0, buttons.flags(7, 0, true))
         assertTrue(clicks.isEmpty())
@@ -132,11 +133,11 @@ class StylusButtonsTest {
 
     @Test fun multiplePressedDevicesDoNotGuessAnUnrelatedDigitizer() {
         down(device = 7); down(PenButton.Secondary, device = 8)
-        assertEquals(4, buttons.flags(7, 0, false))
-        assertEquals(8, buttons.flags(8, 0, false))
+        assertEquals(NotiInk.FLAG_BUTTON_PRIMARY, buttons.flags(7, 0, false))
+        assertEquals(0, buttons.flags(8, 0, false))
         assertEquals(0, buttons.flags(9, 0, false))
         buttons.removeDevice(8)
-        assertEquals(4, buttons.flags(9, 0, false))
+        assertEquals(NotiInk.FLAG_BUTTON_PRIMARY, buttons.flags(9, 0, false))
     }
 
     @Test fun focusClickDoesNotMasqueradeAsAnEraserOrLasso() {

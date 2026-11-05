@@ -15,12 +15,16 @@ next quick color, undo or redo. Focus defaults to no action and is passed to the
 Assigning Focus only captures Android's tertiary stylus code if the OS actually delivers it.
 Unknown vendor key codes are not guessed or captured.
 
-With **Hold to erase or select** enabled, a real held writing button temporarily erases; a real held
-screenshot button temporarily selects. A held key or stylus motion-button flag applies to strokes
-started while pressed. The native engine latches the tool at nib-down, so release never turns half
-an eraser gesture into ink: the selected tool returns on the next stroke. Both held together give
-eraser priority. Using a held button for ink suppresses its click, even if released quickly.
+With **Hold to erase** enabled, a real held writing button temporarily erases. A held key or stylus
+motion flag applies to strokes started while pressed. The native engine latches the tool at
+nib-down, so release never turns half an eraser gesture into ink: the selected tool returns on the
+next stroke. Using a held button for ink suppresses its click, even if released quickly.
 Long presses without ink also suppress clicks, using Android's configured long-press timeout.
+
+Holds are supported **only on the writing button**. HyperOS reserves the screenshot button's hold
+for its own partial-screenshot editor with no package gate (see below), so a held screenshot
+button never reaches Noti on the target firmware and Noti does not pretend otherwise; the
+screenshot button stays click-only.
 
 Turn holds off to keep only key click shortcuts. Turn **Pen shortcuts** off to pass keys through
 and disable button-based tool overrides; the physical eraser tip remains available.
@@ -39,7 +43,7 @@ Supported inputs:
 | Android key codes 308 / 309 | Primary (writing) / secondary (screenshot) |
 | Android key code 310 | Focus, only when assigned |
 | Page Down / Page Up (93 / 92) from a stylus source or a pen-named device | Xiaomi writing / screenshot compatibility mapping |
-| `BUTTON_STYLUS_PRIMARY` / `BUTTON_STYLUS_SECONDARY` in pen motion events | Temporary erase / lasso; no additional click |
+| `BUTTON_STYLUS_PRIMARY` in pen motion events | Temporary erase; no additional click |
 
 The Xiaomi mapping is a compatibility default, not a guarantee for every firmware. **Swap Xiaomi
 button order** reverses it; **Xiaomi button compatibility** disables that path. Page keys from
@@ -79,7 +83,7 @@ note mask for Page Down, partial screenshot for Page Up). Two consequences follo
   with no signature check. Package names are first come, first served, and `com.miui.pen.demo`
   (Xiaomi's pen demo app) is not preinstalled on retail firmware. A sideloaded Noti built
   under that identity receives every pen key immediately with real down/up timing: holds
-  drive hold-to-erase and hold-to-lasso through the normal key path, long presses suppress
+  drive hold-to-erase through the normal key path, long presses suppress
   clicks, clicks lose the 400 ms delay, and HyperOS's quick-note mask no longer appears while
   Noti is focused.
 
@@ -112,11 +116,13 @@ There was no attached Android device during implementation. On the target tablet
 
 1. Open **Settings → Pen buttons**. Click writing and screenshot once each, near the screen and
    outside hover range. Confirm the names; swap the compatibility order if reversed.
-2. Hold each button for two seconds. A down report that remains until physical release followed
-   by a long-press report demonstrates key hold timing. An immediate click while still holding
-   means that key stream exposes clicks only. Motion state reports may independently expose holds.
-3. Draw a line in the scratch area. Hold writing before touching it to erase; hold screenshot
-   before tracing a lasso. Check away/near-screen transitions while keeping the button pressed.
+2. Hold the writing button for two seconds. A down report that remains until physical release
+   followed by a long-press report demonstrates key hold timing. An immediate click while still
+   holding means that key stream exposes clicks only. Motion state reports may independently
+   expose holds. Holding the screenshot button is expected to open HyperOS's partial-screenshot
+   editor instead (its hold is OS-reserved; Noti supports writing-button holds only).
+3. Draw a line in the scratch area. Hold writing before touching it to erase. Check
+   away/near-screen transitions while keeping the button pressed.
 4. In a notebook, verify click toggles, persistent return to pen/highlighter, undo/redo assignments,
    and that a real hold used for ink does not also toggle on release. Check both drawing tools.
 5. While holding a button, open settings, leave/reopen the editor, switch apps, rotate, disconnect

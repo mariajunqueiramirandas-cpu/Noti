@@ -106,23 +106,22 @@ internal class StylusButtons(
             "screenshot ${if (bits and MotionEvent.BUTTON_STYLUS_SECONDARY != 0) "down" else "up"}")
     }
 
-    /** No allocations on the pen sample path. The native engine latches a tool at nib-down. */
+    /**
+     * No allocations on the pen sample path. The native engine latches a tool at nib-down.
+     * Holds are writing-button only: HyperOS reserves the screenshot button's hold for its
+     * own partial-screenshot editor with no package gate, so it never reaches the app.
+     */
     fun flags(device: Int, buttons: Int, contact: Boolean): Int {
         if (!options.enabled || !options.holds) return 0
         var flags = 0
         if (buttons and MotionEvent.BUTTON_STYLUS_PRIMARY != 0) flags = flags or NotiInk.FLAG_BUTTON_PRIMARY
-        if (buttons and MotionEvent.BUTTON_STYLUS_SECONDARY != 0) flags = flags or NotiInk.FLAG_BUTTON_SECONDARY
         // Xiaomi can expose the Bluetooth keys and digitizer as separate devices.
         // With one pressed pen the association is unambiguous. Never guess when
         // multiple key devices are pressed and none matches the digitizer.
         val states = presses[device] ?: if (presses.size() == 1) presses.valueAt(0) else return flags
-        for (index in 0..1) {
-            val button = PenButton.entries[index]
-            val press = states[button.ordinal] ?: continue
-            if (button.flag == 0) continue
-            flags = flags or button.flag
-            if (contact) press.usedForInk = true
-        }
+        val press = states[PenButton.Primary.ordinal] ?: return flags
+        flags = flags or NotiInk.FLAG_BUTTON_PRIMARY
+        if (contact) press.usedForInk = true
         return flags
     }
 
