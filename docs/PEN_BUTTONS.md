@@ -58,6 +58,53 @@ Only the active canvas receives key shortcuts. Settings scratch canvases superse
 editor, including settings opened in a dialog; dialogs and background windows cannot edit a hidden
 notebook through its shortcuts. The tester never invokes notebook actions or changes the selected tool.
 
+## Suppressing HyperOS's reserved hold actions
+
+HyperOS 3.0.303.0 on the Xiaomi Pad 7 intercepts Focus Pen keys in
+`MiuiStylusShortcutManager`, hooked from `PhoneWindowManager.interceptKeyBeforeQueueing` —
+the first policy gate in Android's `InputDispatcher::notifyKey`. On a stylus key down it
+posts a hardcoded 380 ms timer and holds the key back from the focused app for up to 400 ms;
+if the key is still down at 380 ms it consumes the event and fires the system action (quick
+note mask for Page Down, partial screenshot for Page Up). Two consequences follow:
+
+- **An accessibility key filter cannot stop this.** Accessibility key filtering
+  (`FLAG_REQUEST_FILTER_KEY_EVENTS`) runs in the InputFilter, which the dispatcher consults
+  *after* `interceptKeyBeforeQueueing`. The timer is already armed by the time the filter
+  sees the event, and nothing an app can reach cancels it. Remapper-style accessibility
+  services only ever receive the short-press key that HyperOS dispatches on an early release
+  — which Noti already handles as a click.
+- **The only app-reachable bypass is a hardcoded package allowlist.** The quick-note path
+  skips interception entirely when the focused window's owning package is one of
+  `com.miui.notes`, `com.miui.pen.demo` or `com.miui.creation` — a plain string comparison
+  with no signature check. Package names are first come, first served, and `com.miui.pen.demo`
+  (Xiaomi's pen demo app) is not preinstalled on retail firmware. A sideloaded Noti built
+  under that identity receives every pen key immediately with real down/up timing: holds
+  drive hold-to-erase and hold-to-lasso through the normal key path, long presses suppress
+  clicks, clicks lose the 400 ms delay, and HyperOS's quick-note mask no longer appears while
+  Noti is focused.
+
+Build the allowlisted APK with:
+
+```
+./gradlew assembleRelease -Pnoti.penAllowlist=true
+```
+
+The default build keeps the `app.noti` identity. Caveats of the allowlisted build:
+
+- A changed application id is a new Android identity: it installs alongside the regular
+  build without inheriting its data, and Google Play will never accept that package name.
+- If a HyperOS update or GetApps ever installs the real `com.miui.pen.demo`, one of the two
+  apps will refuse to update (signature mismatch). The other two allowlist entries are
+  preinstalled system apps, so there is no third non-root fallback identity.
+- The **screenshot button's hold action has no package gate** in 3.0.303.0: holding the upper
+  button for 380 ms still opens the partial-screenshot editor even inside allowlisted
+  packages. Its short presses keep working. Suppressing it without root or adb requires
+  patching `miui-services.jar` (see the XDA guide in Sources), which Noti will not do.
+- Game Turbo's per-app boost (`gb_boosting`) is checked before the stylus manager in
+  `interceptKeyBeforeQueueing`; whether an active game session passes stylus keys through to
+  the focused app is unverified on 3.0.303.0. Test it with the default build before adopting
+  the allowlisted identity.
+
 ## Verify on the Xiaomi Pad 7
 
 Automated tests validate input interpretation and native tool behavior, not the tablet's firmware.
@@ -76,6 +123,10 @@ There was no attached Android device during implementation. On the target tablet
    the pen, and turn shortcuts off/on. No tool should remain temporarily held after canceled input.
 6. Verify ordinary Bluetooth keyboard Page Up/Down, and Xiaomi's unassigned Focus button. OS-reserved
    functions may still take precedence; absence of an event is not evidence of a physical pen failure.
+7. With an allowlisted build (`-Pnoti.penAllowlist=true`), hold the writing button for two seconds in
+   a notebook: no quick-note mask may appear, and hold-to-erase must apply to strokes started while
+   held. Hold the screenshot button for two seconds: the partial-screenshot editor is still expected
+   (no package gate on that path). Confirm clicks fire without the previous ~400 ms delay.
 
 For lower-level investigation, Android's `getevent` utility can show kernel input events when device
 permissions allow it. An app-level event trace is still needed to establish what Noti can receive.
@@ -87,6 +138,8 @@ permissions allow it. An app-level event trace is still needed to establish what
 - [Android MotionEvent button state](https://developer.android.com/reference/android/view/MotionEvent#getButtonState())
 - [Drawpile/Krita developer discussion of Xiaomi instant-release key behavior](https://krita-artists.org/t/my-styluss-side-button-is-not-recognised-by-krita/176767/7)
 - [Android getevent](https://source.android.com/docs/core/interaction/input/getevent)
+- [XDA: patching miui-services.jar to disable native stylus button overlays on HyperOS](https://xdaforums.com/t/guide-disable-native-stylus-button-overlays-on-hyperos-2-quick-note-screenshot.4795437/)
+- [mi_penbridge: notes on MiuiStylusShortcutManager's hardcoded 380 ms timers and isXiaomiStylus gates](https://github.com/kquieter-debug/mi_penbridge)
 
 Xiaomi's [touch-button SDK documentation](https://dev.mi.com/xiaomihyperos/documentation/detail?pId=1882)
 assigns its newer gesture integration to **Focus Pen Pro**. It does not establish raw held-button
