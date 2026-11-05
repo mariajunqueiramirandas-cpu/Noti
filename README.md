@@ -1,10 +1,20 @@
 # Noti
 
-The lowest-latency PDF annotator and note-taking app for the **Xiaomi Pad 7 + Xiaomi Focus Pen**. It should feel like writing on paper.
+**Little ideas welcome.** A quiet home for notes, PDFs and happy scribbles.
+
+Built for low-latency handwriting on the **Xiaomi Pad 7 + Xiaomi Focus Pen**. It should feel like writing on paper.
 
 - 📄 [Low-latency ink engine plan](docs/LOW_LATENCY_PLAN.md): hardware analysis, latency budget, engine architecture, measurement lab, and roadmap.
 - ⚙️ [Native ink engine + predictor (C++20)](engine/README.md): lock-free input path, front-buffer GL renderer, tuned Kalman predictor, latency probe, benchmarks.
 - ✋ [Palm rejection](docs/PALM_REJECTION.md): sequential evidence per contact (pen state, a learned model of your hand, pen coupling, contact shape, clusters), replayed gestures, speculative finger ink, measured by `palm_bench`.
+
+## A little personality
+
+Noti’s shared visual system pairs warm paper and ink with lilac, butter, peach and mint accents,
+rounded Nunito typography, and Doti, a cheerful little ink companion. The library, settings, dialogs,
+loading state and launcher share the identity; the writing canvas keeps its quiet radial controls.
+See the [brand guide and asset notes](docs/branding/README.md). Nunito is bundled under the SIL Open Font License,
+available in Settings → About → Typeface license.
 
 ## Android app & releases
 

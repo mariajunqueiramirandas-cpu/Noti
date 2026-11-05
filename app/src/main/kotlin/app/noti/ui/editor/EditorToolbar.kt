@@ -27,6 +27,7 @@ import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
 import app.noti.data.SettingsStore
 import app.noti.data.Tool
+import app.noti.ui.brand.DotiMascot
 import kotlin.math.roundToInt
 
 /** Compact controls in sub-panel windows, above the native ink input panel. */
@@ -56,7 +57,9 @@ internal fun EditorToolbar(
             // A single fine rule keeps the document as the dominant surface.
             Column(Modifier.width(maxWidth).background(colors.surface.copy(alpha = 0.97f))) {
                 Row(Modifier.padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    ToolbarButton(Icons.Outlined.GridView, "Back to library", onBack)
+                    IconButton(onClick = onBack, modifier = Modifier.size(48.dp)) {
+                        DotiMascot(Modifier.size(30.dp), description = "Back to library")
+                    }
                     Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
                         Text(title, Modifier.weight(1f, fill = false).heightIn(min = 48.dp).clip(RoundedCornerShape(4.dp))
                             .clickable(onClick = onRename).wrapContentHeight().padding(vertical = 4.dp),

@@ -66,6 +66,7 @@ fun TextInputDialog(
                 value = value,
                 onValueChange = { value = it },
                 singleLine = true,
+                shape = MaterialTheme.shapes.small,
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
                 keyboardActions = KeyboardActions(onDone = { onConfirm(value.text.trim()) }),
                 modifier = Modifier.fillMaxWidth().focusRequester(focus),

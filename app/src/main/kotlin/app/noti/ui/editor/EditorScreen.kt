@@ -32,6 +32,7 @@ import app.noti.ink.InkLayer
 import app.noti.pdf.DocumentExport
 import app.noti.pdf.PdfDocument
 import app.noti.ui.common.*
+import app.noti.ui.brand.DotiMascot
 import app.noti.ui.settings.SettingsScreen
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -44,7 +45,15 @@ fun EditorScreen(notebook: Notebook, library: LibraryStore, settings: SettingsSt
     }
     val result = opened
     if (result == null) {
-        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+        Surface(color = MaterialTheme.colorScheme.background) {
+            Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+                DotiMascot(Modifier.size(80.dp))
+                Spacer(Modifier.height(16.dp))
+                Text("Opening your page…", style = MaterialTheme.typography.bodyMedium)
+                Spacer(Modifier.height(12.dp))
+                CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+            }
+        }
     } else if (result.isFailure) {
         AlertDialog(onDismissRequest = onBack, title = { Text("Couldn't open saved ink") },
             text = { Text("The saved file has been kept. Return to the library and try again.") },
