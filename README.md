@@ -10,9 +10,10 @@ Built for low-latency handwriting on the **Xiaomi Pad 7 + Xiaomi Focus Pen**. It
 
 ## A little personality
 
-Noti’s shared visual system pairs warm paper and ink with lilac, butter, peach and mint accents,
-rounded Nunito typography, and Doti, a cheerful little ink companion. The library, settings, dialogs,
-loading state and launcher share the identity; the writing canvas keeps its quiet radial controls.
+Noti looks like a page on a desk at dusk: a soft greige desk, content resting on a lighter rounded sheet,
+aubergine-charcoal ink, one plum accent shared with Doti, and honey only for favorite bookmarks. Rounded Nunito
+typography in calm weights, pill-shaped actions, and Doti, a cheerful little ink companion, in empty states and About.
+The writing canvas keeps everything quiet except its radial tool dial.
 See the [brand guide and asset notes](docs/branding/README.md). Nunito is bundled under the SIL Open Font License,
 available in Settings → About → Typeface license.
 
@@ -21,24 +22,29 @@ available in Settings → About → Typeface license.
 `app/` is the Android app (Gradle, AGP 9). It builds `engine/` through CMake and compiles the ink Kotlin sources
 from `engine/android/kotlin`. Only arm64 and Android 13+ are supported.
 
-The UI is Jetpack Compose (Material 3): library, editor, settings. Phone windows, including the Poco X8 Pro, use a navigation drawer,
+The UI is Jetpack Compose (Material 3): library, editor, settings. On tablets the library and settings put navigation
+on the desk and content on a rounded sheet; notebooks are drawn as their own first page with a colored spine and,
+for favorites, a honey bookmark. Phone windows, including the Poco X8 Pro, use a navigation drawer,
 a full-width search field, a compact selection menu and an adaptive notebook grid. Settings use a section menu
 and stack the stationary pen/palm/button test canvas below scrollable controls when space is narrow. Paper choices wrap,
 and dialogs scroll on short screens or with larger text. Layouts follow Android's available dp size rather than
 physical screen pixels, so display scaling, rotation and split-screen are supported.
 
-The editor is a full canvas with a thin, neutral header and a persistent radial tool dial at the upper left.
-The selected tool occupies a contrasting sector of the ring. The other sectors select pen, highlighter,
-stroke eraser, lasso, three width presets and the next saved color. Tap the central swatch for the full
-color, width and pressure controls; drag the center to reposition the dial. Tap Collapse beneath the
-ring to shrink it to a 56 dp draggable tool button, then tap that button to expand it around the same center.
+The editor is a full canvas with a small pill header and a persistent radial tool dial at the upper left.
+The dial has ten rounded segments in three groups, read clockwise: pen, highlighter, stroke eraser and lasso across
+the top; the three saved colors down the right; the three width presets back up the left. Every preset is one tap,
+and the whole segment responds, not just its icon. The active tool is a plum segment that glides to the next tool
+when you switch. The hub is a little page that previews the stroke you'll get in its real color and relative width
+(or shows the eraser/lasso and the selection count). Tap the hub for the full color, width and pressure controls;
+drag it to reposition the dial. Tap the chevron beneath the ring to shrink it to a 56 dp draggable tool button
+with a bead of the current color, then tap that button to expand it around the same center.
 The chosen tool stays active while collapsed. More also offers Collapse tools / Expand tools.
 Floating controls use sub-panel popup windows above the native ink input panel, so taps reach them
 without changing the low-latency drawing path (`ui/common/InkCanvas.kt`). Export PDF, Page paper and Settings
 are in More. Compact floating controls group notebook navigation and editing history at the top;
 a single bottom dock groups the page counter and live zoom. Tablet layouts offer a direct full-screen button.
 App buttons, chips, menus and dialogs share the action styles and explicit-width, scrollable dialog frame
-in `ui/common/Controls.kt`. Primary actions are plum, secondary actions outlined, quiet actions neutral,
+in `ui/common/Controls.kt`. Actions are pills: primary plum, secondary outlined, quiet neutral,
 and permanent deletion uses the destructive role. Dialog titles and actions stay visible while forms scroll.
 
 **Pages**: notebooks and imported PDFs scroll vertically as a continuous document. Drag to scroll,
@@ -47,7 +53,7 @@ The page counter, proportional scroll thumb and zoom percentage follow the live 
 Only visible pages are rendered; PDF neighbours are prefetched and zoomed detail is rendered after scrolling settles.
 Ink uses canonical page coordinates, so scrolling, zooming, rotation and reopening do not move annotations.
 
-**Writing**: the radial dial offers the pen, highlighter, stroke eraser and lasso, with quick width/color presets.
+**Writing**: the radial dial offers the pen, highlighter, stroke eraser and lasso, with direct quick width and color presets.
 Save status is in More, with a visible retry control when saving fails. Circle whole strokes with the lasso, then drag inside
 the selection to move them. Click the Focus Pen's writing button to toggle the eraser, or its screenshot button
 to toggle the lasso; click again to return to your last pen/highlighter. Hold the writing button to erase

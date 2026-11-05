@@ -194,10 +194,10 @@ private fun EditorContent(notebook: Notebook, library: LibraryStore, settings: S
             }
             if (pagesOpen && !fullScreen) {
                 androidx.compose.ui.window.Popup(alignment = Alignment.TopStart,
-                    offset = with(androidx.compose.ui.platform.LocalDensity.current) { androidx.compose.ui.unit.IntOffset(12.dp.roundToPx(), 72.dp.roundToPx()) },
+                    offset = with(androidx.compose.ui.platform.LocalDensity.current) { androidx.compose.ui.unit.IntOffset(2.dp.roundToPx(), 62.dp.roundToPx()) },
                     properties = androidx.compose.ui.window.PopupProperties(focusable = true),
                     onDismissRequest = { pagesOpen = false }) {
-                    GlassSurface(Modifier.fillMaxHeight(0.7f), androidx.compose.foundation.shape.RoundedCornerShape(24.dp)) {
+                    GlassSurface(Modifier.padding(10.dp).fillMaxHeight(0.7f), MaterialTheme.shapes.extraLarge) {
                         if (pdf != null) {
                             PdfPagesPanel(pdf, pages.page, pages::goTo, onClose = { pagesOpen = false })
                         } else {

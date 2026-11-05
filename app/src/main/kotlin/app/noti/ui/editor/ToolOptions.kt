@@ -20,9 +20,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.Palette
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
@@ -47,6 +45,7 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import app.noti.data.SettingsStore
 import app.noti.data.Tool
@@ -82,10 +81,11 @@ internal fun ToolOptionsPopup(settings: SettingsStore, onDismiss: () -> Unit) {
     // Material's anchored menu stays inside the visible window and scrolls when
     // font scaling or a short landscape display leaves less vertical room.
     DropdownMenu(expanded = true, onDismissRequest = onDismiss, containerColor = Color.Transparent, shadowElevation = 0.dp) {
-        GlassSurface(modifier = Modifier.width(320.dp), shape = MaterialTheme.shapes.large) {
-            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text(settings.tool.label, style = MaterialTheme.typography.titleSmall)
-                Row {
+        GlassSurface(modifier = Modifier.padding(horizontal = 10.dp).width(320.dp), shape = MaterialTheme.shapes.extraLarge) {
+            Column(Modifier.padding(start = 20.dp, end = 20.dp, top = 18.dp, bottom = 16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                Text(settings.tool.label, style = MaterialTheme.typography.titleMedium)
+                Row(Modifier.fillMaxWidth().clip(CircleShape).background(MaterialTheme.colorScheme.surfaceContainer)
+                    .padding(horizontal = 4.dp), horizontalArrangement = Arrangement.SpaceBetween) {
                     slots.colors.forEachIndexed { index, color ->
                         PresetSlot("Color ${index + 1}", index == slots.color,
                             onClick = { update(slots.copy(color = index)) }) {
@@ -114,19 +114,19 @@ internal fun ToolOptionsPopup(settings: SettingsStore, onDismiss: () -> Unit) {
                         modifier = Modifier
                             .size(36.dp)
                             .clip(CircleShape)
-                            .background(if (custom) MaterialTheme.colorScheme.primaryContainer else Color.Transparent)
+                            .background(if (custom) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.surfaceContainer)
                             .clickable { custom = !custom },
                     ) {
-                        Icon(Icons.Outlined.Palette, contentDescription = "Custom color")
+                        Icon(Icons.Outlined.Palette, contentDescription = "Custom color", modifier = Modifier.size(20.dp),
+                            tint = if (custom) MaterialTheme.colorScheme.surface else MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
                 if (custom) {
                     CustomColor(Color(slots.currentColor)) { update(slots.withColor(it.toArgb().toLong() and 0xFFFFFFFF)) }
                 }
 
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("Width", style = MaterialTheme.typography.labelLarge, modifier = Modifier.width(56.dp))
+                    Text("Width", style = MaterialTheme.typography.labelLarge, modifier = Modifier.width(52.dp))
                     Slider(
                         value = slots.currentWidth.coerceIn(widthRange),
                         onValueChange = { update(slots.withWidth((it * 2).roundToInt() / 2f)) },
@@ -136,7 +136,9 @@ internal fun ToolOptionsPopup(settings: SettingsStore, onDismiss: () -> Unit) {
                     Text(
                         "%.1f".format(slots.currentWidth),
                         style = MaterialTheme.typography.labelMedium,
-                        modifier = Modifier.width(40.dp).padding(start = 8.dp),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.End,
+                        modifier = Modifier.width(40.dp),
                     )
                 }
                 StrokePreview(
@@ -145,7 +147,7 @@ internal fun ToolOptionsPopup(settings: SettingsStore, onDismiss: () -> Unit) {
                 )
                 if (!highlighter) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("Pressure sensitivity", modifier = Modifier.weight(1f))
+                        Text("Pressure sensitivity", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
                         Switch(checked = settings.pressureOn, onCheckedChange = { settings.pressureOn = it })
                     }
                 }
@@ -156,8 +158,9 @@ internal fun ToolOptionsPopup(settings: SettingsStore, onDismiss: () -> Unit) {
 
 @Composable
 private fun PresetSlot(label: String, active: Boolean, onClick: () -> Unit, content: @Composable () -> Unit) {
-    Box(Modifier.size(48.dp).clip(CircleShape)
-        .background(if (active) MaterialTheme.colorScheme.primary.copy(alpha = 0.1f) else Color.Transparent)
+    Box(Modifier.size(44.dp).padding(3.dp).clip(CircleShape)
+        .background(if (active) MaterialTheme.colorScheme.surface else Color.Transparent)
+        .border(if (active) 1.5.dp else 0.dp, if (active) MaterialTheme.colorScheme.onSurface else Color.Transparent, CircleShape)
         .clickable(onClick = onClick).semantics { contentDescription = label; selected = active },
         contentAlignment = Alignment.Center) { content() }
 }
@@ -172,19 +175,13 @@ private fun ColorDot(color: Color, selected: Boolean, onClick: () -> Unit) {
         modifier = Modifier
             .size(36.dp)
             .clip(CircleShape)
+            .border(if (selected) 2.dp else 0.dp, if (selected) MaterialTheme.colorScheme.onSurface else Color.Transparent, CircleShape)
+            .clickable(onClick = onClick)
+            .padding(if (selected) 5.dp else 2.dp)
+            .clip(CircleShape)
             .background(color)
-            .border(
-                if (selected) 2.dp else 1.dp,
-                if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline.copy(alpha = 0.5f),
-                CircleShape,
-            )
-            .clickable(onClick = onClick),
-    ) {
-        if (selected) {
-            val light = (color.red * 0.3f + color.green * 0.59f + color.blue * 0.11f) > 0.6f
-            Icon(Icons.Outlined.Check, null, tint = if (light) Color.Black else Color.White, modifier = Modifier.size(18.dp))
-        }
-    }
+            .border(0.75.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.4f), CircleShape),
+    ) {}
 }
 
 /**
@@ -230,8 +227,9 @@ private fun StrokePreview(color: Color, widthPx: Float) {
         Modifier
             .fillMaxWidth()
             .height(56.dp)
-            .clip(MaterialTheme.shapes.small)
-            .background(Color.White),
+            .clip(MaterialTheme.shapes.medium)
+            .background(Color.White)
+            .border(0.5.dp, MaterialTheme.colorScheme.outlineVariant, MaterialTheme.shapes.medium),
     ) {
         val path = Path()
         val pad = 24f + widthPx

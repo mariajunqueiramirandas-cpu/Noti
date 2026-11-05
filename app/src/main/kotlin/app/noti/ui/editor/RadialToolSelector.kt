@@ -1,36 +1,38 @@
 package app.noti.ui.editor
 
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ExpandLess
-import androidx.compose.material.icons.outlined.ExpandMore
-import app.noti.ui.common.NotiTextButton
-import app.noti.ui.common.NotiIconButton
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.AbsoluteAlignment
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.*
-import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.*
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupPositionProvider
@@ -38,19 +40,43 @@ import androidx.compose.ui.window.PopupProperties
 import app.noti.data.SettingsStore
 import app.noti.data.Tool
 import app.noti.data.ToolSlots
-import java.util.Locale
+import app.noti.ui.theme.Noti
+import app.noti.ui.theme.NotiBrand
+import kotlin.math.PI
 import kotlin.math.atan2
-import kotlin.math.hypot
-import kotlin.math.floor
 import kotlin.math.cos
+import kotlin.math.floor
+import kotlin.math.hypot
 import kotlin.math.roundToInt
 import kotlin.math.sin
 
-private val DialSize = 192.dp
-private const val DialCenter = 96f
-private const val TargetRadius = 72f
+/*
+ * Geometry, in dp. Ten 36° segments in three groups, read clockwise from the upper left:
+ *   tools   (pen, highlighter, eraser, lasso) across the top,   centred at -144…-36°
+ *   colors  (the three quick color slots) down the right,       centred at 0…72°
+ *   widths  (the three quick widths) back up the left,          centred at 108…180°
+ * Wider gaps separate the groups. The hub is a small page that previews the brush.
+ */
+private val DialSize = 208.dp
+private const val DialCenter = 104f
+private const val RingInner = 52f
+private const val RingOuter = 100f
+private const val TargetRadius = 76f
+private const val TargetSize = 36f
+private const val HubSize = 84f
+private const val SegmentSweep = 36f
+private const val FirstSegment = -144f
+private const val CollapsedSize = 56f
+/** Transparent room around floating chrome so its shadow isn't cut off by the popup window. */
+internal const val Halo = 10f
 
-/** A persistent eight-sector dial, in its own window above the native ink input panel. */
+private fun segmentAngle(index: Number) = FirstSegment + index.toFloat() * SegmentSweep
+
+/** Segment under an angle in degrees (screen coordinates, 0° east, clockwise). */
+internal fun segmentAt(angle: Float): Int =
+    Math.floorMod(floor((angle - FirstSegment + SegmentSweep / 2f) / SegmentSweep).toInt(), 10)
+
+/** A persistent ten-segment dial, in its own window above the native ink input panel. */
 @Composable
 internal fun BoxScope.RadialToolSelector(
     settings: SettingsStore, selectionCount: Int, width: Dp, height: Dp, floating: Boolean,
@@ -60,13 +86,14 @@ internal fun BoxScope.RadialToolSelector(
     val position = remember { mutableStateOf(Offset.Zero) }
     val density = LocalDensity.current
     fun px(value: Dp) = with(density) { value.roundToPx() }
-    val inset = IntOffset(px(12.dp), px(84.dp))
+    val inset = IntOffset(px((12f - Halo).dp), px((84f - Halo).dp))
     val isExpanded by rememberUpdatedState(expanded)
     LaunchedEffect(expanded) { if (!expanded) options = false }
-    // Reserve the header, bottom navigation, and native scroll gutter at every window size.
+    // Reserve the header, bottom dock, and native scroll gutter at every window size.
     val maxX = px((width - DialSize - 60.dp).coerceAtLeast(0.dp)).toFloat()
     val maxY = px((height - 400.dp).coerceAtLeast(0.dp)).toFloat()
-    val collapsedInset = IntOffset(px(68.dp), px(68.dp))
+    // The collapsed button keeps the dial's centre.
+    val collapsedInset = IntOffset(px((DialCenter - CollapsedSize / 2).dp), px((DialCenter - CollapsedSize / 2).dp))
     val provider = remember(position, maxX, maxY, inset, collapsedInset) {
         object : PopupPositionProvider {
             override fun calculatePosition(anchorBounds: IntRect, windowSize: IntSize,
@@ -93,38 +120,13 @@ internal fun BoxScope.RadialToolSelector(
         }
     }
     val content: @Composable () -> Unit = {
-        if (expanded) Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        if (expanded) Column(Modifier.padding(Halo.dp), horizontalAlignment = Alignment.CenterHorizontally) {
             ToolDial(settings, selectionCount, drag, onOptions = { options = !options }) {
                 if (options) ToolOptionsPopup(settings) { options = false }
             }
-            Spacer(Modifier.height(8.dp))
-            Surface(shape = CircleShape, color = MaterialTheme.colorScheme.surface,
-                border = BorderStroke(0.5.dp, MaterialTheme.colorScheme.outlineVariant)) {
-                NotiTextButton(onClick = { options = false; onExpandedChange(false) },
-                    modifier = Modifier.semantics { contentDescription = "Collapse tools" }) {
-                    Icon(Icons.Outlined.ExpandLess, null, Modifier.size(18.dp))
-                    Spacer(Modifier.width(4.dp))
-                    Text("Collapse", style = MaterialTheme.typography.labelMedium)
-                }
-            }
-        } else {
-            Surface(Modifier.size(56.dp).then(drag), shape = CircleShape,
-                color = MaterialTheme.colorScheme.surface, shadowElevation = 2.dp,
-                border = BorderStroke(0.75.dp, MaterialTheme.colorScheme.outlineVariant)) {
-                Box {
-                    NotiIconButton(onClick = { onExpandedChange(true) }, modifier = Modifier.fillMaxSize().semantics {
-                        contentDescription = "Expand tools"
-                        stateDescription = if (settings.tool == Tool.Lasso) "$selectionCount selected. Drag to move tools"
-                            else "${settings.tool.label}. Drag to move tools"
-                    }) { Icon(settings.tool.icon(), null, Modifier.size(23.dp)) }
-                    val slots = if (settings.tool == Tool.Highlighter) settings.highlighterSlots else settings.penSlots
-                    if (settings.tool == Tool.Pen || settings.tool == Tool.Highlighter) Box(Modifier.align(Alignment.BottomCenter)
-                        .padding(bottom = 7.dp).size(12.dp, 3.dp).background(Color(slots.currentColor), CircleShape))
-                    Icon(Icons.Outlined.ExpandMore, null, Modifier.align(Alignment.TopEnd).padding(5.dp).size(10.dp),
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-            }
-        }
+            Spacer(Modifier.height(4.dp))
+            CollapseKnob { options = false; onExpandedChange(false) }
+        } else Box(Modifier.padding(Halo.dp)) { CollapsedTool(settings, selectionCount, drag) { onExpandedChange(true) } }
     }
     if (floating) Popup(popupPositionProvider = provider, properties = PopupProperties(
         focusable = false, dismissOnBackPress = false, dismissOnClickOutside = false), content = content)
@@ -139,96 +141,169 @@ private fun ToolDial(
     options: @Composable () -> Unit,
 ) {
     val colors = MaterialTheme.colorScheme
+    val extras = Noti.extras
     val highlighter = settings.tool == Tool.Highlighter ||
         (settings.tool != Tool.Pen && settings.lastDrawingTool == Tool.Highlighter)
     val slots = if (highlighter) settings.highlighterSlots else settings.penSlots
     val drawing = settings.tool == Tool.Pen || settings.tool == Tool.Highlighter
     val update: (ToolSlots) -> Unit = { if (highlighter) settings.highlighterSlots = it else settings.penSlots = it }
-    val activeAngle = -45f + Tool.entries.indexOf(settings.tool) * 45f
-    Box(Modifier.size(DialSize)) {
-        Canvas(Modifier.fillMaxSize().pointerInput(settings.tool, slots) {
+    val toolIndex = Tool.entries.indexOf(settings.tool)
+    // The highlight glides between tools, so the change reads as one motion.
+    val active by animateFloatAsState(toolIndex.toFloat(), tween(220), label = "active tool")
+    val presetAlpha = if (drawing) 1f else 0.35f
+    val dark = colors.surface.luminance() < 0.5f
+
+    Box(Modifier.size(DialSize).shadow(10.dp, CircleShape, ambientColor = extras.shadow, spotColor = extras.shadow)
+        .clip(CircleShape).background(colors.surface)) {
+        Canvas(Modifier.fillMaxSize().pointerInput(settings.tool, slots, highlighter) {
             detectTapGestures { point ->
+                val unit = size.width / (DialCenter * 2f)
                 val local = point - Offset(size.width / 2f, size.height / 2f)
-                val radius = hypot(local.x, local.y) / (size.width / 192f)
-                if (radius in 50f..94f) {
-                    val angle = Math.toDegrees(atan2(local.y, local.x).toDouble()).toFloat()
-                    val sector = ((floor((angle + 67.5f) / 45f).toInt() % 8) + 8) % 8
-                    when {
-                        sector < 4 -> settings.tool = Tool.entries[sector]
-                        drawing && sector < 7 -> update(slots.copy(width = sector - 4))
-                        drawing -> update(slots.copy(color = (slots.color + 1) % slots.colors.size))
-                    }
+                val radius = hypot(local.x, local.y) / unit
+                if (radius !in (RingInner - 2f)..(RingOuter + 4f)) return@detectTapGestures
+                val angle = Math.toDegrees(atan2(local.y, local.x).toDouble()).toFloat()
+                when (val segment = segmentAt(angle)) {
+                    in 0..3 -> settings.tool = Tool.entries[segment]
+                    in 4..6 -> if (drawing) update(slots.copy(color = segment - 4))
+                    else -> if (drawing) update(slots.copy(width = segment - 7))
                 }
             }
         }) {
-            val scale = size.width / 192f
-            val c = Offset(DialCenter * scale, DialCenter * scale)
-            drawCircle(colors.surface.copy(alpha = 0.98f), 94f * scale, c)
-            // One continuous annulus. The selected sector uses ink-black rather than an accent pill.
-            drawArc(colors.onSurface, activeAngle - 22.5f, 45f, false,
-                Offset(24f * scale, 24f * scale), Size(144f * scale, 144f * scale),
-                style = Stroke(44f * scale))
-            val edge = colors.outlineVariant.copy(alpha = 0.65f)
-            drawCircle(edge, 94f * scale, c, style = Stroke(0.65f * scale))
-            drawCircle(edge, 50f * scale, c, style = Stroke(0.65f * scale))
-            repeat(8) { index ->
-                val a = Math.toRadians((-67.5 + index * 45))
-                fun point(r: Float) = c + Offset(cos(a).toFloat(), sin(a).toFloat()) * (r * scale)
-                drawLine(edge, point(50f), point(94f), 0.5f * scale)
+            val unit = size.width / (DialCenter * 2f)
+            val c = Offset(size.width / 2f, size.height / 2f)
+            val rest = if (dark) colors.surfaceContainerHigh else colors.surfaceContainer
+            val chosen = if (dark) Color(0xFF45424C) else colors.surfaceContainerHighest
+            repeat(10) { i ->
+                val fill = when (i) {
+                    in 4..6 -> if (drawing && slots.color == i - 4) chosen else rest
+                    in 7..9 -> if (drawing && slots.width == i - 7) chosen else rest
+                    else -> rest
+                }
+                drawSegment(c, unit, segmentAngle(i), if (i >= 4 && !drawing) fill.copy(alpha = 0.5f) else fill)
+            }
+            drawSegment(c, unit, segmentAngle(active), colors.primary)
+        }
+
+        Tool.entries.forEachIndexed { index, tool ->
+            val selected = settings.tool == tool
+            DialTarget(segmentAngle(index), tool.label, selected = selected, onClick = { settings.tool = tool }) {
+                Icon(tool.icon(), null, Modifier.size(22.dp), tint = if (selected) colors.onPrimary else colors.onSurface)
             }
         }
-        Tool.entries.forEachIndexed { index, tool ->
-            val active = settings.tool == tool
-            DialTarget(-45f + index * 45f, tool.label, selected = active,
-                onClick = { settings.tool = tool }) {
-                Icon(tool.icon(), null, Modifier.size(21.dp), tint = if (active) colors.surface else colors.onSurface)
+        slots.colors.forEachIndexed { index, color ->
+            val selected = drawing && slots.color == index
+            DialTarget(segmentAngle(4 + index), "Quick color ${index + 1}", selected = selected, enabled = drawing,
+                onClick = { update(slots.copy(color = index)) }) {
+                Box(Modifier.size(if (selected) 24.dp else 18.dp)
+                    .then(if (selected) Modifier.border(2.dp, colors.onSurface.copy(alpha = presetAlpha), CircleShape).padding(4.dp) else Modifier)
+                    .clip(CircleShape).background(Color(color).copy(alpha = presetAlpha))
+                    .border(0.75.dp, colors.outline.copy(alpha = 0.45f * presetAlpha), CircleShape))
             }
         }
         slots.widths.forEachIndexed { index, value ->
-            DialTarget(135f + index * 45f, "Quick width $value", selected = drawing && slots.width == index,
-                enabled = drawing, onClick = { update(slots.copy(width = index)) }) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally,
-                    modifier = Modifier.graphicsLayer { rotationZ = (135f + index * 45f) - 90f }) {
-                    Box(Modifier.width(17.dp).height((1.5f + index * 1.5f).dp)
-                        .background(colors.onSurface.copy(alpha = if (drawing) 1f else 0.3f), CircleShape))
-                    Spacer(Modifier.height(4.dp))
-                    Text(widthLabel(value), fontSize = 9.sp, lineHeight = 10.sp,
-                        fontWeight = if (slots.width == index) FontWeight.Bold else FontWeight.Normal,
-                        color = colors.onSurface.copy(alpha = if (drawing) 1f else 0.3f))
-                }
+            val selected = drawing && slots.width == index
+            DialTarget(segmentAngle(7 + index), "Quick width $value", selected = selected, enabled = drawing,
+                onClick = { update(slots.copy(width = index)) }) {
+                val tint = if (selected) colors.onSurface else colors.onSurfaceVariant
+                Box(Modifier.width(18.dp).height((1.5f + index * 2f).dp)
+                    .background(tint.copy(alpha = presetAlpha), CircleShape))
             }
         }
-        DialTarget(270f, "Next color", enabled = drawing, onClick = { update(slots.copy(color = (slots.color + 1) % slots.colors.size)) }) {
-            Row(horizontalArrangement = Arrangement.spacedBy(3.dp), verticalAlignment = Alignment.CenterVertically) {
-                slots.colors.forEachIndexed { index, color ->
-                    Box(Modifier.size(if (index == slots.color) 10.dp else 7.dp)
-                        .background(Color(color), CircleShape)
-                        .border(0.5.dp, colors.outline.copy(alpha = 0.5f), CircleShape))
-                }
-            }
-        }
-        Text(if (drawing) "${widthLabel(slots.currentWidth)} px" else settings.tool.label,
-            Modifier.align(Alignment.TopCenter).padding(top = 57.dp), color = colors.onSurface,
-            fontSize = 10.sp, lineHeight = 12.sp, fontWeight = FontWeight.SemiBold)
-        Box(Modifier.align(Alignment.Center).size(48.dp).then(drag)
+
+        Box(Modifier.align(Alignment.Center).size(HubSize.dp).then(drag)
             .clip(CircleShape).clickable(enabled = drawing, role = Role.Button, onClick = onOptions)
             .semantics {
                 contentDescription = "Brush options"
                 stateDescription = if (settings.tool == Tool.Lasso) "$selectionCount selected. Drag ink to move"
                     else "${settings.tool.label}. Drag to move tools"
             }, contentAlignment = Alignment.Center) {
-            if (drawing) Box(Modifier.size(36.dp).background(Color(slots.currentColor), CircleShape)
-                .border(0.5.dp, colors.outline.copy(alpha = 0.4f), CircleShape))
-            else Icon(settings.tool.icon(), null, Modifier.size(28.dp), tint = colors.onSurface)
+            BrushHub(settings.tool, slots, highlighter, drawing, selectionCount)
             options()
         }
-        Text(if (drawing) if (highlighter) "40%" else "100%" else if (settings.tool == Tool.Lasso) "$selectionCount selected" else "Stroke",
-            Modifier.align(Alignment.TopCenter).padding(top = 124.dp), color = colors.onSurfaceVariant,
-            fontSize = 9.sp, lineHeight = 11.sp)
     }
 }
 
-/** Separate 48 dp targets keep the whole ring accessible without overlapping neighbours. */
+/** The hub is a small page: it shows the stroke you'll get, or the tool you hold. */
+@Composable
+private fun BrushHub(tool: Tool, slots: ToolSlots, highlighter: Boolean, drawing: Boolean, selectionCount: Int) {
+    val colors = MaterialTheme.colorScheme
+    val dark = colors.surface.luminance() < 0.5f
+    val paper = if (dark) Color(0xFFDCD8E2) else Color.White
+    Box(Modifier.fillMaxSize().clip(CircleShape).background(paper)
+        .border(0.75.dp, if (dark) Color.Transparent else colors.outlineVariant, CircleShape),
+        contentAlignment = Alignment.Center) {
+        if (drawing) {
+            val maxWidth = slots.widths.max().coerceAtLeast(1f)
+            val stroke = if (highlighter) 6f + 8f * slots.currentWidth / maxWidth else 1.5f + 6.5f * slots.currentWidth / maxWidth
+            Canvas(Modifier.size(52.dp, 30.dp)) {
+                val path = Path()
+                val w = size.width - stroke.dp.toPx()
+                val start = stroke.dp.toPx() / 2
+                for (i in 0..40) {
+                    val t = i / 40f
+                    val p = Offset(start + t * w, size.height / 2 + size.height * 0.28f * sin(t * 2 * PI).toFloat())
+                    if (i == 0) path.moveTo(p.x, p.y) else path.lineTo(p.x, p.y)
+                }
+                drawPath(path, Color(slots.currentColor).copy(alpha = if (highlighter) 0.55f else 1f),
+                    style = Stroke(stroke.dp.toPx(), cap = StrokeCap.Round))
+            }
+        } else Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Icon(tool.icon(), null, Modifier.size(26.dp), tint = NotiBrand.Ink)
+            if (tool == Tool.Lasso && selectionCount > 0) Text("$selectionCount", style = MaterialTheme.typography.labelMedium,
+                color = NotiBrand.Ink, textAlign = TextAlign.Center)
+        }
+    }
+}
+
+/**
+ * One rounded annular segment: true arcs on the inner and outer edges, softly rounded
+ * corners, and gaps that keep a constant width from the inner to the outer edge. Gaps are
+ * wider where one group meets the next.
+ */
+private fun DrawScope.drawSegment(center: Offset, unit: Float, centerAngle: Float, color: Color, groupGaps: Boolean = true) {
+    val index = Math.floorMod(((centerAngle - FirstSegment) / SegmentSweep).roundToInt(), 10)
+    fun gapBefore(i: Int) = if (groupGaps && (i == 0 || i == 4 || i == 7)) 8f else 3f
+    drawPath(segmentPath(center, unit, centerAngle, gapBefore(index) * unit, gapBefore((index + 1) % 10) * unit), color)
+}
+
+private fun segmentPath(center: Offset, unit: Float, centerAngle: Float, startGap: Float, endGap: Float): Path {
+    val inner = RingInner * unit
+    val outer = RingOuter * unit
+    val corner = 7f * unit
+    fun rad(deg: Float) = Math.toRadians(deg.toDouble()).toFloat()
+    fun deg(rad: Float) = Math.toDegrees(rad.toDouble()).toFloat()
+    fun at(radius: Float, angle: Float) = center + Offset(cos(rad(angle)), sin(rad(angle))) * radius
+    // Edge angles on each circle, shifted so the gap is a constant width.
+    val start = centerAngle - SegmentSweep / 2f
+    val end = centerAngle + SegmentSweep / 2f
+    val outerStart = start + deg(startGap / 2f / outer)
+    val outerEnd = end - deg(endGap / 2f / outer)
+    val innerStart = start + deg(startGap / 2f / inner)
+    val innerEnd = end - deg(endGap / 2f / inner)
+    // Corner insets, as angles along each arc and as distances along each edge.
+    val outerTurn = deg(corner / outer)
+    val innerTurn = deg(corner / inner)
+    fun along(from: Offset, to: Offset, distance: Float): Offset {
+        val d = to - from
+        return from + d * (distance / d.getDistance())
+    }
+    val oS = at(outer, outerStart); val oE = at(outer, outerEnd)
+    val iS = at(inner, innerStart); val iE = at(inner, innerEnd)
+    return Path().apply {
+        val first = along(oS, iS, corner)
+        moveTo(first.x, first.y)
+        at(outer, outerStart + outerTurn).let { quadraticTo(oS.x, oS.y, it.x, it.y) }
+        arcTo(Rect(center, outer), outerStart + outerTurn, outerEnd - outerStart - 2 * outerTurn, false)
+        along(oE, iE, corner).let { quadraticTo(oE.x, oE.y, it.x, it.y) }
+        along(iE, oE, corner).let { lineTo(it.x, it.y) }
+        at(inner, innerEnd - innerTurn).let { quadraticTo(iE.x, iE.y, it.x, it.y) }
+        arcTo(Rect(center, inner), innerEnd - innerTurn, -(innerEnd - innerStart - 2 * innerTurn), false)
+        along(iS, oS, corner).let { quadraticTo(iS.x, iS.y, it.x, it.y) }
+        close()
+    }
+}
+
+/** Separate targets keep every segment reachable without overlapping its neighbours. */
 @Composable
 private fun BoxScope.DialTarget(
     angle: Float, label: String, selected: Boolean = false, enabled: Boolean = true,
@@ -236,12 +311,42 @@ private fun BoxScope.DialTarget(
 ) {
     val radians = Math.toRadians(angle.toDouble())
     Box(Modifier.align(AbsoluteAlignment.TopLeft)
-        .absoluteOffset((DialCenter + TargetRadius * cos(radians).toFloat() - 24f).dp,
-            (DialCenter + TargetRadius * sin(radians).toFloat() - 24f).dp)
-        .size(48.dp).clip(CircleShape).clickable(enabled = enabled, role = Role.Button, onClick = onClick)
+        .absoluteOffset((DialCenter + TargetRadius * cos(radians).toFloat() - TargetSize / 2).dp,
+            (DialCenter + TargetRadius * sin(radians).toFloat() - TargetSize / 2).dp)
+        .size(TargetSize.dp).clip(CircleShape).clickable(enabled = enabled, role = Role.Button, onClick = onClick)
         .semantics { contentDescription = label; this.selected = selected },
         contentAlignment = Alignment.Center) { content() }
 }
 
-private fun widthLabel(width: Float): String =
-    if (width == width.toInt().toFloat()) width.toInt().toString() else String.format(Locale.ROOT, "%.1f", width)
+@Composable
+private fun CollapseKnob(onClick: () -> Unit) {
+    val colors = MaterialTheme.colorScheme
+    val extras = Noti.extras
+    Box(Modifier.size(44.dp).padding(4.dp).shadow(4.dp, CircleShape, ambientColor = extras.shadow, spotColor = extras.shadow)
+        .clip(CircleShape).background(colors.surface).clickable(role = Role.Button, onClick = onClick)
+        .semantics { contentDescription = "Collapse tools" }, contentAlignment = Alignment.Center) {
+        Icon(Icons.Outlined.ExpandLess, null, Modifier.size(20.dp), tint = colors.onSurfaceVariant)
+    }
+}
+
+/** The dial folded into one button: the tool you hold, with its color as a small bead. */
+@Composable
+private fun CollapsedTool(settings: SettingsStore, selectionCount: Int, drag: Modifier, onExpand: () -> Unit) {
+    val colors = MaterialTheme.colorScheme
+    val extras = Noti.extras
+    val drawing = settings.tool == Tool.Pen || settings.tool == Tool.Highlighter
+    val slots = if (settings.tool == Tool.Highlighter) settings.highlighterSlots else settings.penSlots
+    Box(Modifier.size(CollapsedSize.dp).then(drag)
+        .shadow(8.dp, CircleShape, ambientColor = extras.shadow, spotColor = extras.shadow)
+        .clip(CircleShape).background(colors.surface)
+        .clickable(role = Role.Button, onClick = onExpand)
+        .semantics {
+            contentDescription = "Expand tools"
+            stateDescription = if (settings.tool == Tool.Lasso) "$selectionCount selected. Drag to move tools"
+                else "${settings.tool.label}. Drag to move tools"
+        }, contentAlignment = Alignment.Center) {
+        Icon(settings.tool.icon(), null, Modifier.size(24.dp), tint = colors.onSurface)
+        if (drawing) Box(Modifier.align(Alignment.BottomEnd).padding(end = 10.dp, bottom = 10.dp).size(12.dp)
+            .background(colors.surface, CircleShape).padding(2.dp).background(Color(slots.currentColor), CircleShape))
+    }
+}

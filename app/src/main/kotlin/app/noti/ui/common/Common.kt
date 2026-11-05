@@ -82,7 +82,7 @@ fun TextInputDialog(
 /** Template, color and size choices, shared by "New notebook" and "Page paper". */
 @Composable
 fun PaperPicker(paper: Paper, onChange: (Paper) -> Unit, showSize: Boolean = true) {
-    Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+    Column(verticalArrangement = Arrangement.spacedBy(20.dp)) {
         LabeledRow("Paper") {
             PaperTemplate.entries.forEach { t ->
                 val selected = paper.template == t
@@ -99,12 +99,13 @@ fun PaperPicker(paper: Paper, onChange: (Paper) -> Unit, showSize: Boolean = tru
                             .clip(MaterialTheme.shapes.small)
                             .border(
                                 if (selected) 2.dp else 1.dp,
-                                if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
+                                if (selected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.outlineVariant,
                                 MaterialTheme.shapes.small,
                             ),
                     )
-                    Spacer(Modifier.height(4.dp))
-                    Text(t.label, style = MaterialTheme.typography.labelMedium)
+                    Spacer(Modifier.height(6.dp))
+                    Text(t.label, style = MaterialTheme.typography.labelMedium,
+                        color = if (selected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
         }
@@ -116,8 +117,8 @@ fun PaperPicker(paper: Paper, onChange: (Paper) -> Unit, showSize: Boolean = tru
                     label = { Text(c.label) },
                     leadingIcon = {
                         Box(
-                            Modifier.size(14.dp).clip(CircleShape).background(Color(c.argb))
-                                .border(1.dp, MaterialTheme.colorScheme.outline, CircleShape),
+                            Modifier.size(16.dp).clip(CircleShape).background(Color(c.argb))
+                                .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.6f), CircleShape),
                         )
                     },
                 )
@@ -140,9 +141,9 @@ fun PaperPicker(paper: Paper, onChange: (Paper) -> Unit, showSize: Boolean = tru
 @Composable
 private fun LabeledRow(label: String, content: @Composable () -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-        Text(label, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(label, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurface)
         FlowRow(
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
             modifier = Modifier.fillMaxWidth(),
         ) { content() }

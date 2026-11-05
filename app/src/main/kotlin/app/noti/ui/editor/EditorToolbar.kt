@@ -33,7 +33,7 @@ import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
 import app.noti.data.SettingsStore
 import app.noti.data.Tool
-import app.noti.ui.brand.DotiMascot
+import app.noti.ui.theme.Noti
 import kotlin.math.roundToInt
 
 /** Compact controls in sub-panel windows, above the native ink input panel. */
@@ -59,14 +59,16 @@ internal fun EditorToolbar(
         val density = LocalDensity.current
         fun px(value: Dp) = with(density) { value.roundToPx() }
         val wide = maxWidth >= 760.dp
-        val headerWidth = if (wide) (maxWidth - 260.dp).coerceAtMost(420.dp) else maxWidth - 24.dp
+        // Islands sit 12 dp from the edges; the popup includes a halo for their shadow.
+        val halo = (12f - Halo).dp
+        val headerWidth = if (wide) (maxWidth - 260.dp).coerceAtMost(440.dp) else maxWidth - 24.dp
         val dockWidth = maxWidth - 24.dp
         val history: @Composable () -> Unit = {
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
                 ToolbarButton(Icons.AutoMirrored.Outlined.Undo, "Undo", onUndo, canUndo)
                 ToolbarButton(Icons.AutoMirrored.Outlined.Redo, "Redo", onRedo, canRedo)
                 if (wide) ToolbarButton(Icons.Outlined.Fullscreen, "Full screen", onFullScreen)
-                Box(Modifier.padding(horizontal = 2.dp).width(1.dp).height(20.dp).background(colors.outlineVariant))
+                Box(Modifier.padding(horizontal = 4.dp).width(1.dp).height(20.dp).background(colors.outlineVariant))
                 Box {
                     ToolbarButton(Icons.Outlined.MoreHoriz, "More", { menuOpen = true })
                     DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
@@ -100,24 +102,23 @@ internal fun EditorToolbar(
                 }
             }
         }
-        FloatingIsland(Alignment.TopStart, IntOffset(px(12.dp), px(12.dp)), floatingWindows) {
-            GlassSurface(Modifier.width(headerWidth)) {
-                Row(Modifier.padding(4.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    IconButton(onClick = onBack, modifier = Modifier.size(48.dp)) {
-                        DotiMascot(Modifier.size(30.dp), description = "Back to library")
-                    }
-                    Text(title, Modifier.weight(1f).heightIn(min = 48.dp).clip(RoundedCornerShape(10.dp))
-                        .clickable(onClick = onRename).wrapContentHeight().padding(horizontal = 4.dp),
-                        style = MaterialTheme.typography.labelLarge, color = colors.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        FloatingIsland(Alignment.TopStart, IntOffset(px(halo), px(halo)), floatingWindows) {
+            GlassSurface(if (wide) Modifier.widthIn(max = headerWidth) else Modifier.width(headerWidth)) {
+                Row(Modifier.padding(4.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                    ToolbarButton(Icons.AutoMirrored.Outlined.ArrowBack, "Back to library", onBack)
+                    Text(title, Modifier.weight(1f, fill = !wide).heightIn(min = 48.dp).clip(CircleShape)
+                        .clickable(onClickLabel = "Rename", onClick = onRename).wrapContentHeight()
+                        .padding(start = 6.dp, end = 14.dp),
+                        style = MaterialTheme.typography.titleSmall, color = colors.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     if (saveFailed) ToolbarButton(Icons.Outlined.ErrorOutline, saveStatus, onSave, tint = colors.error)
                     if (!wide) history()
                 }
             }
         }
-        if (wide) FloatingIsland(Alignment.TopEnd, IntOffset(-px(12.dp), px(12.dp)), floatingWindows) {
+        if (wide) FloatingIsland(Alignment.TopEnd, IntOffset(-px(halo), px(halo)), floatingWindows) {
             GlassSurface { Box(Modifier.padding(4.dp)) { history() } }
         }
-        FloatingIsland(Alignment.BottomCenter, IntOffset(0, -px(12.dp)), floatingWindows) {
+        FloatingIsland(Alignment.BottomCenter, IntOffset(0, -px(halo)), floatingWindows) {
             GlassSurface(Modifier.widthIn(max = dockWidth)) {
                 Row(Modifier.padding(4.dp), verticalAlignment = Alignment.CenterVertically) {
                     pdfPage?.let { (page, count) ->
@@ -125,19 +126,19 @@ internal fun EditorToolbar(
                             modifier = Modifier.weight(1f, fill = false).semantics {
                                 contentDescription = "Pages"; stateDescription = "Page ${page + 1} of $count"; selected = pagesOpen
                             }) {
-                            Icon(Icons.Outlined.Layers, null, Modifier.size(18.dp), tint = colors.onSurface)
+                            Icon(Icons.Outlined.Layers, null, Modifier.size(18.dp), tint = if (pagesOpen) colors.primary else colors.onSurfaceVariant)
                             Spacer(Modifier.width(8.dp))
-                            Text("${page + 1} / $count", Modifier.weight(1f, fill = false),
-                                color = colors.onSurface, style = MaterialTheme.typography.labelMedium,
+                            Text("${page + 1} of $count", Modifier.weight(1f, fill = false),
+                                color = colors.onSurface, style = MaterialTheme.typography.labelLarge,
                                 maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
-                        Box(Modifier.width(1.dp).height(20.dp).background(colors.outlineVariant))
+                        Box(Modifier.padding(horizontal = 2.dp).width(1.dp).height(20.dp).background(colors.outlineVariant))
                     }
                     ZoomControl(zoom, onResetZoom)
                 }
             }
         }
-        if (viewportFraction < 0.999f) FloatingIsland(Alignment.CenterEnd, IntOffset(px((-4).dp), 0), floatingWindows) {
+        if (viewportFraction < 0.999f) FloatingIsland(Alignment.CenterEnd, IntOffset(px((-4).dp), 0), floatingWindows, halo = 0.dp) {
             ScrollIndicator(scrollFraction, viewportFraction, onScroll, Modifier.height((maxHeight * 0.25f).coerceIn(96.dp, 180.dp)))
         }
         RadialToolSelector(settings, selectionCount, maxWidth, maxHeight, floatingWindows,
@@ -151,9 +152,7 @@ private fun ZoomControl(zoom: Float, onResetZoom: () -> Unit) {
         modifier = Modifier.heightIn(min = 48.dp).semantics {
             contentDescription = "Zoom ${(zoom * 100).roundToInt()} percent. Reset to fit width"
         }) {
-        Icon(Icons.Outlined.FitScreen, null, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
-        Spacer(Modifier.width(8.dp))
-        Text("${(zoom * 100).roundToInt()}%", style = MaterialTheme.typography.labelMedium,
+        Text("${(zoom * 100).roundToInt()}%", style = MaterialTheme.typography.labelLarge,
             color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
@@ -161,28 +160,32 @@ private fun ZoomControl(zoom: Float, onResetZoom: () -> Unit) {
 @Composable
 private fun ToolbarButton(icon: ImageVector, label: String, onClick: () -> Unit, enabled: Boolean = true,
     tint: Color = MaterialTheme.colorScheme.onSurface) {
-    IconButton(onClick = onClick, enabled = enabled, modifier = Modifier.size(48.dp).background(MaterialTheme.colorScheme.surfaceContainerLow, RoundedCornerShape(12.dp))) {
-        Icon(icon, label, Modifier.size(20.dp), tint = if (enabled) tint else tint.copy(alpha = 0.3f))
+    IconButton(onClick = onClick, enabled = enabled, modifier = Modifier.size(48.dp)) {
+        Icon(icon, label, Modifier.size(22.dp), tint = if (enabled) tint else tint.copy(alpha = 0.28f))
     }
 }
 
-/** Quiet, nearly opaque chrome with a fine edge and a small shadow. */
+/** Quiet floating chrome: a soft pill, a whisper of edge, a warm low shadow. */
 @Composable
-internal fun GlassSurface(modifier: Modifier = Modifier, shape: Shape = RoundedCornerShape(18.dp), content: @Composable BoxScope.() -> Unit) {
+internal fun GlassSurface(modifier: Modifier = Modifier, shape: Shape = RoundedCornerShape(28.dp), content: @Composable BoxScope.() -> Unit) {
     val colors = MaterialTheme.colorScheme
-    Box(modifier.shadow(1.dp, shape).clip(shape).background(colors.surface.copy(alpha = 0.98f))
-        .border(0.5.dp, colors.outlineVariant.copy(alpha = 0.6f), shape)) {
+    val shadow = Noti.extras.shadow
+    Box(modifier.shadow(6.dp, shape, ambientColor = shadow, spotColor = shadow).clip(shape).background(colors.surface)
+        .border(0.5.dp, colors.outlineVariant.copy(alpha = 0.5f), shape)) {
         CompositionLocalProvider(LocalContentColor provides colors.onSurface) { content() }
     }
 }
 
 @Composable
-private fun BoxScope.FloatingIsland(alignment: Alignment, offset: IntOffset, floating: Boolean, content: @Composable () -> Unit) {
+private fun BoxScope.FloatingIsland(alignment: Alignment, offset: IntOffset, floating: Boolean,
+    halo: Dp = Halo.dp, content: @Composable () -> Unit) {
     if (floating) {
         // TYPE_APPLICATION_SUB_PANEL (Compose Popup) sorts above TYPE_APPLICATION_PANEL (ink).
         Popup(alignment = alignment, offset = offset, properties = PopupProperties(focusable = false,
-            dismissOnBackPress = false, dismissOnClickOutside = false, clippingEnabled = true), content = content)
-    } else Box(Modifier.align(alignment).offset { offset }, contentAlignment = Alignment.Center) { content() }
+            dismissOnBackPress = false, dismissOnClickOutside = false, clippingEnabled = true)) {
+            Box(Modifier.padding(halo)) { content() }
+        }
+    } else Box(Modifier.align(alignment).offset { offset }.padding(halo), contentAlignment = Alignment.Center) { content() }
 }
 
 @Composable
@@ -204,9 +207,9 @@ internal fun ScrollIndicator(fraction: Float, visible: Float, onScroll: (Float) 
             action((start + travel / range).coerceIn(0f, 1f))
         }
     }) {
-        Canvas(Modifier.fillMaxSize().padding(horizontal = 22.5.dp, vertical = 8.dp)) {
+        Canvas(Modifier.fillMaxSize().padding(horizontal = 21.5.dp, vertical = 8.dp)) {
             val h = size.height * thumbFraction
-            drawRoundRect(color.copy(alpha = 0.4f), topLeft = Offset(0f, (size.height - h) * current),
+            drawRoundRect(color.copy(alpha = 0.35f), topLeft = Offset(0f, (size.height - h) * current),
                 size = androidx.compose.ui.geometry.Size(size.width, h), cornerRadius = androidx.compose.ui.geometry.CornerRadius(size.width))
         }
     }

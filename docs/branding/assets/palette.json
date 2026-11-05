@@ -1,9 +1,12 @@
 {
-  "paper": "#FAF9F6",
-  "ink": "#30332E",
-  "primary": "#6D568F",
-  "lilac": "#DED2F4",
-  "butter": "#F5D77E",
-  "peach": "#F6B6A6",
-  "mint": "#DDEBDD"
+  "desk": "#F3F1EE",
+  "sheet": "#FBFAF8",
+  "ink": "#2A2830",
+  "primary": "#5C4A87",
+  "honey": "#E3AE3F",
+  "lilac": "#D9CFEE",
+  "butter": "#F1DFA6",
+  "mint": "#CFE1D3",
+  "peach": "#F2C6B8",
+  "sky": "#CBDCEB"
 }

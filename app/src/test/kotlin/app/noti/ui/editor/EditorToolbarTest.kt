@@ -52,6 +52,8 @@ class EditorToolbarTest {
     private val tools = listOf("Pen", "Highlighter", "Eraser", "Lasso")
     private val controls = listOf("Undo", "Redo", "Back to library", "Pages", "More",
         "Document scroll", "Zoom 175 percent. Reset to fit width")
+    private val quickSlots = listOf("Brush options", "Collapse tools") + (1..3).map { "Quick color $it" } +
+        listOf("3.0", "5.0", "9.0").map { "Quick width $it" }
 
     @Test fun portraitTabletKeepsControlsVisibleInDarkMode() { render(800, ThemeMode.Dark, height = 1100); assertControls(); screenshot("portrait-dark") }
     @Test fun landscapeTabletKeepsControlsVisibleInLightMode() { render(1200, ThemeMode.Light); assertControls(); screenshot("landscape-light") }
@@ -68,7 +70,7 @@ class EditorToolbarTest {
     fun shortLandscapeDialStaysClearOfHeaderAndNavigation() {
         render(915, ThemeMode.Light, height = 412)
         assertControls()
-        assertTargetsApart(controls + tools + listOf("Brush options", "Next color") + listOf("3.0", "5.0", "9.0").map { "Quick width $it" })
+        assertTargetsApart(controls + tools + quickSlots)
         screenshot("phone-landscape-tools")
     }
 
@@ -89,34 +91,41 @@ class EditorToolbarTest {
     @Test fun wholeAnnularSectorRespondsOutsideTheIconTarget() {
         render(800, ThemeMode.Light)
         compose.onNodeWithContentDescription("Highlighter").performClick()
-        // Near the pen sector's outer corner, outside its 48 dp icon target.
-        compose.onNodeWithTag("toolbar").performTouchInput { click(Offset(146f, 98f)) }
+        // Near the pen segment's outer corner, outside its icon target.
+        compose.onNodeWithTag("toolbar").performTouchInput { click(Offset(25.1f, 151.3f)) }
         compose.onNodeWithContentDescription("Pen").assertIsSelected()
         compose.runOnIdle { assertEquals(Tool.Pen, settings.tool) }
     }
 
     @Test fun quickPresetsEditOnlyTheCurrentDrawingTool() {
         render(800, ThemeMode.Light)
-        compose.onNodeWithContentDescription("Next color").performClick()
+        compose.onNodeWithContentDescription("Quick color 2").performClick().assertIsSelected()
         compose.onNodeWithContentDescription("Quick width 9.0").performClick().assertIsSelected()
         compose.runOnIdle { assertEquals(1, settings.penSlots.color); assertEquals(2, settings.penSlots.width) }
         compose.onNodeWithContentDescription("Highlighter").performClick()
         compose.onNodeWithContentDescription("Quick width 40.0").performClick()
-        compose.onNodeWithContentDescription("Next color").performClick()
+        compose.onNodeWithContentDescription("Quick color 3").performClick()
         compose.runOnIdle {
-            assertEquals(2, settings.highlighterSlots.width); assertEquals(1, settings.highlighterSlots.color)
-            assertEquals(2, settings.penSlots.width)
+            assertEquals(2, settings.highlighterSlots.width); assertEquals(2, settings.highlighterSlots.color)
+            assertEquals(2, settings.penSlots.width); assertEquals(1, settings.penSlots.color)
         }
-        compose.onNodeWithContentDescription("Next color").performClick()
-        compose.onNodeWithContentDescription("Next color").performClick()
+        compose.onNodeWithContentDescription("Quick color 1").performClick()
         compose.runOnIdle { assertEquals(0, settings.highlighterSlots.color) }
         screenshot("highlighter-light")
+    }
+
+    @Test fun everySegmentMapsToItsOwnSlot() {
+        assertEquals(0, segmentAt(-144f)); assertEquals(3, segmentAt(-36f))
+        assertEquals(4, segmentAt(0f)); assertEquals(6, segmentAt(72f))
+        assertEquals(7, segmentAt(108f)); assertEquals(9, segmentAt(180f)); assertEquals(9, segmentAt(-179f))
+        assertEquals(0, segmentAt(-161f)); assertEquals(3, segmentAt(-19f)); assertEquals(4, segmentAt(-17f))
     }
 
     @Test fun centerSwatchOpensFullBrushOptions() {
         render(800, ThemeMode.Dark)
         screenshot("radial-dark")
         compose.onNodeWithContentDescription("Brush options").performClick()
+        popupScreenshot("brush-options-dark")
         compose.onNodeWithContentDescription("Color 2").performClick()
         compose.onNodeWithContentDescription("Width 9.0").performClick()
         compose.runOnIdle { assertEquals(1, settings.penSlots.color); assertEquals(2, settings.penSlots.width) }
@@ -138,7 +147,7 @@ class EditorToolbarTest {
 
     @Test fun narrowDialHasSeparateTouchTargets() {
         render(360, ThemeMode.Light)
-        assertTargetsApart(controls + tools + listOf("Brush options", "Next color") + listOf("3.0", "5.0", "9.0").map { "Quick width $it" })
+        assertTargetsApart(controls + tools + quickSlots)
         screenshot("radial-narrow")
     }
 
@@ -189,7 +198,8 @@ class EditorToolbarTest {
             compose.onNodeWithContentDescription("Collapse tools").performClick()
             val collapsed = compose.onNodeWithContentDescription("Expand tools").fetchSemanticsNode()
             val rootSize = generateSequence(collapsed) { it.parent }.last().size
-            assertEquals(56, rootSize.width); assertEquals(56, rootSize.height)
+            // 56 dp button plus the transparent shadow halo on each side.
+            assertEquals(76, rootSize.width); assertEquals(76, rootSize.height)
             assertEquals(center, collapsed.positionOnScreen + Offset(28f, 28f))
             compose.onNodeWithContentDescription("Expand tools").performClick()
         }
@@ -204,7 +214,7 @@ class EditorToolbarTest {
         assertEquals(before.x + 220f, after.x, 32f); assertEquals(before.y + 150f, after.y, 32f)
         compose.onNodeWithContentDescription("Expand tools").performClick()
         val brush = compose.onNodeWithContentDescription("Brush options").fetchSemanticsNode()
-        assertEquals(after, brush.positionOnScreen + Offset(24f, 24f))
+        assertEquals(after, brush.positionOnScreen + Offset(brush.size.width / 2f, brush.size.height / 2f))
     }
 
     @Test fun saveFailureExposesRetryWithoutOpeningMenu() {
@@ -311,6 +321,19 @@ class EditorToolbarTest {
         }
         for ((i, a) in boxes.withIndex()) for (b in boxes.drop(i + 1)) {
             assertFalse("Controls overlap: ${a.first} and ${b.first}", a.second.overlaps(b.second))
+        }
+    }
+
+    /** The topmost window (a popup or menu), drawn on its own. */
+    private fun popupScreenshot(name: String) {
+        compose.waitForIdle()
+        compose.runOnUiThread {
+            val window = android.view.inspector.WindowInspector.getGlobalWindowViews().last { it.width > 0 && it.height > 0 }
+            val bitmap = Bitmap.createBitmap(window.width, window.height, Bitmap.Config.ARGB_8888)
+            window.draw(android.graphics.Canvas(bitmap))
+            File(File("build/reports/editor-ui").apply { mkdirs() }, "$name.png").outputStream().use {
+                bitmap.compress(Bitmap.CompressFormat.PNG, 100, it)
+            }
         }
     }
 

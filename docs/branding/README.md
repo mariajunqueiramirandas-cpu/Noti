@@ -12,23 +12,22 @@ Doti is an original lavender ink companion with a curled tuft, peach cheeks, a b
 
 | Role | Color | Hex |
 | --- | --- | --- |
-| Paper | Warm off-white | `#FAF9F6` |
-| Ink | Soft charcoal | `#30332E` |
-| Primary | Accessible plum | `#6D568F` |
-| Lilac | Doti and welcome accents | `#DED2F4` |
-| Butter | Pencil and notebook covers | `#F5D77E` |
-| Peach | Cheeks and notebook covers | `#F6B6A6` |
-| Mint | Gentle supporting accents | `#DDEBDD` |
+| Desk | Soft greige background | `#F3F1EE` |
+| Sheet | Content surface resting on the desk | `#FBFAF8` |
+| Ink | Aubergine charcoal | `#2A2830` |
+| Primary | Plum, shared with Doti | `#5C4A87` |
+| Honey | Favorite bookmarks only | `#E3AE3F` |
+| Covers | Lilac, butter, mint, peach, sky spines | `#D9CFEE` `#F1DFA6` `#CFE1D3` `#F2C6B8` `#CBDCEB` |
 
 Use Ink for primary light-theme text and plum for important actions. Pastels are backgrounds and illustration colors. The app supplies corresponding dark surfaces and light text in dark mode. Selection uses a fill or outline as well as color.
 
-Nunito is the UI and wordmark typeface, with actual static 400, 500, 600, 700 and 800 weights instantiated from the open-source variable font. Body text uses 400; labels use 600–700; welcome headings and the wordmark use 700–800. The source license is in `Nunito-OFL.txt` and bundled in the APK. The app respects Android’s text scaling and does not rely on a font download.
+Nunito is the UI and wordmark typeface, with actual static 400, 500, 600, 700 and 800 weights instantiated from the open-source variable font. Body text uses 400; labels and titles use 600; headings use 700 with slightly tightened tracking; only the wordmark uses 800. The source license is in `Nunito-OFL.txt` and bundled in the APK. The app respects Android’s text scaling and does not rely on a font download.
 
 Use the lowercase `noti.` wordmark with a plum dot. The official product name remains Noti. Keep at least the width of the dot clear around the mark. Use the compact launcher mark at small sizes and the full transparent mascot for larger illustrations; avoid squeezing Doti or using a detailed character where a control icon belongs.
 
 The tone is light and encouraging: “Little ideas welcome,” “Make your mark,” and “Your kind of paper.” Buttons, destructive actions, errors and hardware settings retain clear, literal labels. Never make deleting or saving sound like a joke.
 
-The design uses fine dividers, flat surfaces, restrained 10–20 dp corners and generous spacing. Buttons use a stable 12 dp shape and at least 48 dp targets, with plum primary actions, outlined secondary actions, neutral quiet actions and explicit destructive styling. Menus use the same border and typography. All app confirmation and form dialogs share an explicit-width frame with a scrolling body and fixed header/actions. Notebook covers add color without inventing document content. The radial editor remains mostly monochrome; the home mark is its only mascot detail. Mascot images beside readable copy are decorative for accessibility.
+The design is a page on a desk at dusk. Navigation sits directly on the greige desk; content rests on a lighter sheet with 28 dp corners. Radius follows hierarchy: 12 dp controls, 16 dp cards, 22 dp panels, 28 dp sheets and dialogs, and fully rounded pills for actions, chips and floating editor chrome. Space separates sections instead of divider lines; hairlines remain only between rows inside a grouped card. Buttons have at least 48 dp targets, with plum primary actions, outlined secondary actions, neutral quiet actions and explicit destructive styling. Selected chips fill with ink. Dialogs share an explicit-width frame with a scrolling body and fixed title and actions. Notebook cards show the real first page with a colored spine and, for favorites, a honey ribbon; they never invent content. Floating editor chrome uses a soft low shadow with transparent room in each popup window so it is not clipped. The radial dial is the one bold element: ten rounded segments, a plum active tool and a paper hub that previews the stroke.
 
 ## Sources
 
