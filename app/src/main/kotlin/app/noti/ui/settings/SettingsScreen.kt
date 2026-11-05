@@ -97,7 +97,7 @@ private enum class Section(val label: String, val icon: ImageVector) {
 
 @Composable
 fun SettingsScreen(settings: SettingsStore, onBack: () -> Unit) {
-    StylusDialogKeys()
+    StylusDialogKeys(settings.penButtonsEnabled && settings.penLegacyKeys)
     var section by remember { mutableStateOf(Section.Pen) }
     var sectionMenu by remember { mutableStateOf(false) }
     BackHandler(onBack = onBack)

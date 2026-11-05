@@ -7,16 +7,20 @@ import android.view.KeyEvent
 import android.view.Window
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.window.DialogWindowProvider
 import app.noti.ink.StylusKeyHost
 
 /** Settings can live in the activity or its own Compose Dialog window. */
 @Composable
-internal fun StylusDialogKeys() {
+internal fun StylusDialogKeys(hijackXiaomiOsShortcuts: Boolean = true) {
     val view = LocalView.current
     val window = (view.parent as? DialogWindowProvider)?.window
     val host = view.context.activity() as? StylusKeyHost
+    SideEffect {
+        host?.stylusKeys?.hijackXiaomiOsShortcuts = hijackXiaomiOsShortcuts
+    }
     DisposableEffect(window, host) {
         val previous = window?.callback
         val callback = if (window != null && previous != null && host != null) object : Window.Callback by previous {
