@@ -24,9 +24,13 @@ judges your handwriting silently. He has no arms, no legs, and no chill.
 
 | Asset | Pose | Where it lives |
 |---|---|---|
-| `brand/nib.svg` | Classic grin | Library empty state, README, PRs |
-| `brand/nib-sleep.svg` | Eyes closed, "z z" | Trash empty state (he naps on deleted stuff) |
-| `brand/nib-excited.svg` | Wide eyes, arms up | New notebook created / export finished |
+| `brand/nib.jpg` / `nib.svg` | Classic grin | Library empty state (SVG in-app), README, PRs |
+| `brand/nib-sleep.jpg` / `nib-sleep.svg` | Eyes closed, "z z" | Trash empty state (he naps on deleted stuff) |
+| `brand/nib-excited.jpg` / `nib-excited.svg` | Wide eyes, arms up | New notebook created / export finished |
+| `brand/banner.jpg` | Nib over doodled notebooks | Store listing / social / README hero |
+
+The `.jpg` files are AI-generated raster art (light-gray backdrop, not transparent);
+the `.svg` files are the hand-authored transparent versions used inside the app.
 
 The in-app drawable is `app/src/main/res/drawable/mascot_nib.xml` (vector, themed-safe), and
 the launcher icon is the same character on a periwinkle squircle
