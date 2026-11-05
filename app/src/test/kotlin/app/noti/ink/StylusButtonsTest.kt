@@ -107,37 +107,55 @@ class StylusButtonsTest {
         assertEquals(0, buttons.flags(7, 0, true))
     }
 
-    @Test fun motionOnlyStylusRetainsTemporaryToolsWithoutInventingClicks() {
-        assertEquals(NotiInk.FLAG_BUTTON_SECONDARY, buttons.flags(7, MotionEvent.BUTTON_STYLUS_SECONDARY, true))
+    @Test fun motionOnlyWritingHoldErasesButScreenshotHoldNeverOverridesInk() {
+        assertEquals(NotiInk.FLAG_BUTTON_PRIMARY, buttons.flags(7, MotionEvent.BUTTON_STYLUS_PRIMARY, true))
+        assertEquals(0, buttons.flags(7, MotionEvent.BUTTON_STYLUS_SECONDARY, true))
+        assertEquals(NotiInk.FLAG_BUTTON_PRIMARY, buttons.flags(7,
+            MotionEvent.BUTTON_STYLUS_PRIMARY or MotionEvent.BUTTON_STYLUS_SECONDARY, true))
         assertEquals(0, buttons.flags(7, 0, true))
         assertTrue(clicks.isEmpty())
     }
 
-    @Test fun simultaneousButtonsReleaseIndependently() {
+    @Test fun onlyWritingOverridesInkWhenBothButtonsAreHeld() {
         down(); down(PenButton.Secondary)
-        assertEquals(12, buttons.flags(7, 0, true))
+        assertEquals(NotiInk.FLAG_BUTTON_PRIMARY, buttons.flags(7, 0, true))
         up()
-        assertEquals(8, buttons.flags(7, 0, true))
-        up(PenButton.Secondary)
+        assertEquals(0, buttons.flags(7, 0, true))
+        up(PenButton.Secondary, time = 2100)
         assertEquals(0, buttons.flags(7, 0, true))
         assertTrue(clicks.isEmpty())
     }
 
     @Test fun splitBluetoothAndDigitizerDevicesCanUseOnePhysicalPenHold() {
-        down(device = 40)
-        assertEquals(4, buttons.flags(9, 0, true))
-        up(device = 40)
+        // The verified Pad 7 stream has real holds on key device 18 and zero
+        // motion-button flags on digitizer 14, including a 4.327-second hold.
+        down(device = 18)
+        down(device = 18, time = 501, repeat = 1, downTime = 100)
+        assertEquals(NotiInk.FLAG_BUTTON_PRIMARY, buttons.flags(14, 0, true))
+        up(device = 18, time = 4427)
         assertTrue(clicks.isEmpty())
-        assertEquals(0, buttons.flags(9, 0, true))
+        assertEquals(0, buttons.flags(14, 0, true))
     }
 
     @Test fun multiplePressedDevicesDoNotGuessAnUnrelatedDigitizer() {
-        down(device = 7); down(PenButton.Secondary, device = 8)
+        down(device = 7); down(device = 8)
         assertEquals(4, buttons.flags(7, 0, false))
-        assertEquals(8, buttons.flags(8, 0, false))
+        assertEquals(4, buttons.flags(8, 0, false))
         assertEquals(0, buttons.flags(9, 0, false))
         buttons.removeDevice(8)
         assertEquals(4, buttons.flags(9, 0, false))
+    }
+
+    @Test fun screenshotClicksRemainAvailableWithoutParticipatingInWritingHoldAssociation() {
+        down(device = 18); down(PenButton.Secondary, device = 8)
+        assertEquals(NotiInk.FLAG_BUTTON_PRIMARY, buttons.flags(14, 0, true))
+        up(PenButton.Secondary, device = 8)
+        up(device = 18, time = 2100)
+        assertEquals(listOf(PenButton.Secondary), clicks)
+        down(PenButton.Secondary, device = 8, time = 2200)
+        assertEquals(0, buttons.flags(14, MotionEvent.BUTTON_STYLUS_SECONDARY, true))
+        up(PenButton.Secondary, device = 8, time = 4500)
+        assertEquals(listOf(PenButton.Secondary), clicks)
     }
 
     @Test fun focusClickDoesNotMasqueradeAsAnEraserOrLasso() {
