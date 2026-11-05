@@ -17,18 +17,23 @@ and stack the stationary pen/palm/button test canvas below scrollable controls w
 and dialogs scroll on short screens or with larger text. Layouts follow Android's available dp size rather than
 physical screen pixels, so display scaling, rotation and split-screen are supported.
 
-The editor is a full canvas with a compact
-header, a combined page/zoom control and a draggable tool launcher. Floating controls use sub-panel popup windows above the native
-ink input panel, so taps reach the controls without changing the low-latency drawing path (`ui/common/InkCanvas.kt`).
+The editor is a full canvas with a thin, neutral header and a persistent radial tool dial at the upper left.
+The selected tool occupies a contrasting sector of the ring. The other sectors select pen, highlighter,
+stroke eraser, lasso, three width presets and the next saved color. Tap the central swatch for the full
+color, width and pressure controls; drag the center to reposition the dial. More → Hide tools clears
+the canvas, and More → Show tools restores it. The dial stays open and stationary when selecting tools.
+Floating controls use sub-panel popup windows above the native ink input panel, so taps reach them
+without changing the low-latency drawing path (`ui/common/InkCanvas.kt`). Tablet windows expose Export,
+Paper and Precision at the upper right; phone windows keep these actions in More. Pages stay at the
+lower left, with zoom in the header on tablets and beside Pages on phones. Undo and redo share the header.
+
 **Pages**: notebooks and imported PDFs scroll vertically as a continuous document. Drag to scroll,
 pinch to zoom from 25% to 600%, drag the slim right-hand scroll indicator, and use the pages panel or page actions in More to jump.
 The page counter, proportional scroll thumb and zoom percentage follow the live viewport; tap zoom to fit width. Momentum stops when the pen touches down.
 Only visible pages are rendered; PDF neighbours are prefetched and zoomed detail is rendered after scrolling settles.
 Ink uses canonical page coordinates, so scrolling, zooming, rotation and reopening do not move annotations.
 
-**Writing**: tap the floating brush to reveal a compact palette of pen, highlighter, stroke eraser and lasso controls; drag the launcher
-to reposition it. The launcher keeps its position, size and brush icon while the separate controls fade in or out. The palette tucks away while dragging. Tap the palette's brush-options
-button for color and width presets, custom colors and pressure settings. Undo and redo share the compact header.
+**Writing**: the radial dial offers the pen, highlighter, stroke eraser and lasso, with quick width/color presets.
 Save status is in More, with a visible retry control when saving fails. Circle whole strokes with the lasso, then drag inside
 the selection to move them. Click the Focus Pen's writing button to toggle the eraser, or its screenshot button
 to toggle the lasso; click again to return to your last pen/highlighter. Hold the writing button to erase

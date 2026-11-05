@@ -1,9 +1,6 @@
 package app.noti.ui.editor
 
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.*
-import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
@@ -13,10 +10,6 @@ import androidx.compose.material.icons.automirrored.outlined.*
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
-import androidx.compose.ui.layout.LayoutCoordinates
-import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.window.PopupPositionProvider
-import androidx.compose.ui.AbsoluteAlignment
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -54,16 +47,29 @@ internal fun EditorToolbar(
     var menuOpen by remember { mutableStateOf(false) }
     val colors = MaterialTheme.colorScheme
     val saveFailed = saveStatus.contains("failed", true)
+    var toolsVisible by remember { mutableStateOf(true) }
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val density = LocalDensity.current
         fun px(value: Dp) = with(density) { value.roundToPx() }
-        FloatingIsland(Alignment.TopStart, IntOffset(px(12.dp), px(12.dp)), floatingWindows) {
-            GlassSurface(Modifier.width((maxWidth - 24.dp).coerceAtMost(420.dp))) {
-                Row(Modifier.padding(horizontal = 2.dp), verticalAlignment = Alignment.CenterVertically) {
-                    ToolbarButton(Icons.AutoMirrored.Outlined.ArrowBack, "Back to library", onBack)
-                    Text(title, Modifier.weight(1f).heightIn(min = 48.dp).clip(RoundedCornerShape(4.dp))
-                        .clickable(onClick = onRename).wrapContentHeight().padding(vertical = 4.dp),
-                        style = MaterialTheme.typography.labelLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        val wide = maxWidth >= 600.dp
+        FloatingIsland(Alignment.TopStart, IntOffset.Zero, floatingWindows) {
+            // A single fine rule keeps the document as the dominant surface.
+            Column(Modifier.width(maxWidth).background(colors.surface.copy(alpha = 0.97f))) {
+                Row(Modifier.padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    ToolbarButton(Icons.Outlined.GridView, "Back to library", onBack)
+                    Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
+                        Text(title, Modifier.weight(1f, fill = false).heightIn(min = 48.dp).clip(RoundedCornerShape(4.dp))
+                            .clickable(onClick = onRename).wrapContentHeight().padding(vertical = 4.dp),
+                            style = MaterialTheme.typography.labelLarge, color = colors.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        if (wide) {
+                            Text("/", Modifier.padding(horizontal = 16.dp), color = colors.outline)
+                            Text(settings.tool.label, style = MaterialTheme.typography.labelMedium, color = colors.onSurfaceVariant)
+                        }
+                    }
+                    if (wide) {
+                        ZoomControl(zoom, onResetZoom)
+                        ToolbarButton(Icons.Outlined.Settings, "Settings", onSettings)
+                    }
                     if (saveFailed) ToolbarButton(Icons.Outlined.ErrorOutline, saveStatus, onSave, tint = colors.error)
                     ToolbarButton(Icons.AutoMirrored.Outlined.Undo, "Undo", onUndo, canUndo)
                     ToolbarButton(Icons.AutoMirrored.Outlined.Redo, "Redo", onRedo, canRedo)
@@ -83,47 +89,72 @@ internal fun EditorToolbar(
                             DropdownMenuItem(text = { Text("Export PDF") }, leadingIcon = { Icon(Icons.Outlined.IosShare, null) }, onClick = { menuOpen = false; onExport() })
                             if (!isPdf) DropdownMenuItem(text = { Text("Page paper") }, leadingIcon = { Icon(Icons.Outlined.Description, null) }, onClick = { menuOpen = false; onPagePaper() })
                             onAddPage?.let { add -> DropdownMenuItem(text = { Text("Add page") }, leadingIcon = { Icon(Icons.Outlined.Add, null) }, onClick = { menuOpen = false; add() }) }
+                            DropdownMenuItem(text = { Text(if (toolsVisible) "Hide tools" else "Show tools") },
+                                leadingIcon = { Icon(Icons.Outlined.Tune, null) }, onClick = { menuOpen = false; toolsVisible = !toolsVisible })
                             DropdownMenuItem(text = { Text("Full screen") }, leadingIcon = { Icon(Icons.Outlined.Fullscreen, null) }, onClick = { menuOpen = false; onFullScreen() })
                             DropdownMenuItem(text = { Text("Settings") }, leadingIcon = { Icon(Icons.Outlined.Settings, null) }, onClick = { menuOpen = false; onSettings() })
                         }
                     }
                 }
+                HorizontalDivider(thickness = 0.5.dp, color = colors.outlineVariant.copy(alpha = 0.55f))
             }
         }
-        FloatingIsland(Alignment.BottomStart, IntOffset(px(12.dp), px((-12).dp)), floatingWindows) {
-            GlassSurface(Modifier.widthIn(max = (maxWidth - 24.dp).coerceAtLeast(0.dp))) {
-                Row(Modifier.padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                    pdfPage?.let { (page, count) ->
-                        TextButton(onClick = onTogglePages, contentPadding = PaddingValues(horizontal = 12.dp),
-                            modifier = Modifier.weight(1f, fill = false).heightIn(min = 48.dp).semantics {
-                                contentDescription = "Pages"; stateDescription = "Page ${page + 1} of $count"
-                            }) {
-                            Icon(Icons.Outlined.Layers, null, Modifier.size(18.dp))
-                            Spacer(Modifier.width(8.dp))
-                            Text("${page + 1} / $count", color = if (pagesOpen) colors.primary else colors.onSurfaceVariant,
-                                style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        }
-                        Box(Modifier.width(1.dp).height(16.dp).background(colors.outlineVariant))
-                    }
-                    TextButton(onClick = onResetZoom, contentPadding = PaddingValues(horizontal = 12.dp),
+        FloatingIsland(Alignment.BottomStart, IntOffset(px(12.dp), -px(12.dp)), floatingWindows) {
+            Row(Modifier.background(colors.surface.copy(alpha = 0.94f), RoundedCornerShape(6.dp)), verticalAlignment = Alignment.CenterVertically) {
+                pdfPage?.let { (page, count) ->
+                    TextButton(onClick = onTogglePages, contentPadding = PaddingValues(horizontal = 12.dp),
                         modifier = Modifier.heightIn(min = 48.dp).semantics {
-                            contentDescription = "Zoom ${(zoom * 100).roundToInt()} percent. Reset to fit width"
+                            contentDescription = "Pages"; stateDescription = "Page ${page + 1} of $count"
                         }) {
-                        Text("${(zoom * 100).roundToInt()}%", style = MaterialTheme.typography.labelMedium, color = colors.onSurfaceVariant)
+                        Icon(Icons.Outlined.Layers, null, Modifier.size(18.dp), tint = colors.onSurface)
+                        Spacer(Modifier.width(8.dp))
+                        Text("Pages", color = colors.onSurface, style = MaterialTheme.typography.labelLarge)
+                        Spacer(Modifier.width(12.dp))
+                        Text("${page + 1} / $count", color = colors.onSurfaceVariant, style = MaterialTheme.typography.labelSmall)
                     }
                 }
+                if (!wide) ZoomControl(zoom, onResetZoom)
+            }
+        }
+        if (wide) FloatingIsland(Alignment.TopEnd, IntOffset(-px(12.dp), px(64.dp)), floatingWindows) {
+            Column(Modifier.background(colors.surface.copy(alpha = 0.96f), RoundedCornerShape(6.dp)),
+                horizontalAlignment = Alignment.End) {
+                CanvasAction("Export", Icons.Outlined.IosShare, onExport)
+                if (!isPdf) CanvasAction("Paper", Icons.Outlined.Description, onPagePaper)
+                CanvasAction("Precision", Icons.Outlined.Tune, onSettings)
             }
         }
         if (viewportFraction < 0.999f) FloatingIsland(Alignment.CenterEnd, IntOffset(px((-4).dp), 0), floatingWindows) {
             ScrollIndicator(scrollFraction, viewportFraction, onScroll, Modifier.height((maxHeight * 0.25f).coerceIn(96.dp, 180.dp)))
         }
-        RadialTools(settings, selectionCount, maxWidth, maxHeight, floatingWindows)
+        if (toolsVisible) RadialToolSelector(settings, selectionCount, maxWidth, maxHeight, floatingWindows)
+    }
+}
+
+@Composable
+private fun ZoomControl(zoom: Float, onResetZoom: () -> Unit) {
+    TextButton(onClick = onResetZoom, contentPadding = PaddingValues(horizontal = 12.dp),
+        modifier = Modifier.heightIn(min = 48.dp).semantics {
+            contentDescription = "Zoom ${(zoom * 100).roundToInt()} percent. Reset to fit width"
+        }) {
+        Text("${(zoom * 100).roundToInt()}%", style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+@Composable
+private fun CanvasAction(label: String, icon: ImageVector, onClick: () -> Unit) {
+    TextButton(onClick = onClick, contentPadding = PaddingValues(horizontal = 12.dp),
+        modifier = Modifier.heightIn(min = 48.dp)) {
+        Text(label, color = MaterialTheme.colorScheme.onSurface, style = MaterialTheme.typography.labelLarge)
+        Spacer(Modifier.width(10.dp))
+        Icon(icon, null, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurface)
     }
 }
 
 @Composable
 private fun ToolbarButton(icon: ImageVector, label: String, onClick: () -> Unit, enabled: Boolean = true,
-    tint: Color = LocalContentColor.current) {
+    tint: Color = MaterialTheme.colorScheme.onSurface) {
     IconButton(onClick = onClick, enabled = enabled, modifier = Modifier.size(48.dp)) {
         Icon(icon, label, Modifier.size(20.dp), tint = if (enabled) tint else tint.copy(alpha = 0.3f))
     }
@@ -133,7 +164,7 @@ private fun ToolbarButton(icon: ImageVector, label: String, onClick: () -> Unit,
 @Composable
 internal fun GlassSurface(modifier: Modifier = Modifier, shape: Shape = RoundedCornerShape(16.dp), content: @Composable BoxScope.() -> Unit) {
     val colors = MaterialTheme.colorScheme
-    Box(modifier.shadow(3.dp, shape).clip(shape).background(colors.surface.copy(alpha = 0.98f))
+    Box(modifier.shadow(1.dp, shape).clip(shape).background(colors.surface.copy(alpha = 0.98f))
         .border(0.5.dp, colors.outlineVariant.copy(alpha = 0.6f), shape)) {
         CompositionLocalProvider(LocalContentColor provides colors.onSurface) { content() }
     }
@@ -146,102 +177,6 @@ private fun BoxScope.FloatingIsland(alignment: Alignment, offset: IntOffset, flo
         Popup(alignment = alignment, offset = offset, properties = PopupProperties(focusable = false,
             dismissOnBackPress = false, dismissOnClickOutside = false, clippingEnabled = true), content = content)
     } else Box(Modifier.align(alignment).offset { offset }, contentAlignment = Alignment.Center) { content() }
-}
-
-/** Read drag position during placement, without recomposing the toolbar on every pointer event. */
-@Composable
-private fun BoxScope.MovableToolIsland(
-    position: State<Offset>, minX: Float, minY: Float, inset: IntOffset,
-    floating: Boolean, content: @Composable () -> Unit,
-) {
-    val provider = remember(position, minX, minY, inset) {
-        object : PopupPositionProvider {
-            override fun calculatePosition(anchorBounds: IntRect, windowSize: IntSize,
-                layoutDirection: LayoutDirection, popupContentSize: IntSize): IntOffset {
-                val offset = position.value
-                return IntOffset(anchorBounds.right - popupContentSize.width + inset.x + offset.x.coerceIn(minX, 0f).roundToInt(),
-                    anchorBounds.bottom - popupContentSize.height + inset.y + offset.y.coerceIn(minY, 0f).roundToInt())
-            }
-        }
-    }
-    if (floating) Popup(popupPositionProvider = provider, properties = PopupProperties(
-        focusable = false, dismissOnBackPress = false, dismissOnClickOutside = false), content = content)
-    else Box(Modifier.align(AbsoluteAlignment.BottomRight).absoluteOffset {
-        IntOffset(position.value.x.coerceIn(minX, 0f).roundToInt(), position.value.y.coerceIn(minY, 0f).roundToInt()) + inset
-    }) { content() }
-}
-
-@Composable
-private fun BoxScope.RadialTools(settings: SettingsStore, selectionCount: Int, width: Dp, height: Dp, floating: Boolean) {
-    var expanded by remember { mutableStateOf(false) }
-    var options by remember { mutableStateOf(false) }
-    var dragging by remember { mutableStateOf(false) }
-    val position = remember { mutableStateOf(Offset.Zero) }
-    val opacity by animateFloatAsState(if (expanded) 1f else 0f, tween(100), label = "Tool palette opacity")
-    val density = LocalDensity.current
-    fun px(value: Dp) = with(density) { value.roundToPx() }
-    // Reserve the compact palette's footprint in both states. Keep clear of the scroll gutter.
-    val minX = -px((width - 332.dp).coerceAtLeast(0.dp)).toFloat()
-    val minY = -px((height - 272.dp).coerceAtLeast(0.dp)).toFloat()
-    val inset = IntOffset(-px(60.dp), -px(80.dp))
-    val drawing = settings.tool == Tool.Pen || settings.tool == Tool.Highlighter
-    val colors = MaterialTheme.colorScheme
-    var coordinates by remember { mutableStateOf<LayoutCoordinates?>(null) }
-    val drag = Modifier.onGloballyPositioned { coordinates = it }.pointerInput(minX, minY) {
-        var startScreen = Offset.Zero
-        var startPosition = Offset.Zero
-        detectDragGestures(
-            onDragStart = { local ->
-                startScreen = coordinates?.localToScreen(local) ?: local
-                startPosition = Offset(position.value.x.coerceIn(minX, 0f), position.value.y.coerceIn(minY, 0f))
-                dragging = true; expanded = false; options = false
-            },
-            onDragEnd = { dragging = false }, onDragCancel = { dragging = false },
-        ) { change, _ ->
-            change.consume()
-            val screen = coordinates?.localToScreen(change.position) ?: change.position
-            val next = startPosition + screen - startScreen
-            position.value = Offset(next.x.coerceIn(minX, 0f), next.y.coerceIn(minY, 0f))
-        }
-    }
-    MovableToolIsland(position, minX, minY, inset, floating) {
-        GlassSurface(Modifier.size(52.dp).then(drag), RoundedCornerShape(18.dp)) {
-            IconButton(onClick = { expanded = !expanded; options = false }, modifier = Modifier.fillMaxSize().semantics {
-                stateDescription = if (expanded) "${settings.tool.label}. Tools expanded" else if (settings.tool == Tool.Lasso && selectionCount > 0)
-                    "$selectionCount selected. Drag ink to move" else settings.tool.label
-            }) {
-                Icon(settings.tool.icon(), if (expanded) "Close tools" else "Open tools", Modifier.size(22.dp))
-            }
-            if (drawing) Box(Modifier.align(Alignment.BottomCenter).padding(bottom = 7.dp).size(12.dp, 3.dp)
-                .background(Color(if (settings.tool == Tool.Highlighter) settings.highlighterSlots.currentColor else settings.penSlots.currentColor), CircleShape))
-        }
-    }
-    if (!dragging && (expanded || opacity > 0f)) {
-        MovableToolIsland(position, minX, minY, inset + IntOffset(0, -px(60.dp)), floating) {
-            GlassSurface(Modifier.graphicsLayer { alpha = opacity }, RoundedCornerShape(20.dp)) {
-                Row(Modifier.padding(6.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Tool.entries.forEach { tool ->
-                        val active = settings.tool == tool
-                        IconButton(onClick = { settings.tool = tool; expanded = false; options = false },
-                            enabled = expanded, modifier = Modifier.size(48.dp).clip(RoundedCornerShape(14.dp))
-                                .background(if (active) colors.primaryContainer else Color.Transparent)
-                                .semantics { selected = active }) {
-                            Icon(tool.icon(), tool.label, Modifier.size(22.dp),
-                                tint = if (active) colors.onPrimaryContainer else colors.onSurfaceVariant)
-                        }
-                    }
-                    Box(Modifier.padding(horizontal = 4.dp).width(1.dp).height(24.dp).background(colors.outlineVariant))
-                    Box {
-                        IconButton(onClick = { options = !options }, enabled = expanded && drawing, modifier = Modifier.size(48.dp)) {
-                            Icon(Icons.Outlined.Tune, "Brush options", Modifier.size(20.dp))
-                        }
-                        if (options) ToolOptionsPopup(settings) { options = false }
-                    }
-                }
-            }
-        }
-    }
-    if (expanded) androidx.activity.compose.BackHandler { expanded = false; options = false }
 }
 
 @Composable
