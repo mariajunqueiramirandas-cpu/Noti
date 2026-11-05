@@ -1,0 +1,6 @@
+[
+  {"name":"smali-dexlib2-3.0.10.jar","url":"https://dl.google.com/dl/android/maven2/com/android/tools/smali/smali-dexlib2/3.0.10/smali-dexlib2-3.0.10.jar","sha256":"688dee6a46962a4dd1774b64be926534b0b6504bfd5d5c9f89c0f5af284f50c1"},
+  {"name":"guava-31.1-android.jar","url":"https://repo.maven.apache.org/maven2/com/google/guava/guava/31.1-android/guava-31.1-android.jar","sha256":"32ac2ed709d96d278b5d2e3e5cea178fa4939939c525fb647532f013308db309"},
+  {"name":"failureaccess-1.0.1.jar","url":"https://repo.maven.apache.org/maven2/com/google/guava/failureaccess/1.0.1/failureaccess-1.0.1.jar","sha256":"a171ee4c734dd2da837e4b16be9df4661afab72a41adaf31eb84dfdaf936ca26"},
+  {"name":"jsr305-3.0.2.jar","url":"https://repo.maven.apache.org/maven2/com/google/code/findbugs/jsr305/3.0.2/jsr305-3.0.2.jar","sha256":"766ad2a0783f2687962c8ad74ceecc38a28b9f72a2d085ee438b7813e928d0c7"}
+]

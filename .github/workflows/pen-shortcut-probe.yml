@@ -13,12 +13,24 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: |
+            work/pen-shortcut-probe/probe-debug.p12
+            work/pen-shortcut-probe/dependencies
+          key: noti-pen-probe-debug-and-dependencies-v3
       - name: Build and verify standalone probe
         run: >-
           python3 tools/pen-shortcut-probe/build.py
           --sdk "$ANDROID_HOME"
           --jdk "$JAVA_HOME_17_X64"
           --out work/pen-shortcut-probe
+      - name: Verify bytecode report on synthetic fixtures
+        run: >-
+          python3 tools/pen-shortcut-probe/verify.py
+          --sdk "$ANDROID_HOME"
+          --jdk "$JAVA_HOME_17_X64"
+          --build-out work/pen-shortcut-probe
       - uses: actions/upload-artifact@v4
         with:
           name: noti-pen-probe

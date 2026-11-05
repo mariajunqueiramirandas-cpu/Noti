@@ -2,10 +2,12 @@
 """Build an isolated no-permission pen probe using Android SDK command-line tools."""
 import argparse
 import hashlib
+import json
 import os
 from pathlib import Path
 import shutil
 import subprocess
+import urllib.request
 import zipfile
 
 parser = argparse.ArgumentParser()
@@ -32,15 +34,28 @@ env["JAVA_HOME"] = str(jdk)
 env["PATH"] = str(jdk / "bin") + os.pathsep + env.get("PATH", "")
 tools = sdk / "build-tools" / "36.0.0"
 android = sdk / "platforms" / "android-36" / "android.jar"
+dependency_dir = out / "dependencies"
+dependency_dir.mkdir(exist_ok=True)
+libraries = []
+for dependency in json.loads((source / "dependencies.json").read_text()):
+    path = dependency_dir / dependency["name"]
+    if not path.exists() or hashlib.sha256(path.read_bytes()).hexdigest() != dependency["sha256"]:
+        with urllib.request.urlopen(dependency["url"], timeout=60) as response:
+            data = response.read()
+        if hashlib.sha256(data).hexdigest() != dependency["sha256"]:
+            raise RuntimeError("Dependency checksum mismatch: " + dependency["name"])
+        path.write_bytes(data)
+    libraries.append(path)
 
 def run(*cmd):
     subprocess.run([str(x) for x in cmd], env=env, check=True)
 
 base = build / "base.apk"
-run(tools / "aapt2", "link", "-I", android, "--manifest", source / "AndroidManifest.xml", "-o", base)
+run(tools / "aapt2", "link", "-I", android, "--manifest", source / "AndroidManifest.xml", "-A", source / "assets", "-o", base)
 java = sorted((source / "src").rglob("*.java"))
-run(jdk / "bin" / "javac", "--release", "17", "-classpath", android, "-d", classes, *java)
-run(tools / "d8", "--release", "--min-api", "33", "--lib", android, "--output", dex, *sorted(classes.rglob("*.class")))
+classpath = os.pathsep.join(str(x) for x in [android, *libraries])
+run(jdk / "bin" / "javac", "--release", "17", "-classpath", classpath, "-d", classes, *java)
+run(tools / "d8", "--release", "--min-api", "33", "--lib", android, "--output", dex, *sorted(classes.rglob("*.class")), *libraries)
 unsigned = build / "unsigned.apk"
 shutil.copyfile(base, unsigned)
 with zipfile.ZipFile(unsigned, "a", compression=zipfile.ZIP_DEFLATED) as archive:
@@ -48,10 +63,11 @@ with zipfile.ZipFile(unsigned, "a", compression=zipfile.ZIP_DEFLATED) as archive
         archive.write(item, item.name)
 aligned = build / "aligned.apk"
 run(tools / "zipalign", "-f", "4", unsigned, aligned)
-key = build / "probe-debug.p12"
-run(jdk / "bin" / "keytool", "-genkeypair", "-keystore", key, "-storetype", "PKCS12",
-    "-storepass", "android", "-keypass", "android", "-alias", "probe", "-keyalg", "RSA",
-    "-keysize", "2048", "-validity", "3650", "-dname", "CN=Noti Pen Probe (local test)")
+key = out / "probe-debug.p12"
+if not key.exists():
+    run(jdk / "bin" / "keytool", "-genkeypair", "-keystore", key, "-storetype", "PKCS12",
+        "-storepass", "android", "-keypass", "android", "-alias", "probe", "-keyalg", "RSA",
+        "-keysize", "2048", "-validity", "3650", "-dname", "CN=Noti Pen Probe (local test)")
 apk = out / "noti-pen-probe.apk"
 run(tools / "apksigner", "sign", "--ks", key, "--ks-pass", "pass:android", "--key-pass", "pass:android",
     "--ks-key-alias", "probe", "--out", apk, aligned)

@@ -1,0 +1,4 @@
+Included libraries:
+smali-dexlib2 3.0.10 (BSD-3-Clause): see smali-license.txt.
+Guava 31.1-android and failureaccess 1.0.1 (Apache-2.0), Copyright The Guava Authors: see guava-license.txt.
+JSR-305 3.0.2: see jsr305-notice.txt.

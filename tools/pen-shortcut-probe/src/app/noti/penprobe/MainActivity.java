@@ -36,6 +36,10 @@ public final class MainActivity extends Activity {
             + "The real app ID remains app.noti.penprobe; Noti is untouched. No permissions are requested.\n");
         help.setTextSize(16);
         content.addView(help);
+        Button inspect = new Button(this);
+        inspect.setText("Inspect firmware (copy text)");
+        inspect.setOnClickListener(v -> startActivity(new Intent(this, FirmwareTextActivity.class)));
+        content.addView(inspect);
         for (int i = 0; i < MODES.length; i++) {
             final int mode = i;
             Button button = new Button(this);

@@ -115,11 +115,16 @@ the stylus timers. This is a useful additional path to investigate. In the
 returns 0 unless the event has a real device, that device is a full keyboard, and
 the system is a tablet. Android's [full-keyboard test][inputdevice] requires both
 keyboard source support and `KEYBOARD_TYPE_ALPHABETIC`; source `0x101` alone is
-insufficient evidence. The v1 reports did not include keyboard type.
+insufficient evidence. V2 subsequently reported `keyboardType=1` and
+`fullKeyboard=false` for the real Focus Pen key device. Thus that full-keyboard
+route does not apply to these pen events under the inspected guard. V2 also
+delivered an uncanceled 4,327 ms writing hold with a stroke while held; screenshot
+hold attempts still produced only short key sequences (70–130 ms).
 
 After that gate, type 1 can come from kid mode, disabled keyboard shortcuts, a
-matching entry in the private skip-interception map, or desktop-mode handling.
-The inspected built-in package exception is `com.aliyun.wuying.enterprise` for
+matching entry in the private skip-interception map. The separate desktop-mode
+helper in this snapshot consumes Alt+Tab with type 4; it provides no Page Up/Down
+pass-through. The inspected built-in package exception is `com.aliyun.wuying.enterprise` for
 Alt+Tab / Meta-related shortcuts, not a blanket exemption for Page Up/Down.
 Disabling keyboard shortcuts or editing the private map is not established as an
 unprivileged app operation. Type 2 sends qualifying events to AOSP handling.
@@ -136,6 +141,18 @@ code. No root, ADB, privileged grant, or system write is used. The raw code budg
 is 24 MiB; denied reads and size-budget skips are recorded. No user data is
 collected, and nothing is uploaded automatically. This supplies the exact-build
 code and device-capability evidence needed for this path.
+
+## Text-only firmware inspection
+
+The user cannot attach the firmware ZIP in this chat. Probe v3 therefore adds
+**Inspect firmware (copy text)**, which locally parses the fixed framework-JAR
+allowlist using checksum-pinned smali-dexlib2 and provides numbered text sections
+for copying. Start with Summary and Screenshot handler; no further hold tests
+are required. Queue/dispatch policy and keyboard conditions remain available in
+other sections. System code is neither executed nor modified. Read failures,
+unsupported code and truncation are explicit; the selected method bytecode must
+not be treated as a complete framework audit. The synthetic host fixtures verify
+key disassembly details without substituting for actual-device code readability.
 
 ## Excluded or incomplete approaches
 

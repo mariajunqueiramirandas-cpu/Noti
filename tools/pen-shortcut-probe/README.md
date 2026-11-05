@@ -35,11 +35,21 @@ python3 tools/pen-shortcut-probe/build.py \
   --out work/pen-shortcut-probe
 ```
 
-The APK is `work/pen-shortcut-probe/noti-pen-probe.apk`. The script compiles against
-the public Android SDK, aligns the APK, generates a local test signing key, signs
-and verifies the APK, and rejects an APK declaring permissions. The test signing
-key is regenerated on each build, so uninstall an older probe before installing a
-fresh build. This does not affect the separately installed Noti app.
+The APK is `work/pen-shortcut-probe/noti-pen-probe.apk`. The script downloads
+checksum-pinned build dependencies, compiles against the public Android SDK,
+aligns the APK, generates a local test signing key if absent, signs and verifies
+the APK, and rejects an APK declaring permissions. From v3, the key is kept in
+the chosen output directory so subsequent builds there can update in place.
+V1/v2 regenerated signing keys, so uninstall the old probe once before installing
+v3. This does not affect the separately installed Noti app.
+
+The bytecode-report fixture checks run with:
+
+```sh
+python3 tools/pen-shortcut-probe/verify.py \
+  --sdk "$ANDROID_SDK_ROOT" --jdk "$JAVA_HOME" \
+  --build-out work/pen-shortcut-probe
+```
 
 ## Device test without ADB
 
@@ -85,3 +95,25 @@ read failures and size-budget skips; the ZIP can be incomplete or report-only on
 firmware that denies reads. Source-read failures are distinct from destination
 write failures, which are reported as an unsuccessful export. No system binaries
 are committed to this repository or published in the build artifact.
+
+## Copy exact firmware inspection as text (v3)
+
+If ZIP upload is unavailable, choose **Inspect firmware (copy text)**. The app
+reads a fixed allowlist of Xiaomi framework JARs locally and disassembles selected
+pen-policy methods with smali-dexlib2. It does not load or execute the system
+classes, change system files or settings, or use network access. Parser libraries
+are packaged in the APK with license notices under `assets/`.
+
+Copy **Summary**, then **Screenshot handler**, into the chat. Each section is
+split into numbered parts small enough to paste; use **Next** when needed. There
+is no need to repeat the four button tests or upload the ZIP. If further evidence
+is needed, the same report also contains dispatch/delay policy, queue interception,
+keyboard interception, writing references and remaining pen-policy methods.
+
+The report gives raw DEX code-unit addresses, registers, resolved references,
+literal values, branches and exception ranges, not guessed Java source. Switch
+payload offsets are explicitly relative to their switch opcode. Missing, unreadable,
+unsupported or truncated code is labeled; none proves a system condition is absent.
+Host fixture checks cover literal/reference resolution, branches, switch payloads,
+exception ranges, missing implementations, class scope, and rejection of corrupt
+input. Actual framework readability still needs the target-device report.

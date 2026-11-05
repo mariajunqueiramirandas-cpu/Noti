@@ -46,7 +46,7 @@ public final class ProbeActivity extends Activity {
         if ((mode & 1) != 0) attrs.flags |= WindowManager.LayoutParams.FLAG_SECURE;
         getWindow().setAttributes(attrs);
 
-        header = "Noti Pen Probe v2\n" + MainActivity.MODES[mode]
+        header = "Noti Pen Probe v3\n" + MainActivity.MODES[mode]
             + "\nDevice: " + Build.MANUFACTURER + " " + Build.MODEL
             + "\nAndroid: " + Build.VERSION.RELEASE + " / API " + Build.VERSION.SDK_INT
             + "\nBuild: " + Build.DISPLAY + "\nFingerprint: " + Build.FINGERPRINT
