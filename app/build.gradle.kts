@@ -7,20 +7,13 @@ plugins {
 val ndkVersionProp = providers.gradleProperty("noti.ndkVersion").orElse("27.3.13750724")
 val cmakeVersionProp = providers.gradleProperty("noti.cmakeVersion").orElse("3.31.5")
 
-// HyperOS 3 (3.0.303.0) hardcodes its stylus-button allowlist to com.miui.notes,
-// com.miui.pen.demo and com.miui.creation and skips its 380 ms quick-note interception for
-// those packages (docs/PEN_BUTTONS.md). com.miui.pen.demo is unclaimed on retail firmware, so
-// -Pnoti.penAllowlist=true installs Noti under that identity and held pen keys reach the app
-// with real down/up timing instead of arming the system's shortcut timers.
-val penAllowlist = providers.gradleProperty("noti.penAllowlist").orElse("false").get().toBoolean()
-
 android {
     namespace = "app.noti"
     compileSdk = 36
     ndkVersion = ndkVersionProp.get()
 
     defaultConfig {
-        applicationId = if (penAllowlist) "com.miui.pen.demo" else "app.noti"
+        applicationId = "app.noti"
         minSdk = 33
         targetSdk = 36
         versionCode = 1

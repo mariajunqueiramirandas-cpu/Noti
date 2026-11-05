@@ -21,10 +21,14 @@ nib-down, so release never turns half an eraser gesture into ink: the selected t
 next stroke. Using a held button for ink suppresses its click, even if released quickly.
 Long presses without ink also suppress clicks, using Android's configured long-press timeout.
 
-Holds are supported **only on the writing button**. HyperOS reserves the screenshot button's hold
-for its own partial-screenshot editor with no package gate (see below), so a held screenshot
-button never reaches Noti on the target firmware and Noti does not pretend otherwise; the
-screenshot button stays click-only.
+Holds are supported **only on the writing button**. On HyperOS 3.0.303.0 (Xiaomi Pad 7) the OS
+intercepts held pen keys for every package outside its hardcoded allowlist (see below), so on
+that firmware neither button's held *key* reaches Noti and both stay click-only; the
+writing-button hold path exists for platforms and firmwares that deliver real down/up timing.
+Held stylus motion flags may still reach the app independently of key interception, but
+HyperOS's own hold action still fires, so the stock-firmware experience stays click-only.
+The screenshot button is click-only everywhere: HyperOS reserves its hold unconditionally,
+with no package gate.
 
 Turn holds off to keep only key click shortcuts. Turn **Pen shortcuts** off to pass keys through
 and disable button-based tool overrides; the physical eraser tip remains available.
@@ -62,7 +66,7 @@ Only the active canvas receives key shortcuts. Settings scratch canvases superse
 editor, including settings opened in a dialog; dialogs and background windows cannot edit a hidden
 notebook through its shortcuts. The tester never invokes notebook actions or changes the selected tool.
 
-## Suppressing HyperOS's reserved hold actions
+## Why HyperOS's reserved hold actions cannot be suppressed from an app
 
 HyperOS 3.0.303.0 on the Xiaomi Pad 7 intercepts Focus Pen keys in
 `MiuiStylusShortcutManager`, hooked from `PhoneWindowManager.interceptKeyBeforeQueueing` —
@@ -80,34 +84,23 @@ note mask for Page Down, partial screenshot for Page Up). Two consequences follo
 - **The only app-reachable bypass is a hardcoded package allowlist.** The quick-note path
   skips interception entirely when the focused window's owning package is one of
   `com.miui.notes`, `com.miui.pen.demo` or `com.miui.creation` — a plain string comparison
-  with no signature check. Package names are first come, first served, and `com.miui.pen.demo`
-  (Xiaomi's pen demo app) is not preinstalled on retail firmware. A sideloaded Noti built
-  under that identity receives every pen key immediately with real down/up timing: holds
-  drive hold-to-erase through the normal key path, long presses suppress
-  clicks, clicks lose the 400 ms delay, and HyperOS's quick-note mask no longer appears while
-  Noti is focused.
+  with no signature check. A build under such an identity would receive every pen key
+  immediately with real down/up timing.
 
-Build the allowlisted APK with:
+Noti ships as `app.noti` and does not adopt an allowlist identity. Renaming the application
+id is a new Android identity that orphans existing installs, can never ship on Google Play
+under `com.miui.pen.demo`, and risks an update conflict if a HyperOS update or GetApps ever
+installs the real pen demo app. It would also buy only half a fix: the screenshot button's
+hold action has no package gate in 3.0.303.0, so the partial-screenshot editor still opens
+inside allowlisted packages. Suppressing these actions without root or adb requires patching
+`miui-services.jar` (see the XDA guide in Sources), which Noti will not do.
 
-```
-./gradlew assembleRelease -Pnoti.penAllowlist=true
-```
-
-The default build keeps the `app.noti` identity. Caveats of the allowlisted build:
-
-- A changed application id is a new Android identity: it installs alongside the regular
-  build without inheriting its data, and Google Play will never accept that package name.
-- If a HyperOS update or GetApps ever installs the real `com.miui.pen.demo`, one of the two
-  apps will refuse to update (signature mismatch). The other two allowlist entries are
-  preinstalled system apps, so there is no third non-root fallback identity.
-- The **screenshot button's hold action has no package gate** in 3.0.303.0: holding the upper
-  button for 380 ms still opens the partial-screenshot editor even inside allowlisted
-  packages. Its short presses keep working. Suppressing it without root or adb requires
-  patching `miui-services.jar` (see the XDA guide in Sources), which Noti will not do.
-- Game Turbo's per-app boost (`gb_boosting`) is checked before the stylus manager in
-  `interceptKeyBeforeQueueing`; whether an active game session passes stylus keys through to
-  the focused app is unverified on 3.0.303.0. Test it with the default build before adopting
-  the allowlisted identity.
+The definitive in-app behavior on stock HyperOS is therefore **click-only for both buttons**.
+The writing-button hold path stays implemented for platforms and firmwares that deliver held
+keys with real timing. One package-preserving experiment remains unverified: Game Turbo's
+per-app boost (`gb_boosting`) is checked before the stylus manager in
+`interceptKeyBeforeQueueing`, so an active game session may pass stylus keys through to the
+focused app with no package change required.
 
 ## Verify on the Xiaomi Pad 7
 
@@ -129,10 +122,10 @@ There was no attached Android device during implementation. On the target tablet
    the pen, and turn shortcuts off/on. No tool should remain temporarily held after canceled input.
 6. Verify ordinary Bluetooth keyboard Page Up/Down, and Xiaomi's unassigned Focus button. OS-reserved
    functions may still take precedence; absence of an event is not evidence of a physical pen failure.
-7. With an allowlisted build (`-Pnoti.penAllowlist=true`), hold the writing button for two seconds in
-   a notebook: no quick-note mask may appear, and hold-to-erase must apply to strokes started while
-   held. Hold the screenshot button for two seconds: the partial-screenshot editor is still expected
-   (no package gate on that path). Confirm clicks fire without the previous ~400 ms delay.
+7. Optional experiment, no package change needed: add Noti to Game Turbo's boost list, start a
+   boosted session, and repeat steps 2–4. If held keys now arrive with real down/up timing,
+   hold-to-erase works on stock HyperOS through `gb_boosting`; if the quick-note mask still
+   appears, game mode does not pass stylus keys through on 3.0.303.0.
 
 For lower-level investigation, Android's `getevent` utility can show kernel input events when device
 permissions allow it. An app-level event trace is still needed to establish what Noti can receive.
