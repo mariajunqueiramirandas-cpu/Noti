@@ -90,7 +90,7 @@ class EditorToolbarTest {
         render(800, ThemeMode.Light)
         compose.onNodeWithContentDescription("Highlighter").performClick()
         // Near the pen sector's outer corner, outside its 48 dp icon target.
-        compose.onNodeWithTag("toolbar").performTouchInput { click(Offset(146f, 78f)) }
+        compose.onNodeWithTag("toolbar").performTouchInput { click(Offset(146f, 98f)) }
         compose.onNodeWithContentDescription("Pen").assertIsSelected()
         compose.runOnIdle { assertEquals(Tool.Pen, settings.tool) }
     }
@@ -154,14 +154,57 @@ class EditorToolbarTest {
         compose.runOnIdle { assertEquals(1, requestedPage) }
     }
 
-    @Test fun toolsCanBeHiddenAndRestoredFromMore() {
+    @Test fun toolsCanBeCollapsedAndExpandedFromMore() {
         render(360, ThemeMode.Light)
         compose.onNodeWithContentDescription("More").performClick()
-        compose.onNodeWithText("Hide tools").performClick()
+        compose.onNodeWithText("Collapse tools").performClick()
         compose.onNodeWithContentDescription("Pen").assertDoesNotExist()
         compose.onNodeWithContentDescription("More").performClick()
-        compose.onNodeWithText("Show tools").performClick()
+        compose.onNodeWithText("Expand tools").performClick()
         compose.onNodeWithContentDescription("Pen").assertIsDisplayed()
+    }
+
+    @Test fun directCollapseFreesCanvasAndPreservesToolAndCenter() {
+        render(1200, ThemeMode.Light)
+        val before = compose.onNodeWithContentDescription("Brush options").fetchSemanticsNode().boundsInRoot.center
+        compose.onNodeWithContentDescription("Collapse tools").performClick()
+        tools.forEach { compose.onNodeWithContentDescription(it).assertDoesNotExist() }
+        val collapsed = compose.onNodeWithContentDescription("Expand tools").assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+        assertEquals(before, collapsed.center)
+        assertEquals(56f, collapsed.width, 0.5f)
+        screenshot("collapsed-light")
+        compose.runOnIdle { settings.tool = Tool.Eraser }
+        compose.onNodeWithContentDescription("Expand tools").assert(SemanticsMatcher.expectValue(
+            androidx.compose.ui.semantics.SemanticsProperties.StateDescription, "Eraser. Drag to move tools"))
+        compose.onNodeWithContentDescription("Expand tools").performClick()
+        compose.onNodeWithContentDescription("Eraser").assertIsSelected()
+        assertEquals(before, compose.onNodeWithContentDescription("Brush options").fetchSemanticsNode().boundsInRoot.center)
+    }
+
+    @Test fun realPopupCollapseKeepsCenterAndShrinksItsInputWindow() {
+        render(800, ThemeMode.Light, floating = true)
+        repeat(3) {
+            val expanded = compose.onNodeWithContentDescription("Brush options").fetchSemanticsNode()
+            val center = expanded.positionOnScreen + Offset(expanded.size.width / 2f, expanded.size.height / 2f)
+            compose.onNodeWithContentDescription("Collapse tools").performClick()
+            val collapsed = compose.onNodeWithContentDescription("Expand tools").fetchSemanticsNode()
+            val rootSize = generateSequence(collapsed) { it.parent }.last().size
+            assertEquals(56, rootSize.width); assertEquals(56, rootSize.height)
+            assertEquals(center, collapsed.positionOnScreen + Offset(28f, 28f))
+            compose.onNodeWithContentDescription("Expand tools").performClick()
+        }
+    }
+
+    @Test fun collapsedPopupCanBeDraggedAndReopenedWithoutDrift() {
+        render(800, ThemeMode.Dark, floating = true)
+        compose.onNodeWithContentDescription("Collapse tools").performClick()
+        val before = compose.onNodeWithContentDescription("Expand tools").fetchSemanticsNode().positionOnScreen + Offset(28f, 28f)
+        compose.onNodeWithContentDescription("Expand tools").performTouchInput { swipe(center, center + Offset(220f, 150f), 600) }
+        val after = compose.onNodeWithContentDescription("Expand tools").fetchSemanticsNode().positionOnScreen + Offset(28f, 28f)
+        assertEquals(before.x + 220f, after.x, 32f); assertEquals(before.y + 150f, after.y, 32f)
+        compose.onNodeWithContentDescription("Expand tools").performClick()
+        val brush = compose.onNodeWithContentDescription("Brush options").fetchSemanticsNode()
+        assertEquals(after, brush.positionOnScreen + Offset(24f, 24f))
     }
 
     @Test fun saveFailureExposesRetryWithoutOpeningMenu() {
@@ -197,7 +240,7 @@ class EditorToolbarTest {
         // Large drags stop at the reserved header, footer and action gutter.
         compose.onNodeWithContentDescription("Brush options").performTouchInput { swipe(center, center + Offset(2000f, 2000f), 600) }
         val pen = compose.onNodeWithContentDescription("Pen").fetchSemanticsNode().positionOnScreen
-        assertTrue(pen.x < 800f - 144f && pen.y < 800f - 68f)
+        assertTrue(pen.x < 800f - 48f && pen.y < 800f - 68f)
     }
 
     @Test fun realPopupActionsExposeLiveIndicators() {
@@ -209,9 +252,13 @@ class EditorToolbarTest {
         compose.runOnIdle { assertEquals(1, resets); assertEquals(0.75f, scrolled, 0.001f) }
         compose.onNodeWithContentDescription("Undo").performClick()
         compose.onNodeWithContentDescription("Redo").performClick()
-        compose.onNodeWithText("Export").performClick()
-        compose.onNodeWithText("Paper").performClick()
-        compose.onNodeWithText("Precision").performClick()
+        listOf("Export", "Paper", "Precision").forEach { compose.onNodeWithText(it).assertDoesNotExist() }
+        compose.onNodeWithContentDescription("More").performClick()
+        compose.onNodeWithText("Export PDF").performScrollTo().performClick()
+        compose.onNodeWithContentDescription("More").performClick()
+        compose.onNodeWithText("Page paper").performScrollTo().performClick()
+        compose.onNodeWithContentDescription("More").performClick()
+        compose.onNodeWithText("Settings").performScrollTo().performClick()
         compose.runOnIdle { assertEquals(1, undos); assertEquals(1, redos); assertEquals(1, exports); assertEquals(1, papers); assertEquals(1, precision) }
     }
 
@@ -248,7 +295,8 @@ class EditorToolbarTest {
     }
 
     private fun assertControls() {
-        assertTargetsApart(controls + tools + "Brush options")
+        assertTargetsApart(controls + tools + listOf("Brush options", "Collapse tools"))
+        listOf("Export", "Paper", "Precision").forEach { compose.onNodeWithText(it).assertDoesNotExist() }
         compose.onNodeWithContentDescription("Undo").performClick()
         compose.onNodeWithContentDescription("Redo").performClick()
         assertEquals(1, undos); assertEquals(1, redos)

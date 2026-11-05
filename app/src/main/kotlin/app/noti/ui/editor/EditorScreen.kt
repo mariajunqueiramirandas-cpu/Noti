@@ -1,5 +1,12 @@
 package app.noti.ui.editor
 
+import app.noti.ui.common.NotiTextButton as TextButton
+import app.noti.ui.common.NotiIconButton as IconButton
+import app.noti.ui.common.NotiTonalButton as FilledTonalButton
+import app.noti.ui.common.NotiAlertDialog as AlertDialog
+import app.noti.ui.common.NotiDropdownMenu as DropdownMenu
+import app.noti.ui.common.NotiMenuItem as DropdownMenuItem
+
 import android.app.Activity
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
@@ -32,6 +39,7 @@ import app.noti.ink.InkLayer
 import app.noti.pdf.DocumentExport
 import app.noti.pdf.PdfDocument
 import app.noti.ui.common.*
+import app.noti.ui.brand.DotiMascot
 import app.noti.ui.settings.SettingsScreen
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -44,11 +52,19 @@ fun EditorScreen(notebook: Notebook, library: LibraryStore, settings: SettingsSt
     }
     val result = opened
     if (result == null) {
-        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+        Surface(color = MaterialTheme.colorScheme.background) {
+            Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+                DotiMascot(Modifier.size(80.dp))
+                Spacer(Modifier.height(16.dp))
+                Text("Opening your page…", style = MaterialTheme.typography.bodyMedium)
+                Spacer(Modifier.height(12.dp))
+                CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+            }
+        }
     } else if (result.isFailure) {
         AlertDialog(onDismissRequest = onBack, title = { Text("Couldn't open saved ink") },
             text = { Text("The saved file has been kept. Return to the library and try again.") },
-            confirmButton = { TextButton(onClick = onBack) { Text("Back to library") } })
+            confirmButton = { app.noti.ui.common.NotiButton(onClick = onBack) { Text("Back to library") } })
     } else {
         key(notebook.id) { EditorContent(notebook, library, settings, result.getOrThrow(), onBack) }
     }
@@ -196,26 +212,26 @@ private fun EditorContent(notebook: Notebook, library: LibraryStore, settings: S
     }
     if (restoreError) AlertDialog(onDismissRequest = {}, title = { Text("Couldn't read saved ink") },
         text = { Text("The saved file has been kept without changes. Return to the library to keep your original ink safe.") },
-        confirmButton = { TextButton(onClick = onBack) { Text("Back to library") } })
+        confirmButton = { app.noti.ui.common.NotiButton(onClick = onBack) { Text("Back to library") } })
     if (renaming) TextInputDialog("Rename notebook", notebook.name, "Rename", onDismiss = { renaming = false }) {
         library.rename(notebook.id, it); renaming = false
     }
     if (choosingPaper) {
         var paper by remember { mutableStateOf(notebook.paper) }
         AlertDialog(onDismissRequest = { choosingPaper = false }, title = { Text("Page paper") },
-            text = { Column(Modifier.verticalScroll(rememberScrollState())) { PaperPicker(paper, onChange = { paper = it }, showSize = false) } },
-            confirmButton = { TextButton(onClick = { library.setPaper(notebook.id, paper); choosingPaper = false }) { Text("Apply") } },
+            text = { Column { PaperPicker(paper, onChange = { paper = it }, showSize = false) } },
+            confirmButton = { app.noti.ui.common.NotiButton(onClick = { library.setPaper(notebook.id, paper); choosingPaper = false }) { Text("Apply") } },
             dismissButton = { TextButton(onClick = { choosingPaper = false }) { Text("Cancel") } })
     }
     deletingPage?.let { index ->
         AlertDialog(onDismissRequest = { deletingPage = null }, title = { Text("Delete page ${index + 1}?") },
             text = { Text("This removes the page and its ink.") },
-            confirmButton = { TextButton(onClick = { changePages(2, index); deletingPage = null }) { Text("Delete") } },
+            confirmButton = { app.noti.ui.common.NotiButton(destructive = true, onClick = { changePages(2, index); deletingPage = null }) { Text("Delete") } },
             dismissButton = { TextButton(onClick = { deletingPage = null }) { Text("Cancel") } })
     }
     if (confirmingLeave) AlertDialog(onDismissRequest = { confirmingLeave = false }, title = { Text("Return to library?") },
         text = { Text("Your ink is saved automatically on this device.") },
-        confirmButton = { TextButton(onClick = { confirmingLeave = false; saveAndLeave() }) { Text("Leave") } },
+        confirmButton = { app.noti.ui.common.NotiButton(onClick = { confirmingLeave = false; saveAndLeave() }) { Text("Leave") } },
         dismissButton = { TextButton(onClick = { confirmingLeave = false }) { Text("Stay") } })
     if (settingsOpen) Dialog(onDismissRequest = { settingsOpen = false },
         properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
@@ -250,7 +266,7 @@ private fun PagesPanel(notebook: Notebook, current: Int, busy: Boolean, onPage: 
                             DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                                 DropdownMenuItem(text = { Text("Change paper") }, onClick = { menu = false; onChangePaper() })
                                 DropdownMenuItem(text = { Text("Duplicate") }, onClick = { menu = false; onDuplicate(index) })
-                                DropdownMenuItem(text = { Text("Delete") }, enabled = notebook.pageCount > 1, onClick = { menu = false; onDelete(index) })
+                                DropdownMenuItem(text = { Text("Delete") }, destructive = true, enabled = notebook.pageCount > 1, onClick = { menu = false; onDelete(index) })
                             }
                         }
                     }

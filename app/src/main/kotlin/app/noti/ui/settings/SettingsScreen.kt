@@ -1,6 +1,16 @@
 package app.noti.ui.settings
 
+import app.noti.ui.common.NotiButton as Button
+import app.noti.ui.common.NotiTextButton as TextButton
+import app.noti.ui.common.NotiIconButton as IconButton
+import app.noti.ui.common.NotiOutlinedButton as OutlinedButton
+import app.noti.ui.common.NotiAlertDialog as AlertDialog
+import app.noti.ui.common.NotiDropdownMenu as DropdownMenu
+import app.noti.ui.common.NotiMenuItem as DropdownMenuItem
+import app.noti.ui.common.NotiFilterChip as FilterChip
+
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -18,6 +28,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
@@ -29,12 +41,7 @@ import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Palette
 import androidx.compose.material.icons.outlined.PanTool
-import androidx.compose.material3.Button
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.FilterChip
 import androidx.compose.material.icons.outlined.ExpandMore
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.runtime.LaunchedEffect
 import android.widget.Toast
 import app.noti.ink.InkLayer
@@ -47,7 +54,6 @@ import java.util.Locale
 import androidx.compose.material.icons.outlined.TouchApp
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationDrawerItem
 import androidx.compose.material3.NavigationDrawerItemDefaults
@@ -56,7 +62,6 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -84,6 +89,11 @@ import app.noti.ui.common.EngineSpec
 import app.noti.ui.common.InkCanvas
 import app.noti.ui.common.PaperPicker
 import app.noti.ui.common.greyedOut
+import app.noti.ui.brand.DotiMascot
+import app.noti.ui.brand.NotiWordmark
+import app.noti.ui.brand.FriendlyNote
+import app.noti.ui.theme.NotiBrand
+import app.noti.R
 
 private enum class Section(val label: String, val icon: ImageVector) {
     Pen("Pen", Icons.Outlined.Create),
@@ -111,6 +121,7 @@ fun SettingsScreen(settings: SettingsStore, onBack: () -> Unit) {
                 ) {
                     IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "Back") }
                     Text("Settings", style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f).padding(start = 8.dp))
+                    DotiMascot(Modifier.padding(end = 12.dp).size(32.dp))
                 }
                 if (compact) {
                     Box(Modifier.padding(horizontal = 16.dp)) {
@@ -131,11 +142,15 @@ fun SettingsScreen(settings: SettingsStore, onBack: () -> Unit) {
                 Row(Modifier.weight(1f).fillMaxWidth()) {
                     if (!compact) {
                         Column(Modifier.width(220.dp).fillMaxHeight().verticalScroll(rememberScrollState()).padding(12.dp)) {
+                            NotiWordmark(Modifier.padding(start = 12.dp, top = 12.dp, bottom = 24.dp))
                             Section.entries.forEach { s ->
                                 NavigationDrawerItem(
                                     label = { Text(s.label) }, icon = { Icon(s.icon, null) },
                                     selected = section == s, onClick = { section = s },
-                                    colors = NavigationDrawerItemDefaults.colors(unselectedContainerColor = MaterialTheme.colorScheme.background),
+                                    shape = MaterialTheme.shapes.small,
+                                    modifier = Modifier.heightIn(min = 48.dp),
+                                    colors = NavigationDrawerItemDefaults.colors(unselectedContainerColor = MaterialTheme.colorScheme.background,
+                                        selectedContainerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.65f)),
                                 )
                             }
                         }
@@ -146,10 +161,19 @@ fun SettingsScreen(settings: SettingsStore, onBack: () -> Unit) {
                             when (section) {
                                 Section.Pen -> PenSection(settings)
                                 Section.Buttons -> PenButtonsSection(settings)
-                                Section.Writing -> Pane { WritingSection(settings) }
+                                Section.Writing -> Pane {
+                                    SectionIntro("Your flow, your way.", "Small comforts for long writing sessions.")
+                                    WritingSection(settings)
+                                }
                                 Section.Palm -> PalmSection(settings)
-                                Section.Pages -> Pane { PagesSection(settings) }
-                                Section.Appearance -> Pane { AppearanceSection(settings) }
+                                Section.Pages -> Pane {
+                                    SectionIntro("Your kind of paper.", "A fresh page should feel like you.")
+                                    PagesSection(settings)
+                                }
+                                Section.Appearance -> Pane {
+                                    SectionIntro("A little change of scenery.", "Find the light that feels right.")
+                                    AppearanceSection(settings)
+                                }
                                 Section.About -> Pane { AboutSection() }
                             }
                         }
@@ -201,6 +225,7 @@ private fun PenSection(settings: SettingsStore) {
             verticalArrangement = Arrangement.spacedBy(20.dp),
             modifier = paneModifier.verticalScroll(rememberScrollState()).padding(16.dp),
         ) {
+            SectionIntro("Make your mark.", "Tune your pen, then try a little scribble.")
             SwitchRow("Pressure sensitivity", "Line width follows how hard you press.", settings.pressureOn) {
                 settings.pressureOn = it
             }
@@ -241,7 +266,7 @@ private fun PenSection(settings: SettingsStore) {
             }
         }
     }, preview = { paneModifier ->
-        Column(paneModifier.padding(16.dp)) {
+        Column(paneModifier.background(MaterialTheme.colorScheme.surfaceContainerLow).padding(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("Try it here", style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
                 TextButton(onClick = { clears++ }) { Text("Clear") }
@@ -555,18 +580,37 @@ private fun AppearanceSection(settings: SettingsStore) {
 @Composable
 private fun AboutSection() {
     val context = LocalContext.current
+    var licenseOpen by remember { mutableStateOf(false) }
     val version = remember {
         runCatching { context.packageManager.getPackageInfo(context.packageName, 0).versionName }.getOrNull() ?: "?"
     }
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Text("Noti", style = MaterialTheme.typography.headlineSmall)
-        Text("Version $version", color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Spacer(Modifier.height(8.dp))
-        Text("Low-latency notes and PDF annotation for the Xiaomi Pad 7 and Focus Pen.")
-        Text(
-            "Ink is drawn by a native front-buffer engine with its own input thread, so the interface never slows the pen down.",
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        DotiMascot(Modifier.size(136.dp), description = "Doti, Noti’s little ink companion")
+        Text("Noti", style = MaterialTheme.typography.headlineLarge)
+        Text(NotiBrand.Tagline, style = MaterialTheme.typography.headlineSmall)
+        Text("For passing thoughts, happy scribbles, and the things you want to keep. " +
+            "A quiet little home for your notes and PDFs.", style = MaterialTheme.typography.bodyLarge,
+            color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(Modifier.height(4.dp))
+        FriendlyNote("Meet Doti", "Part ink drop, part daydream. Always up for a fresh page.")
+        Text("Version $version", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text("Made for handwriting with the Xiaomi Pad 7 and Focus Pen.",
+            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        TextButton(onClick = { licenseOpen = true }) { Text("Typeface license") }
+    }
+    if (licenseOpen) {
+        val license = remember { context.resources.openRawResource(R.raw.nunito_ofl).bufferedReader().use { it.readText() } }
+        AlertDialog(onDismissRequest = { licenseOpen = false }, title = { Text("Nunito") },
+            text = { Text(license, style = MaterialTheme.typography.bodySmall) },
+            confirmButton = { TextButton(onClick = { licenseOpen = false }) { Text("Close") } })
+    }
+}
+
+@Composable
+private fun SectionIntro(title: String, subtitle: String) {
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(title, style = MaterialTheme.typography.headlineSmall)
+        Text(subtitle, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
@@ -582,7 +626,7 @@ private fun SwitchRow(
 ) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
-        modifier = modifier.clip(MaterialTheme.shapes.small).clickable { onChange(!checked) },
+        modifier = modifier.fillMaxWidth().clip(MaterialTheme.shapes.small).clickable { onChange(!checked) }.padding(vertical = 8.dp),
     ) {
         Column(Modifier.weight(1f).padding(end = 16.dp)) {
             Text(title, style = MaterialTheme.typography.titleSmall)

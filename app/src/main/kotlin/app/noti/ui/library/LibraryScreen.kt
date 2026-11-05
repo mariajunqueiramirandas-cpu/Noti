@@ -1,5 +1,12 @@
 package app.noti.ui.library
 
+import app.noti.ui.common.NotiButton as Button
+import app.noti.ui.common.NotiTextButton as TextButton
+import app.noti.ui.common.NotiIconButton as IconButton
+import app.noti.ui.common.NotiAlertDialog as AlertDialog
+import app.noti.ui.common.NotiDropdownMenu as DropdownMenu
+import app.noti.ui.common.NotiMenuItem as DropdownMenuItem
+
 import android.graphics.BitmapFactory
 import android.text.format.DateUtils
 import android.widget.Toast
@@ -36,11 +43,13 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
@@ -72,24 +81,18 @@ import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.automirrored.outlined.Sort
 import androidx.compose.material.icons.outlined.Star
 import androidx.compose.material.icons.outlined.StarBorder
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.rememberDrawerState
-import androidx.compose.material3.Button
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationDrawerItem
 import androidx.compose.material3.NavigationDrawerItemDefaults
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
@@ -105,6 +108,14 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.foundation.shape.RoundedCornerShape
+import app.noti.ui.brand.DotiMascot
+import app.noti.ui.brand.NotiWordmark
+import app.noti.ui.brand.LibraryWelcome
+import app.noti.ui.brand.FriendlyNote
+import app.noti.ui.theme.NotiBrand
 import app.noti.data.Folder
 import app.noti.data.LibraryStore
 import app.noti.data.Notebook
@@ -324,6 +335,10 @@ fun LibraryScreen(
                                 verticalArrangement = Arrangement.spacedBy(20.dp),
                                 modifier = Modifier.fillMaxSize(),
                             ) {
+                                if (filter == Filter.All && query.isBlank() && selection.isEmpty()) {
+                                    item(span = { GridItemSpan(maxLineSpan) }) { LibraryWelcome(compact) }
+                                    item(span = { GridItemSpan(maxLineSpan) }) { SectionLabel("Your notebooks · ${visible.size}") }
+                                }
                                 if (showRecentRow) {
                                     item(span = { GridItemSpan(maxLineSpan) }) { SectionLabel("Recent") }
                                     items(recent, key = { "r-" + it.id }) { nb ->
@@ -412,7 +427,7 @@ fun LibraryScreen(
             title = { Text(if (ids.size == 1) "Delete forever?" else "Delete ${ids.size} notebooks forever?") },
             text = { Text("This can't be undone.") },
             confirmButton = {
-                TextButton(onClick = {
+                app.noti.ui.common.NotiButton(destructive = true, onClick = {
                     library.deleteForever(ids)
                     confirmDeleteForever = null
                     selection = emptySet()
@@ -443,11 +458,10 @@ private fun Sidebar(
             .verticalScroll(rememberScrollState())
             .padding(12.dp),
     ) {
-        Text(
-            "Noti",
-            style = MaterialTheme.typography.headlineSmall,
-            modifier = Modifier.padding(start = 16.dp, top = 12.dp, bottom = 16.dp),
-        )
+        NotiWordmark(Modifier.padding(start = 12.dp, top = 12.dp, bottom = 4.dp))
+        Text(NotiBrand.Tagline, style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(start = 16.dp, bottom = 24.dp))
         SideItem("All", Icons.AutoMirrored.Outlined.LibraryBooks, filter == Filter.All) { onFilter(Filter.All) }
         SideItem("Recent", Icons.Outlined.History, filter == Filter.Recent) { onFilter(Filter.Recent) }
         SideItem("Favorites", Icons.Outlined.StarBorder, filter == Filter.Favorites) { onFilter(Filter.Favorites) }
@@ -477,7 +491,7 @@ private fun Sidebar(
                         onClick = { menu = false; onRenameFolder(f) },
                     )
                     DropdownMenuItem(
-                        text = { Text("Delete folder") },
+                        text = { Text("Delete folder") }, destructive = true,
                         leadingIcon = { Icon(Icons.Outlined.Delete, null) },
                         onClick = {
                             menu = false
@@ -493,6 +507,8 @@ private fun Sidebar(
         Spacer(Modifier.height(20.dp))
         SideItem("Trash", Icons.Outlined.Delete, filter == Filter.Trash) { onFilter(Filter.Trash) }
         SideItem("Settings", Icons.Outlined.Settings, false, onClick = onSettings)
+        Spacer(Modifier.height(28.dp))
+        FriendlyNote("Room for a little doodle", "It doesn't have to be a big idea.")
     }
 }
 
@@ -511,8 +527,11 @@ private fun SideItem(
         selected = selected,
         onClick = onClick,
         badge = badge,
-        colors = NavigationDrawerItemDefaults.colors(unselectedContainerColor = Color.Transparent),
-        modifier = modifier.height(48.dp),
+        shape = MaterialTheme.shapes.small,
+        colors = NavigationDrawerItemDefaults.colors(unselectedContainerColor = Color.Transparent,
+            selectedContainerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.65f),
+            unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant),
+        modifier = modifier.heightIn(min = 48.dp),
     )
 }
 
@@ -541,7 +560,7 @@ private fun TopBar(
             OutlinedTextField(
                 value = query,
                 onValueChange = onQuery,
-                placeholder = { Text("Search") },
+                placeholder = { Text("Find a little idea…") },
                 leadingIcon = { Icon(Icons.Outlined.Search, null) },
                 trailingIcon = {
                     if (query.isNotEmpty()) {
@@ -549,9 +568,9 @@ private fun TopBar(
                     }
                 },
                 singleLine = true,
-                shape = CircleShape,
+                shape = MaterialTheme.shapes.small,
                 colors = TextFieldDefaults.colors(
-                    unfocusedContainerColor = MaterialTheme.colorScheme.surface,
+                    unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainerLow,
                     focusedContainerColor = MaterialTheme.colorScheme.surface,
                     unfocusedIndicatorColor = MaterialTheme.colorScheme.outlineVariant,
                 ),
@@ -579,10 +598,10 @@ private fun TopBar(
                     }
                 }
                 if (inTrash) {
-                    TextButton(onClick = onEmptyTrash, enabled = trashNotEmpty) { Text("Empty trash") }
+                    TextButton(onClick = onEmptyTrash, enabled = trashNotEmpty, destructive = true) { Text("Empty trash") }
                 } else {
                     Box {
-                        Button(onClick = { newMenu = true }) {
+                        Button(onClick = { newMenu = true }, shape = MaterialTheme.shapes.small) {
                             Icon(Icons.Outlined.Add, null)
                             Spacer(Modifier.width(6.dp))
                             Text("New")
@@ -637,7 +656,7 @@ private fun SelectionBar(
                     IconButton(onClick = { menu = true }) { Icon(Icons.Outlined.MoreVert, "Selection actions") }
                     DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                         val action: @Composable (String, ImageVector, () -> Unit) -> Unit = { label, icon, run ->
-                            DropdownMenuItem(text = { Text(label) }, leadingIcon = { Icon(icon, null) },
+                            DropdownMenuItem(text = { Text(label) }, destructive = label == "Delete" || label == "Delete forever", leadingIcon = { Icon(icon, null) },
                                 onClick = { menu = false; run() })
                         }
                         if (inTrash) {
@@ -704,48 +723,38 @@ private fun NotebookCard(
     onTap: (Notebook) -> Unit,
     onLongPress: (Notebook) -> Unit,
 ) {
+    val colors = MaterialTheme.colorScheme
+    val coverColors = listOf(NotiBrand.Lilac, NotiBrand.Butter, NotiBrand.Mint, NotiBrand.Peach)
+    val cover = coverColors[Math.floorMod(nb.id.hashCode(), coverColors.size)]
     Column(
-        Modifier
-            .clip(MaterialTheme.shapes.medium)
+        Modifier.clip(MaterialTheme.shapes.medium)
+            .background(if (selected) colors.primaryContainer.copy(alpha = 0.5f) else Color.Transparent)
             .combinedClickable(onClick = { onTap(nb) }, onLongClick = { onLongPress(nb) })
             .padding(4.dp),
     ) {
-        Box {
-            val frame = Modifier
-                .fillMaxWidth()
-                .aspectRatio(0.75f)
-                .clip(MaterialTheme.shapes.small)
-                .border(
-                    if (selected) 3.dp else 1.dp,
-                    if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
-                    MaterialTheme.shapes.small,
-                )
-            if (nb.isPdf) PdfThumbnail(thumbnail, frame) else PaperPreview(nb.paper, frame)
-            if (nb.isPdf) {
-                Icon(
-                    Icons.Outlined.PictureAsPdf,
-                    contentDescription = "PDF",
-                    tint = Color(0xFFD23B3B),
-                    modifier = Modifier.align(Alignment.BottomEnd).padding(8.dp).size(20.dp),
-                )
+        Box(Modifier.fillMaxWidth().aspectRatio(0.88f).clip(MaterialTheme.shapes.medium)
+            .background(if (nb.isPdf) colors.surfaceContainerLow else cover)
+            .border(if (selected) 2.dp else 0.5.dp,
+                if (selected) colors.primary else colors.outlineVariant.copy(alpha = 0.6f), MaterialTheme.shapes.medium)) {
+            val frame = Modifier.fillMaxSize().padding(start = 20.dp, top = 18.dp, end = 16.dp, bottom = 18.dp)
+                .clip(RoundedCornerShape(4.dp))
+                .border(0.5.dp, Color(0x1A30332E), RoundedCornerShape(4.dp))
+            if (nb.isPdf) PdfThumbnail(thumbnail, frame) else {
+                PaperPreview(nb.paper, frame)
+                Box(Modifier.fillMaxHeight().width(7.dp).background(NotiBrand.Ink.copy(alpha = 0.08f)))
             }
-            if (nb.favorite && !inTrash) {
-                Icon(
-                    Icons.Outlined.Star,
-                    contentDescription = "Favorite",
-                    tint = Color(0xFFE0A800),
-                    modifier = Modifier.align(Alignment.TopEnd).padding(8.dp).size(20.dp),
-                )
-            }
+            if (nb.isPdf) Icon(Icons.Outlined.PictureAsPdf, contentDescription = "PDF",
+                tint = colors.primary, modifier = Modifier.align(Alignment.BottomEnd).padding(8.dp).size(20.dp))
+            if (nb.favorite && !inTrash) Icon(Icons.Outlined.Star, contentDescription = "Favorite",
+                tint = NotiBrand.Ink, modifier = Modifier.align(Alignment.TopEnd)
+                    .padding(8.dp).background(NotiBrand.Butter, CircleShape).padding(4.dp).size(16.dp))
         }
-        Spacer(Modifier.height(8.dp))
+        Spacer(Modifier.height(10.dp))
         Text(nb.name, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        Text(
-            if (inTrash) "Deleted " + relative(nb.trashedAt ?: 0) else "Opened " + relative(nb.openedAt),
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            maxLines = 1,
-        )
+        Text(if (inTrash) "Deleted " + relative(nb.trashedAt ?: 0)
+            else "${nb.pageCount} ${if (nb.pageCount == 1) "page" else "pages"} · ${relative(nb.openedAt)}",
+            style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant, maxLines = 1,
+            overflow = TextOverflow.Ellipsis)
     }
 }
 
@@ -770,31 +779,34 @@ private fun relative(t: Long): String =
 @Composable
 private fun EmptyState(filter: Filter, searching: Boolean, onNew: () -> Unit, onImportPdf: () -> Unit) {
     val (headline, body) = when {
-        searching -> "Nothing found" to "No notebook has that name."
+        searching -> "Nothing found" to "Try a different word. Your idea might be hiding."
         filter == Filter.Pdfs -> "No PDFs yet" to "Import a PDF to write on it."
         filter == Filter.Trash -> "Trash is empty" to "Deleted notebooks wait here until you delete them forever."
         filter == Filter.Favorites -> "No favorites yet" to "Long-press a notebook and tap Favorite."
         filter is Filter.InFolder -> "This folder is empty" to "Create a notebook here, or move notebooks in from All."
-        else -> "No notebooks yet" to "Create one to start writing."
+        else -> "A fresh start. A little possibility." to "Meet Doti, your little ink companion. Let’s make room for your first idea."
     }
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
         modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp),
     ) {
-        Text(headline, style = MaterialTheme.typography.titleLarge)
+        DotiMascot(Modifier.size(136.dp))
+        Spacer(Modifier.height(20.dp))
+        Text(headline, style = MaterialTheme.typography.headlineSmall, textAlign = TextAlign.Center)
         Spacer(Modifier.height(6.dp))
-        Text(body, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(body, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center,
+            modifier = Modifier.widthIn(max = 360.dp), style = MaterialTheme.typography.bodyMedium)
         if (!searching && filter == Filter.Pdfs) {
             Spacer(Modifier.height(20.dp))
-            Button(onClick = onImportPdf) {
+            Button(onClick = onImportPdf, shape = MaterialTheme.shapes.small) {
                 Icon(Icons.Outlined.PictureAsPdf, null)
                 Spacer(Modifier.width(6.dp))
                 Text("Import PDF")
             }
         } else if (!searching && filter != Filter.Trash && filter != Filter.Favorites) {
             Spacer(Modifier.height(20.dp))
-            Button(onClick = onNew) {
+            Button(onClick = onNew, shape = MaterialTheme.shapes.small) {
                 Icon(Icons.Outlined.Add, null)
                 Spacer(Modifier.width(6.dp))
                 Text("New notebook")
@@ -809,25 +821,23 @@ private fun EmptyState(filter: Filter, searching: Boolean, onNew: () -> Unit, on
 private fun NewNotebookDialog(initialPaper: Paper, onDismiss: () -> Unit, onCreate: (String, Paper) -> Unit) {
     var name by remember { mutableStateOf("") }
     var paper by remember { mutableStateOf(initialPaper) }
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("New notebook") },
-        text = {
-            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(20.dp)) {
-                OutlinedTextField(
-                    value = name,
-                    onValueChange = { name = it },
-                    label = { Text("Name") },
-                    placeholder = { Text("Untitled") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                PaperPicker(paper, onChange = { paper = it })
+    app.noti.ui.common.NotiDialogFrame(onDismiss,
+        title = {
+            Column {
+                Text("New notebook", style = MaterialTheme.typography.titleLarge)
+                Text("A new little beginning.", style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-        },
-        confirmButton = { Button(onClick = { onCreate(name.trim(), paper) }) { Text("Create") } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
-    )
+        }, icon = { DotiMascot(Modifier.size(48.dp)) }, maxWidth = 560.dp,
+        actions = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+            Button(onClick = { onCreate(name.trim(), paper) }) { Text("Create notebook") }
+        }) {
+        OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("Name") },
+            placeholder = { Text("What’s on your mind?") }, singleLine = true,
+            shape = MaterialTheme.shapes.small, modifier = Modifier.fillMaxWidth())
+        PaperPicker(paper, onChange = { paper = it })
+    }
 }
 
 @Composable
@@ -846,7 +856,7 @@ private fun MoveDialog(
         onDismissRequest = onDismiss,
         title = { Text("Move to") },
         text = {
-            Column(Modifier.verticalScroll(rememberScrollState())) {
+            Column {
                 MoveRow("No folder", Icons.AutoMirrored.Outlined.LibraryBooks) { onMove(null) }
                 folders.sortedBy { it.name.lowercase() }.forEach { f -> MoveRow(f.name, Icons.Outlined.Folder) { onMove(f.id) } }
                 MoveRow("New folder…", Icons.Outlined.CreateNewFolder) { naming = true }
@@ -859,5 +869,5 @@ private fun MoveDialog(
 
 @Composable
 private fun MoveRow(label: String, icon: ImageVector, onClick: () -> Unit) {
-    DropdownMenuItem(text = { Text(label) }, leadingIcon = { Icon(icon, null) }, onClick = onClick)
+    DropdownMenuItem(text = { Text(label) }, destructive = label == "Delete" || label == "Delete forever", leadingIcon = { Icon(icon, null) }, onClick = onClick)
 }
