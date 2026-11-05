@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 108 108" width="108" height="108">
+  <!-- Nib excited: new notebook created / export finished. Arms up, eyes wide. -->
+  <g transform="rotate(6 54 54)">
+    <!-- arms -->
+    <path d="M40 50 Q30 44 28 34" fill="none" stroke="#0F2A73" stroke-width="4" stroke-linecap="round"/>
+    <path d="M68 50 Q78 44 80 34" fill="none" stroke="#0F2A73" stroke-width="4" stroke-linecap="round"/>
+    <!-- pen body -->
+    <path d="M40 34 C40 26 46 20 54 20 C62 20 68 26 68 34 L68 70 C68 78 62 84 54 84 C46 84 40 78 40 70 Z" fill="#2D5BD3"/>
+    <path d="M46 84 L54 100 L62 84 Z" fill="#0F2A73"/>
+    <circle cx="54" cy="101" r="3.4" fill="#0F2A73"/>
+    <!-- wide eyes -->
+    <circle cx="48" cy="40" r="7" fill="#FFFFFF"/>
+    <circle cx="60" cy="40" r="7" fill="#FFFFFF"/>
+    <circle cx="48" cy="41" r="3" fill="#1E1F24"/>
+    <circle cx="60" cy="41" r="3" fill="#1E1F24"/>
+    <!-- open happy mouth -->
+    <path d="M47 52 Q54 62 61 52 Q54 56 47 52 Z" fill="#1E1F24"/>
+    <!-- blush -->
+    <circle cx="42.5" cy="50" r="3" fill="#FF9EBB"/>
+    <circle cx="65.5" cy="50" r="3" fill="#FF9EBB"/>
+    <!-- sparkles -->
+    <path d="M24 22 l2 5 5 2 -5 2 -2 5 -2 -5 -5 -2 5 -2 Z" fill="#FF9EBB"/>
+    <path d="M84 18 l1.6 4 4 1.6 -4 1.6 -1.6 4 -1.6 -4 -4 -1.6 4 -1.6 Z" fill="#FF9EBB"/>
+  </g>
+</svg>

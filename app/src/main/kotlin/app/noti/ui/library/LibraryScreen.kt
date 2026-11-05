@@ -14,6 +14,8 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.painterResource
+import app.noti.R
 import app.noti.pdf.PdfImport
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -772,16 +774,24 @@ private fun EmptyState(filter: Filter, searching: Boolean, onNew: () -> Unit, on
     val (headline, body) = when {
         searching -> "Nothing found" to "No notebook has that name."
         filter == Filter.Pdfs -> "No PDFs yet" to "Import a PDF to write on it."
-        filter == Filter.Trash -> "Trash is empty" to "Deleted notebooks wait here until you delete them forever."
+        filter == Filter.Trash -> "Trash is empty" to "Nib ate your notebooks. (They're recoverable.)"
         filter == Filter.Favorites -> "No favorites yet" to "Long-press a notebook and tap Favorite."
         filter is Filter.InFolder -> "This folder is empty" to "Create a notebook here, or move notebooks in from All."
-        else -> "No notebooks yet" to "Create one to start writing."
+        else -> "No notebooks yet" to "Nib is bored. Create one to start writing."
     }
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
         modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp),
     ) {
+        if (!searching) {
+            Image(
+                painter = painterResource(R.drawable.mascot_nib),
+                contentDescription = "Nib the pen, bored and waiting",
+                modifier = Modifier.size(96.dp),
+            )
+            Spacer(Modifier.height(12.dp))
+        }
         Text(headline, style = MaterialTheme.typography.titleLarge)
         Spacer(Modifier.height(6.dp))
         Text(body, color = MaterialTheme.colorScheme.onSurfaceVariant)

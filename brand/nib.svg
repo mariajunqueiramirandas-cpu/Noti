@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 108 108" width="108" height="108">
+  <!-- Nib: the Noti mascot. A chubby, slightly cross-eyed ballpoint pen. -->
+  <g transform="rotate(-8 54 54)">
+    <!-- pen body -->
+    <path d="M40 34 C40 26 46 20 54 20 C62 20 68 26 68 34 L68 70 C68 78 62 84 54 84 C46 84 40 78 40 70 Z" fill="#2D5BD3"/>
+    <!-- grip shadow -->
+    <path d="M40 58 L68 58 L68 70 C68 78 62 84 54 84 C46 84 40 78 40 70 Z" fill="#2449A8" fill-opacity="0.55"/>
+    <!-- tip cone -->
+    <path d="M46 84 L54 100 L62 84 Z" fill="#0F2A73"/>
+    <!-- tip ball -->
+    <circle cx="54" cy="101" r="3.4" fill="#0F2A73"/>
+    <!-- eyes -->
+    <circle cx="48" cy="42" r="6" fill="#FFFFFF"/>
+    <circle cx="60" cy="42" r="6" fill="#FFFFFF"/>
+    <circle cx="49.5" cy="43" r="2.6" fill="#1E1F24"/>
+    <circle cx="61.5" cy="43" r="2.6" fill="#1E1F24"/>
+    <!-- blush -->
+    <circle cx="43.5" cy="51" r="3" fill="#FF9EBB"/>
+    <circle cx="64.5" cy="51" r="3" fill="#FF9EBB"/>
+    <!-- grin -->
+    <path d="M47 54 Q54 61 61 54" fill="none" stroke="#1E1F24" stroke-width="2.4" stroke-linecap="round"/>
+  </g>
+</svg>
