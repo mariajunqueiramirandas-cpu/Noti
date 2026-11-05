@@ -34,10 +34,10 @@ import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
 import app.noti.data.SettingsStore
 import app.noti.data.Tool
+import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.roundToInt
 import kotlin.math.sin
-import kotlin.math.toRadians
 
 /** Compact controls in sub-panel windows, above the native ink input panel. */
 @Composable
@@ -136,8 +136,8 @@ private fun ToolbarButton(icon: ImageVector, label: String, onClick: () -> Unit,
 @Composable
 internal fun GlassSurface(modifier: Modifier = Modifier, shape: Shape = RoundedCornerShape(16.dp), content: @Composable BoxScope.() -> Unit) {
     val colors = MaterialTheme.colorScheme
-    Box(modifier.shadow(3.dp, shape).clip(shape).background(colors.surface.copy(alpha = 0.98f))
-        .border(0.5.dp, colors.outlineVariant.copy(alpha = 0.6f), shape)) {
+    Box(modifier.shadow(2.dp, shape).clip(shape).background(colors.surface.copy(alpha = 0.98f))
+        .border(0.5.dp, colors.outlineVariant.copy(alpha = 0.5f), shape)) {
         CompositionLocalProvider(LocalContentColor provides colors.onSurface) { content() }
     }
 }
@@ -225,7 +225,7 @@ private fun BoxScope.RadialTools(settings: SettingsStore, selectionCount: Int, w
             val step = 360f / (Tool.entries.size + 1)
             GlassSurface(Modifier.size(192.dp).graphicsLayer { alpha = opacity }, CircleShape) {
                 Tool.entries.forEachIndexed { index, tool ->
-                    val angle = (-90f + index * step).toRadians()
+                    val angle = (-90f + index * step) * (PI / 180.0).toFloat()
                     val active = settings.tool == tool
                     IconButton(onClick = { settings.tool = tool; expanded = false; options = false },
                         enabled = expanded, modifier = Modifier.align(Alignment.Center)
@@ -237,7 +237,7 @@ private fun BoxScope.RadialTools(settings: SettingsStore, selectionCount: Int, w
                             tint = if (active) colors.onPrimaryContainer else colors.onSurfaceVariant)
                     }
                 }
-                val tuneAngle = (-90f + Tool.entries.size * step).toRadians()
+                val tuneAngle = (-90f + Tool.entries.size * step) * (PI / 180.0).toFloat()
                 Box(Modifier.align(Alignment.Center)
                     .offset((cos(tuneAngle) * ring.value).dp, (sin(tuneAngle) * ring.value).dp)) {
                     IconButton(onClick = { options = !options }, enabled = expanded && drawing,

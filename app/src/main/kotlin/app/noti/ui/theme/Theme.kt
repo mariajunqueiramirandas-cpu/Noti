@@ -11,28 +11,28 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.unit.dp
 import app.noti.data.ThemeMode
 
-// Pearl and slate chrome with a single periwinkle accent.
+// Clean paper-white chrome with ink-black accents, hairline gray edges.
 private val Light = lightColorScheme(
-    primary = Color(0xFF2D5BD3),
+    primary = Color(0xFF1E1F24),
     onPrimary = Color.White,
-    primaryContainer = Color(0xFFDDE5FA),
-    onPrimaryContainer = Color(0xFF0F2A73),
-    secondary = Color(0xFF5B6070),
-    secondaryContainer = Color(0xFFE2E7F0),
-    onSecondaryContainer = Color(0xFF26282E),
-    background = Color(0xFFEDF0F6),
+    primaryContainer = Color(0xFFE9EBEF),
+    onPrimaryContainer = Color(0xFF1E1F24),
+    secondary = Color(0xFF5E616B),
+    secondaryContainer = Color(0xFFEFF1F4),
+    onSecondaryContainer = Color(0xFF1E1F24),
+    background = Color(0xFFFFFFFF),
     onBackground = Color(0xFF1E1F24),
-    surface = Color(0xFFF8FAFE),
+    surface = Color(0xFFFFFFFF),
     onSurface = Color(0xFF1E1F24),
-    surfaceVariant = Color(0xFFE7EBF3),
-    onSurfaceVariant = Color(0xFF5E616B),
+    surfaceVariant = Color(0xFFF4F5F7),
+    onSurfaceVariant = Color(0xFF6A6E78),
     surfaceContainerLowest = Color(0xFFFFFFFF),
-    surfaceContainerLow = Color(0xFFF0F3F8),
-    surfaceContainer = Color(0xFFEDF0F6),
-    surfaceContainerHigh = Color(0xFFE8ECF4),
-    surfaceContainerHighest = Color(0xFFE2E7F0),
-    outline = Color(0xFFADB8CA),
-    outlineVariant = Color(0xFFD6DEEB),
+    surfaceContainerLow = Color(0xFFFAFBFC),
+    surfaceContainer = Color(0xFFF4F5F7),
+    surfaceContainerHigh = Color(0xFFEFF1F4),
+    surfaceContainerHighest = Color(0xFFE9EBEF),
+    outline = Color(0xFFD8DBE0),
+    outlineVariant = Color(0xFFE8EAEE),
 )
 
 private val Dark = darkColorScheme(
