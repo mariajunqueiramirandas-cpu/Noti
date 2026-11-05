@@ -120,7 +120,7 @@ class StylusButtonsTest {
         assertEquals(0, buttons.flags(7, 0, true))
         up(PenButton.Secondary)
         assertEquals(0, buttons.flags(7, 0, true))
-        assertTrue(clicks.isEmpty())
+        assertEquals(listOf(PenButton.Secondary), clicks)
     }
 
     @Test fun splitBluetoothAndDigitizerDevicesCanUseOnePhysicalPenHold() {
