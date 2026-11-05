@@ -1,5 +1,14 @@
 package app.noti.ui.settings
 
+import app.noti.ui.common.NotiButton as Button
+import app.noti.ui.common.NotiTextButton as TextButton
+import app.noti.ui.common.NotiIconButton as IconButton
+import app.noti.ui.common.NotiOutlinedButton as OutlinedButton
+import app.noti.ui.common.NotiAlertDialog as AlertDialog
+import app.noti.ui.common.NotiDropdownMenu as DropdownMenu
+import app.noti.ui.common.NotiMenuItem as DropdownMenuItem
+import app.noti.ui.common.NotiFilterChip as FilterChip
+
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -32,13 +41,7 @@ import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Palette
 import androidx.compose.material.icons.outlined.PanTool
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.FilterChip
 import androidx.compose.material.icons.outlined.ExpandMore
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.runtime.LaunchedEffect
 import android.widget.Toast
 import app.noti.ink.InkLayer
@@ -51,7 +54,6 @@ import java.util.Locale
 import androidx.compose.material.icons.outlined.TouchApp
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationDrawerItem
 import androidx.compose.material3.NavigationDrawerItemDefaults
@@ -60,7 +62,6 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -600,7 +601,7 @@ private fun AboutSection() {
     if (licenseOpen) {
         val license = remember { context.resources.openRawResource(R.raw.nunito_ofl).bufferedReader().use { it.readText() } }
         AlertDialog(onDismissRequest = { licenseOpen = false }, title = { Text("Nunito") },
-            text = { Text(license, Modifier.verticalScroll(rememberScrollState()), style = MaterialTheme.typography.bodySmall) },
+            text = { Text(license, style = MaterialTheme.typography.bodySmall) },
             confirmButton = { TextButton(onClick = { licenseOpen = false }) { Text("Close") } })
     }
 }

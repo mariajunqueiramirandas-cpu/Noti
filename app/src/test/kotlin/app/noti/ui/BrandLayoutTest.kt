@@ -117,6 +117,49 @@ class BrandLayoutTest {
         compose.onNodeWithText("Meet Doti", substring = false).assertIsDisplayed()
     }
 
+    @Test fun renameAndDeleteDialogsRetainTheirRealActions() {
+        val library = libraryWithNotes()
+        val id = library.notebooks.first { it.name == "Small bright things" }.id
+        render { LibraryScreen(library, SettingsStore(context), onOpen = {}, onSettings = {}) }
+        compose.onNodeWithText("Small bright things").performTouchInput { longClick() }
+        compose.onNodeWithContentDescription("Selection actions").performClick()
+        compose.onNodeWithText("Rename", substring = false).performClick()
+        compose.onNode(hasSetTextAction() and hasAnyAncestor(isDialog())).performTextReplacement("A happier title")
+        dialogScreenshot("rename-notebook")
+        compose.onNodeWithText("Rename", substring = false).performClick()
+        compose.runOnIdle { assertEquals("A happier title", library.notebook(id)?.name) }
+        compose.onNodeWithText("A happier title").performTouchInput { longClick() }
+        compose.onNodeWithContentDescription("Selection actions").performClick()
+        compose.onNodeWithText("Delete", substring = false).performClick()
+        compose.onNodeWithText("Trash", substring = false, useUnmergedTree = true).performClick()
+        compose.onNodeWithText("A happier title").performClick()
+        compose.onNodeWithContentDescription("Selection actions").performClick()
+        compose.onNodeWithText("Delete forever", substring = false).performClick()
+        compose.onNodeWithText("Delete forever?").assertIsDisplayed()
+        dialogScreenshot("delete-confirmation")
+        compose.onNodeWithText("Cancel", substring = false).performClick()
+        compose.runOnIdle { assertNotNull(library.notebook(id)) }
+        compose.onNodeWithContentDescription("Selection actions").performClick()
+        compose.onNodeWithText("Delete forever", substring = false).performClick()
+        compose.onNodeWithText("Delete", substring = false).performClick()
+        compose.runOnIdle { assertNull(library.notebook(id)) }
+    }
+
+    @Test
+    @Config(qualifiers = "w360dp-h640dp-mdpi")
+    fun renameDialogKeepsActionsVisibleWithDoubleTextSize() {
+        var renamed: String? = null
+        render(fontScale = 2f) {
+            app.noti.ui.common.TextInputDialog("Rename notebook", "A little idea", "Rename", onDismiss = {}) { renamed = it }
+        }
+        compose.onNode(hasSetTextAction()).performTextReplacement("A bigger idea")
+        compose.onNodeWithText("Cancel", substring = false).assertIsDisplayed()
+        compose.onNodeWithText("Rename", substring = false).assertIsDisplayed()
+        dialogScreenshot("rename-large-text")
+        compose.onNodeWithText("Rename", substring = false).performClick()
+        compose.runOnIdle { assertEquals("A bigger idea", renamed) }
+    }
+
     @Test fun installedLauncherResourceHasAdaptiveAndMonochromeArtwork() {
         val icon = context.getDrawable(R.mipmap.ic_launcher) as AdaptiveIconDrawable
         assertNotNull(icon.foreground)

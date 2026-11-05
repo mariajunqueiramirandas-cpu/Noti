@@ -1,5 +1,12 @@
 package app.noti.ui.library
 
+import app.noti.ui.common.NotiButton as Button
+import app.noti.ui.common.NotiTextButton as TextButton
+import app.noti.ui.common.NotiIconButton as IconButton
+import app.noti.ui.common.NotiAlertDialog as AlertDialog
+import app.noti.ui.common.NotiDropdownMenu as DropdownMenu
+import app.noti.ui.common.NotiMenuItem as DropdownMenuItem
+
 import android.graphics.BitmapFactory
 import android.text.format.DateUtils
 import android.widget.Toast
@@ -14,7 +21,6 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.platform.LocalConfiguration
 import app.noti.pdf.PdfImport
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -75,24 +81,18 @@ import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.automirrored.outlined.Sort
 import androidx.compose.material.icons.outlined.Star
 import androidx.compose.material.icons.outlined.StarBorder
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.rememberDrawerState
-import androidx.compose.material3.Button
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationDrawerItem
 import androidx.compose.material3.NavigationDrawerItemDefaults
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
@@ -107,8 +107,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.font.FontWeight
@@ -429,7 +427,7 @@ fun LibraryScreen(
             title = { Text(if (ids.size == 1) "Delete forever?" else "Delete ${ids.size} notebooks forever?") },
             text = { Text("This can't be undone.") },
             confirmButton = {
-                TextButton(onClick = {
+                app.noti.ui.common.NotiButton(destructive = true, onClick = {
                     library.deleteForever(ids)
                     confirmDeleteForever = null
                     selection = emptySet()
@@ -493,7 +491,7 @@ private fun Sidebar(
                         onClick = { menu = false; onRenameFolder(f) },
                     )
                     DropdownMenuItem(
-                        text = { Text("Delete folder") },
+                        text = { Text("Delete folder") }, destructive = true,
                         leadingIcon = { Icon(Icons.Outlined.Delete, null) },
                         onClick = {
                             menu = false
@@ -600,7 +598,7 @@ private fun TopBar(
                     }
                 }
                 if (inTrash) {
-                    TextButton(onClick = onEmptyTrash, enabled = trashNotEmpty) { Text("Empty trash") }
+                    TextButton(onClick = onEmptyTrash, enabled = trashNotEmpty, destructive = true) { Text("Empty trash") }
                 } else {
                     Box {
                         Button(onClick = { newMenu = true }, shape = MaterialTheme.shapes.small) {
@@ -658,7 +656,7 @@ private fun SelectionBar(
                     IconButton(onClick = { menu = true }) { Icon(Icons.Outlined.MoreVert, "Selection actions") }
                     DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                         val action: @Composable (String, ImageVector, () -> Unit) -> Unit = { label, icon, run ->
-                            DropdownMenuItem(text = { Text(label) }, leadingIcon = { Icon(icon, null) },
+                            DropdownMenuItem(text = { Text(label) }, destructive = label == "Delete" || label == "Delete forever", leadingIcon = { Icon(icon, null) },
                                 onClick = { menu = false; run() })
                         }
                         if (inTrash) {
@@ -823,36 +821,22 @@ private fun EmptyState(filter: Filter, searching: Boolean, onNew: () -> Unit, on
 private fun NewNotebookDialog(initialPaper: Paper, onDismiss: () -> Unit, onCreate: (String, Paper) -> Unit) {
     var name by remember { mutableStateOf("") }
     var paper by remember { mutableStateOf(initialPaper) }
-    val maxHeight = (LocalConfiguration.current.screenHeightDp.dp - 48.dp).coerceAtLeast(240.dp)
-    val dialogWidth = (LocalConfiguration.current.screenWidthDp.dp - 48.dp).coerceIn(160.dp, 560.dp)
-    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        Surface(Modifier.width(dialogWidth), shape = MaterialTheme.shapes.large, color = MaterialTheme.colorScheme.surface) {
-            Column(Modifier.fillMaxWidth().heightIn(max = maxHeight)) {
-                Row(Modifier.fillMaxWidth().padding(20.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Text("New notebook", style = MaterialTheme.typography.titleLarge)
-                        Text("A new little beginning.", style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                    Spacer(Modifier.width(8.dp))
-                    DotiMascot(Modifier.size(48.dp))
-                }
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                Column(Modifier.weight(1f, fill = false).fillMaxWidth().verticalScroll(rememberScrollState()).padding(20.dp),
-                    verticalArrangement = Arrangement.spacedBy(20.dp)) {
-                    OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("Name") },
-                        placeholder = { Text("What’s on your mind?") }, singleLine = true,
-                        shape = MaterialTheme.shapes.small, modifier = Modifier.fillMaxWidth())
-                    PaperPicker(paper, onChange = { paper = it })
-                }
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                Row(Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
-                    verticalAlignment = Alignment.CenterVertically) {
-                    TextButton(onClick = onDismiss) { Text("Cancel") }
-                    Button(onClick = { onCreate(name.trim(), paper) }, shape = MaterialTheme.shapes.small) { Text("Create notebook") }
-                }
+    app.noti.ui.common.NotiDialogFrame(onDismiss,
+        title = {
+            Column {
+                Text("New notebook", style = MaterialTheme.typography.titleLarge)
+                Text("A new little beginning.", style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-        }
+        }, icon = { DotiMascot(Modifier.size(48.dp)) }, maxWidth = 560.dp,
+        actions = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+            Button(onClick = { onCreate(name.trim(), paper) }) { Text("Create notebook") }
+        }) {
+        OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("Name") },
+            placeholder = { Text("What’s on your mind?") }, singleLine = true,
+            shape = MaterialTheme.shapes.small, modifier = Modifier.fillMaxWidth())
+        PaperPicker(paper, onChange = { paper = it })
     }
 }
 
@@ -872,7 +856,7 @@ private fun MoveDialog(
         onDismissRequest = onDismiss,
         title = { Text("Move to") },
         text = {
-            Column(Modifier.verticalScroll(rememberScrollState())) {
+            Column {
                 MoveRow("No folder", Icons.AutoMirrored.Outlined.LibraryBooks) { onMove(null) }
                 folders.sortedBy { it.name.lowercase() }.forEach { f -> MoveRow(f.name, Icons.Outlined.Folder) { onMove(f.id) } }
                 MoveRow("New folder…", Icons.Outlined.CreateNewFolder) { naming = true }
@@ -885,5 +869,5 @@ private fun MoveDialog(
 
 @Composable
 private fun MoveRow(label: String, icon: ImageVector, onClick: () -> Unit) {
-    DropdownMenuItem(text = { Text(label) }, leadingIcon = { Icon(icon, null) }, onClick = onClick)
+    DropdownMenuItem(text = { Text(label) }, destructive = label == "Delete" || label == "Delete forever", leadingIcon = { Icon(icon, null) }, onClick = onClick)
 }

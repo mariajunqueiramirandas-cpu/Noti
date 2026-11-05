@@ -1,5 +1,9 @@
 package app.noti.ui.common
 
+import app.noti.ui.common.NotiTextButton as TextButton
+import app.noti.ui.common.NotiAlertDialog as AlertDialog
+import app.noti.ui.common.NotiFilterChip as FilterChip
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.selection.selectable
@@ -16,12 +20,9 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -73,7 +74,7 @@ fun TextInputDialog(
             )
             LaunchedEffect(Unit) { focus.requestFocus() }
         },
-        confirmButton = { TextButton(onClick = { onConfirm(value.text.trim()) }) { Text(confirmLabel) } },
+        confirmButton = { app.noti.ui.common.NotiButton(onClick = { onConfirm(value.text.trim()) }) { Text(confirmLabel) } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
 }

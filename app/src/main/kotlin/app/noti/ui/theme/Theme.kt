@@ -77,7 +77,7 @@ private val NotiTypography = Typography(
 )
 
 private val NotiShapes = Shapes(
-    extraSmall = RoundedCornerShape(6.dp), small = RoundedCornerShape(10.dp),
+    extraSmall = RoundedCornerShape(6.dp), small = RoundedCornerShape(12.dp),
     medium = RoundedCornerShape(14.dp), large = RoundedCornerShape(20.dp), extraLarge = RoundedCornerShape(24.dp),
 )
 

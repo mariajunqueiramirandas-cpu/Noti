@@ -28,7 +28,7 @@ Use the lowercase `noti.` wordmark with a plum dot. The official product name re
 
 The tone is light and encouraging: “Little ideas welcome,” “Make your mark,” and “Your kind of paper.” Buttons, destructive actions, errors and hardware settings retain clear, literal labels. Never make deleting or saving sound like a joke.
 
-The design uses fine dividers, flat surfaces, restrained 10–20 dp corners and generous spacing. Notebook covers add color without inventing document content. The radial editor remains mostly monochrome; the home mark is its only mascot detail. Mascot images beside readable copy are decorative for accessibility.
+The design uses fine dividers, flat surfaces, restrained 10–20 dp corners and generous spacing. Buttons use a stable 12 dp shape and at least 48 dp targets, with plum primary actions, outlined secondary actions, neutral quiet actions and explicit destructive styling. Menus use the same border and typography. All app confirmation and form dialogs share an explicit-width frame with a scrolling body and fixed header/actions. Notebook covers add color without inventing document content. The radial editor remains mostly monochrome; the home mark is its only mascot detail. Mascot images beside readable copy are decorative for accessibility.
 
 ## Sources
 
@@ -37,6 +37,7 @@ The design uses fine dividers, flat surfaces, restrained 10–20 dp corners and 
 - `app/src/main/res/drawable/ic_doti_monochrome.xml`: themed launcher mark.
 - `assets/noti-wordmark.svg`: portable outlined wordmark.
 - `assets/noti-app-icon.svg`: vector icon preview.
+- `app/src/main/kotlin/app/noti/ui/common/Controls.kt`: shared action, menu and dialog styles.
 - `app/src/main/kotlin/app/noti/ui/brand/Brand.kt`: shared brand components.
 - `app/src/main/kotlin/app/noti/ui/theme/Theme.kt`: colors, typography and shape roles.
 

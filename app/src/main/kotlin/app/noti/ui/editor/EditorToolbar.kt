@@ -1,5 +1,10 @@
 package app.noti.ui.editor
 
+import app.noti.ui.common.NotiTextButton as TextButton
+import app.noti.ui.common.NotiIconButton as IconButton
+import app.noti.ui.common.NotiDropdownMenu as DropdownMenu
+import app.noti.ui.common.NotiMenuItem as DropdownMenuItem
+
 import androidx.compose.foundation.*
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.*
@@ -10,6 +15,7 @@ import androidx.compose.material.icons.automirrored.outlined.*
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -46,91 +52,96 @@ internal fun EditorToolbar(
     floatingWindows: Boolean = true,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
+    var toolsExpanded by rememberSaveable { mutableStateOf(true) }
     val colors = MaterialTheme.colorScheme
     val saveFailed = saveStatus.contains("failed", true)
-    var toolsVisible by remember { mutableStateOf(true) }
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val density = LocalDensity.current
         fun px(value: Dp) = with(density) { value.roundToPx() }
-        val wide = maxWidth >= 600.dp
-        FloatingIsland(Alignment.TopStart, IntOffset.Zero, floatingWindows) {
-            // A single fine rule keeps the document as the dominant surface.
-            Column(Modifier.width(maxWidth).background(colors.surface.copy(alpha = 0.97f))) {
-                Row(Modifier.padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+        val wide = maxWidth >= 760.dp
+        val headerWidth = if (wide) (maxWidth - 260.dp).coerceAtMost(420.dp) else maxWidth - 24.dp
+        val dockWidth = maxWidth - 24.dp
+        val history: @Composable () -> Unit = {
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
+                ToolbarButton(Icons.AutoMirrored.Outlined.Undo, "Undo", onUndo, canUndo)
+                ToolbarButton(Icons.AutoMirrored.Outlined.Redo, "Redo", onRedo, canRedo)
+                if (wide) ToolbarButton(Icons.Outlined.Fullscreen, "Full screen", onFullScreen)
+                Box(Modifier.padding(horizontal = 2.dp).width(1.dp).height(20.dp).background(colors.outlineVariant))
+                Box {
+                    ToolbarButton(Icons.Outlined.MoreHoriz, "More", { menuOpen = true })
+                    DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                        DropdownMenuItem(text = { Text(saveStatus) }, leadingIcon = {
+                            Icon(if (saveFailed) Icons.Outlined.ErrorOutline else Icons.Outlined.Check, null)
+                        }, onClick = { menuOpen = false; onSave() })
+                        DropdownMenuItem(text = { Text("Rename") }, leadingIcon = { Icon(Icons.Outlined.Edit, null) },
+                            onClick = { menuOpen = false; onRename() })
+                        HorizontalDivider(Modifier.padding(vertical = 4.dp), color = colors.outlineVariant)
+                        pdfPage?.let { (page, count) ->
+                            DropdownMenuItem(text = { Text("Previous page") }, enabled = page > 0,
+                                leadingIcon = { Icon(Icons.AutoMirrored.Outlined.KeyboardArrowLeft, null) }, onClick = { menuOpen = false; onPage(page - 1) })
+                            DropdownMenuItem(text = { Text("Next page") }, enabled = page < count - 1,
+                                leadingIcon = { Icon(Icons.AutoMirrored.Outlined.KeyboardArrowRight, null) }, onClick = { menuOpen = false; onPage(page + 1) })
+                        }
+                        onAddPage?.let { add -> DropdownMenuItem(text = { Text("Add page") }, leadingIcon = { Icon(Icons.Outlined.Add, null) },
+                            onClick = { menuOpen = false; add() }) }
+                        if (!isPdf) DropdownMenuItem(text = { Text("Page paper") }, leadingIcon = { Icon(Icons.Outlined.Description, null) },
+                            onClick = { menuOpen = false; onPagePaper() })
+                        DropdownMenuItem(text = { Text("Export PDF") }, leadingIcon = { Icon(Icons.Outlined.IosShare, null) },
+                            onClick = { menuOpen = false; onExport() })
+                        HorizontalDivider(Modifier.padding(vertical = 4.dp), color = colors.outlineVariant)
+                        DropdownMenuItem(text = { Text(if (toolsExpanded) "Collapse tools" else "Expand tools") },
+                            leadingIcon = { Icon(if (toolsExpanded) Icons.Outlined.UnfoldLess else Icons.Outlined.UnfoldMore, null) },
+                            onClick = { menuOpen = false; toolsExpanded = !toolsExpanded })
+                        if (!wide) DropdownMenuItem(text = { Text("Full screen") }, leadingIcon = { Icon(Icons.Outlined.Fullscreen, null) },
+                            onClick = { menuOpen = false; onFullScreen() })
+                        DropdownMenuItem(text = { Text("Settings") }, leadingIcon = { Icon(Icons.Outlined.Settings, null) },
+                            onClick = { menuOpen = false; onSettings() })
+                    }
+                }
+            }
+        }
+        FloatingIsland(Alignment.TopStart, IntOffset(px(12.dp), px(12.dp)), floatingWindows) {
+            GlassSurface(Modifier.width(headerWidth)) {
+                Row(Modifier.padding(4.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     IconButton(onClick = onBack, modifier = Modifier.size(48.dp)) {
                         DotiMascot(Modifier.size(30.dp), description = "Back to library")
                     }
-                    Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
-                        Text(title, Modifier.weight(1f, fill = false).heightIn(min = 48.dp).clip(RoundedCornerShape(4.dp))
-                            .clickable(onClick = onRename).wrapContentHeight().padding(vertical = 4.dp),
-                            style = MaterialTheme.typography.labelLarge, color = colors.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        if (wide) {
-                            Text("/", Modifier.padding(horizontal = 16.dp), color = colors.outline)
-                            Text(settings.tool.label, style = MaterialTheme.typography.labelMedium, color = colors.onSurfaceVariant)
-                        }
-                    }
-                    if (wide) {
-                        ZoomControl(zoom, onResetZoom)
-                        ToolbarButton(Icons.Outlined.Settings, "Settings", onSettings)
-                    }
+                    Text(title, Modifier.weight(1f).heightIn(min = 48.dp).clip(RoundedCornerShape(10.dp))
+                        .clickable(onClick = onRename).wrapContentHeight().padding(horizontal = 4.dp),
+                        style = MaterialTheme.typography.labelLarge, color = colors.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     if (saveFailed) ToolbarButton(Icons.Outlined.ErrorOutline, saveStatus, onSave, tint = colors.error)
-                    ToolbarButton(Icons.AutoMirrored.Outlined.Undo, "Undo", onUndo, canUndo)
-                    ToolbarButton(Icons.AutoMirrored.Outlined.Redo, "Redo", onRedo, canRedo)
-                    Box {
-                        ToolbarButton(Icons.Outlined.MoreHoriz, "More", { menuOpen = true })
-                        DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-                            DropdownMenuItem(text = { Text(saveStatus) }, leadingIcon = {
-                                Icon(if (saveFailed) Icons.Outlined.ErrorOutline else Icons.Outlined.Check, null)
-                            }, onClick = { menuOpen = false; onSave() })
-                            DropdownMenuItem(text = { Text("Rename") }, leadingIcon = { Icon(Icons.Outlined.Edit, null) }, onClick = { menuOpen = false; onRename() })
-                            pdfPage?.let { (page, count) ->
-                                DropdownMenuItem(text = { Text("Previous page") }, enabled = page > 0,
-                                    leadingIcon = { Icon(Icons.AutoMirrored.Outlined.KeyboardArrowLeft, null) }, onClick = { menuOpen = false; onPage(page - 1) })
-                                DropdownMenuItem(text = { Text("Next page") }, enabled = page < count - 1,
-                                    leadingIcon = { Icon(Icons.AutoMirrored.Outlined.KeyboardArrowRight, null) }, onClick = { menuOpen = false; onPage(page + 1) })
-                            }
-                            DropdownMenuItem(text = { Text("Export PDF") }, leadingIcon = { Icon(Icons.Outlined.IosShare, null) }, onClick = { menuOpen = false; onExport() })
-                            if (!isPdf) DropdownMenuItem(text = { Text("Page paper") }, leadingIcon = { Icon(Icons.Outlined.Description, null) }, onClick = { menuOpen = false; onPagePaper() })
-                            onAddPage?.let { add -> DropdownMenuItem(text = { Text("Add page") }, leadingIcon = { Icon(Icons.Outlined.Add, null) }, onClick = { menuOpen = false; add() }) }
-                            DropdownMenuItem(text = { Text(if (toolsVisible) "Hide tools" else "Show tools") },
-                                leadingIcon = { Icon(Icons.Outlined.Tune, null) }, onClick = { menuOpen = false; toolsVisible = !toolsVisible })
-                            DropdownMenuItem(text = { Text("Full screen") }, leadingIcon = { Icon(Icons.Outlined.Fullscreen, null) }, onClick = { menuOpen = false; onFullScreen() })
-                            DropdownMenuItem(text = { Text("Settings") }, leadingIcon = { Icon(Icons.Outlined.Settings, null) }, onClick = { menuOpen = false; onSettings() })
+                    if (!wide) history()
+                }
+            }
+        }
+        if (wide) FloatingIsland(Alignment.TopEnd, IntOffset(-px(12.dp), px(12.dp)), floatingWindows) {
+            GlassSurface { Box(Modifier.padding(4.dp)) { history() } }
+        }
+        FloatingIsland(Alignment.BottomCenter, IntOffset(0, -px(12.dp)), floatingWindows) {
+            GlassSurface(Modifier.widthIn(max = dockWidth)) {
+                Row(Modifier.padding(4.dp), verticalAlignment = Alignment.CenterVertically) {
+                    pdfPage?.let { (page, count) ->
+                        TextButton(onClick = onTogglePages, contentPadding = PaddingValues(horizontal = 12.dp),
+                            modifier = Modifier.weight(1f, fill = false).semantics {
+                                contentDescription = "Pages"; stateDescription = "Page ${page + 1} of $count"; selected = pagesOpen
+                            }) {
+                            Icon(Icons.Outlined.Layers, null, Modifier.size(18.dp), tint = colors.onSurface)
+                            Spacer(Modifier.width(8.dp))
+                            Text("${page + 1} / $count", Modifier.weight(1f, fill = false),
+                                color = colors.onSurface, style = MaterialTheme.typography.labelMedium,
+                                maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
+                        Box(Modifier.width(1.dp).height(20.dp).background(colors.outlineVariant))
                     }
+                    ZoomControl(zoom, onResetZoom)
                 }
-                HorizontalDivider(thickness = 0.5.dp, color = colors.outlineVariant.copy(alpha = 0.55f))
-            }
-        }
-        FloatingIsland(Alignment.BottomStart, IntOffset(px(12.dp), -px(12.dp)), floatingWindows) {
-            Row(Modifier.background(colors.surface.copy(alpha = 0.94f), RoundedCornerShape(6.dp)), verticalAlignment = Alignment.CenterVertically) {
-                pdfPage?.let { (page, count) ->
-                    TextButton(onClick = onTogglePages, contentPadding = PaddingValues(horizontal = 12.dp),
-                        modifier = Modifier.heightIn(min = 48.dp).semantics {
-                            contentDescription = "Pages"; stateDescription = "Page ${page + 1} of $count"
-                        }) {
-                        Icon(Icons.Outlined.Layers, null, Modifier.size(18.dp), tint = colors.onSurface)
-                        Spacer(Modifier.width(8.dp))
-                        Text("Pages", color = colors.onSurface, style = MaterialTheme.typography.labelLarge)
-                        Spacer(Modifier.width(12.dp))
-                        Text("${page + 1} / $count", color = colors.onSurfaceVariant, style = MaterialTheme.typography.labelSmall)
-                    }
-                }
-                if (!wide) ZoomControl(zoom, onResetZoom)
-            }
-        }
-        if (wide) FloatingIsland(Alignment.TopEnd, IntOffset(-px(12.dp), px(64.dp)), floatingWindows) {
-            Column(Modifier.background(colors.surface.copy(alpha = 0.96f), RoundedCornerShape(6.dp)),
-                horizontalAlignment = Alignment.End) {
-                CanvasAction("Export", Icons.Outlined.IosShare, onExport)
-                if (!isPdf) CanvasAction("Paper", Icons.Outlined.Description, onPagePaper)
-                CanvasAction("Precision", Icons.Outlined.Tune, onSettings)
             }
         }
         if (viewportFraction < 0.999f) FloatingIsland(Alignment.CenterEnd, IntOffset(px((-4).dp), 0), floatingWindows) {
             ScrollIndicator(scrollFraction, viewportFraction, onScroll, Modifier.height((maxHeight * 0.25f).coerceIn(96.dp, 180.dp)))
         }
-        if (toolsVisible) RadialToolSelector(settings, selectionCount, maxWidth, maxHeight, floatingWindows)
+        RadialToolSelector(settings, selectionCount, maxWidth, maxHeight, floatingWindows,
+            expanded = toolsExpanded, onExpandedChange = { toolsExpanded = it })
     }
 }
 
@@ -140,32 +151,24 @@ private fun ZoomControl(zoom: Float, onResetZoom: () -> Unit) {
         modifier = Modifier.heightIn(min = 48.dp).semantics {
             contentDescription = "Zoom ${(zoom * 100).roundToInt()} percent. Reset to fit width"
         }) {
+        Icon(Icons.Outlined.FitScreen, null, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(Modifier.width(8.dp))
         Text("${(zoom * 100).roundToInt()}%", style = MaterialTheme.typography.labelMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
 @Composable
-private fun CanvasAction(label: String, icon: ImageVector, onClick: () -> Unit) {
-    TextButton(onClick = onClick, contentPadding = PaddingValues(horizontal = 12.dp),
-        modifier = Modifier.heightIn(min = 48.dp)) {
-        Text(label, color = MaterialTheme.colorScheme.onSurface, style = MaterialTheme.typography.labelLarge)
-        Spacer(Modifier.width(10.dp))
-        Icon(icon, null, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurface)
-    }
-}
-
-@Composable
 private fun ToolbarButton(icon: ImageVector, label: String, onClick: () -> Unit, enabled: Boolean = true,
     tint: Color = MaterialTheme.colorScheme.onSurface) {
-    IconButton(onClick = onClick, enabled = enabled, modifier = Modifier.size(48.dp)) {
+    IconButton(onClick = onClick, enabled = enabled, modifier = Modifier.size(48.dp).background(MaterialTheme.colorScheme.surfaceContainerLow, RoundedCornerShape(12.dp))) {
         Icon(icon, label, Modifier.size(20.dp), tint = if (enabled) tint else tint.copy(alpha = 0.3f))
     }
 }
 
 /** Quiet, nearly opaque chrome with a fine edge and a small shadow. */
 @Composable
-internal fun GlassSurface(modifier: Modifier = Modifier, shape: Shape = RoundedCornerShape(16.dp), content: @Composable BoxScope.() -> Unit) {
+internal fun GlassSurface(modifier: Modifier = Modifier, shape: Shape = RoundedCornerShape(18.dp), content: @Composable BoxScope.() -> Unit) {
     val colors = MaterialTheme.colorScheme
     Box(modifier.shadow(1.dp, shape).clip(shape).background(colors.surface.copy(alpha = 0.98f))
         .border(0.5.dp, colors.outlineVariant.copy(alpha = 0.6f), shape)) {

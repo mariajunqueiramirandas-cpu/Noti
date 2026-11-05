@@ -30,12 +30,16 @@ physical screen pixels, so display scaling, rotation and split-screen are suppor
 The editor is a full canvas with a thin, neutral header and a persistent radial tool dial at the upper left.
 The selected tool occupies a contrasting sector of the ring. The other sectors select pen, highlighter,
 stroke eraser, lasso, three width presets and the next saved color. Tap the central swatch for the full
-color, width and pressure controls; drag the center to reposition the dial. More → Hide tools clears
-the canvas, and More → Show tools restores it. The dial stays open and stationary when selecting tools.
+color, width and pressure controls; drag the center to reposition the dial. Tap Collapse beneath the
+ring to shrink it to a 56 dp draggable tool button, then tap that button to expand it around the same center.
+The chosen tool stays active while collapsed. More also offers Collapse tools / Expand tools.
 Floating controls use sub-panel popup windows above the native ink input panel, so taps reach them
-without changing the low-latency drawing path (`ui/common/InkCanvas.kt`). Tablet windows expose Export,
-Paper and Precision at the upper right; phone windows keep these actions in More. Pages stay at the
-lower left, with zoom in the header on tablets and beside Pages on phones. Undo and redo share the header.
+without changing the low-latency drawing path (`ui/common/InkCanvas.kt`). Export PDF, Page paper and Settings
+are in More. Compact floating controls group notebook navigation and editing history at the top;
+a single bottom dock groups the page counter and live zoom. Tablet layouts offer a direct full-screen button.
+App buttons, chips, menus and dialogs share the action styles and explicit-width, scrollable dialog frame
+in `ui/common/Controls.kt`. Primary actions are plum, secondary actions outlined, quiet actions neutral,
+and permanent deletion uses the destructive role. Dialog titles and actions stay visible while forms scroll.
 
 **Pages**: notebooks and imported PDFs scroll vertically as a continuous document. Drag to scroll,
 pinch to zoom from 25% to 600%, drag the slim right-hand scroll indicator, and use the pages panel or page actions in More to jump.

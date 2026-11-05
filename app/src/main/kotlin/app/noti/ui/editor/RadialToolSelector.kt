@@ -7,7 +7,13 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.ExpandLess
+import androidx.compose.material.icons.outlined.ExpandMore
+import app.noti.ui.common.NotiTextButton
+import app.noti.ui.common.NotiIconButton
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.AbsoluteAlignment
@@ -48,20 +54,24 @@ private const val TargetRadius = 72f
 @Composable
 internal fun BoxScope.RadialToolSelector(
     settings: SettingsStore, selectionCount: Int, width: Dp, height: Dp, floating: Boolean,
+    expanded: Boolean, onExpandedChange: (Boolean) -> Unit,
 ) {
     var options by remember { mutableStateOf(false) }
     val position = remember { mutableStateOf(Offset.Zero) }
     val density = LocalDensity.current
     fun px(value: Dp) = with(density) { value.roundToPx() }
-    val inset = IntOffset(px(12.dp), px(64.dp))
+    val inset = IntOffset(px(12.dp), px(84.dp))
+    val isExpanded by rememberUpdatedState(expanded)
+    LaunchedEffect(expanded) { if (!expanded) options = false }
     // Reserve the header, bottom navigation, and native scroll gutter at every window size.
-    val maxX = px((width - DialSize - (if (width >= 600.dp) 156.dp else 60.dp)).coerceAtLeast(0.dp)).toFloat()
-    val maxY = px((height - DialSize - 132.dp).coerceAtLeast(0.dp)).toFloat()
-    val provider = remember(position, maxX, maxY, inset) {
+    val maxX = px((width - DialSize - 60.dp).coerceAtLeast(0.dp)).toFloat()
+    val maxY = px((height - 400.dp).coerceAtLeast(0.dp)).toFloat()
+    val collapsedInset = IntOffset(px(68.dp), px(68.dp))
+    val provider = remember(position, maxX, maxY, inset, collapsedInset) {
         object : PopupPositionProvider {
             override fun calculatePosition(anchorBounds: IntRect, windowSize: IntSize,
                 layoutDirection: LayoutDirection, popupContentSize: IntSize): IntOffset =
-                anchorBounds.topLeft + inset + IntOffset(
+                anchorBounds.topLeft + inset + (if (isExpanded) IntOffset.Zero else collapsedInset) + IntOffset(
                     position.value.x.coerceIn(0f, maxX).roundToInt(),
                     position.value.y.coerceIn(0f, maxY).roundToInt())
         }
@@ -83,14 +93,43 @@ internal fun BoxScope.RadialToolSelector(
         }
     }
     val content: @Composable () -> Unit = {
-        ToolDial(settings, selectionCount, drag, onOptions = { options = !options }) {
-            if (options) ToolOptionsPopup(settings) { options = false }
+        if (expanded) Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            ToolDial(settings, selectionCount, drag, onOptions = { options = !options }) {
+                if (options) ToolOptionsPopup(settings) { options = false }
+            }
+            Spacer(Modifier.height(8.dp))
+            Surface(shape = CircleShape, color = MaterialTheme.colorScheme.surface,
+                border = BorderStroke(0.5.dp, MaterialTheme.colorScheme.outlineVariant)) {
+                NotiTextButton(onClick = { options = false; onExpandedChange(false) },
+                    modifier = Modifier.semantics { contentDescription = "Collapse tools" }) {
+                    Icon(Icons.Outlined.ExpandLess, null, Modifier.size(18.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("Collapse", style = MaterialTheme.typography.labelMedium)
+                }
+            }
+        } else {
+            Surface(Modifier.size(56.dp).then(drag), shape = CircleShape,
+                color = MaterialTheme.colorScheme.surface, shadowElevation = 2.dp,
+                border = BorderStroke(0.75.dp, MaterialTheme.colorScheme.outlineVariant)) {
+                Box {
+                    NotiIconButton(onClick = { onExpandedChange(true) }, modifier = Modifier.fillMaxSize().semantics {
+                        contentDescription = "Expand tools"
+                        stateDescription = if (settings.tool == Tool.Lasso) "$selectionCount selected. Drag to move tools"
+                            else "${settings.tool.label}. Drag to move tools"
+                    }) { Icon(settings.tool.icon(), null, Modifier.size(23.dp)) }
+                    val slots = if (settings.tool == Tool.Highlighter) settings.highlighterSlots else settings.penSlots
+                    if (settings.tool == Tool.Pen || settings.tool == Tool.Highlighter) Box(Modifier.align(Alignment.BottomCenter)
+                        .padding(bottom = 7.dp).size(12.dp, 3.dp).background(Color(slots.currentColor), CircleShape))
+                    Icon(Icons.Outlined.ExpandMore, null, Modifier.align(Alignment.TopEnd).padding(5.dp).size(10.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
         }
     }
     if (floating) Popup(popupPositionProvider = provider, properties = PopupProperties(
         focusable = false, dismissOnBackPress = false, dismissOnClickOutside = false), content = content)
     else Box(Modifier.align(AbsoluteAlignment.TopLeft).absoluteOffset {
-        inset + IntOffset(position.value.x.coerceIn(0f, maxX).roundToInt(), position.value.y.coerceIn(0f, maxY).roundToInt())
+        inset + (if (expanded) IntOffset.Zero else collapsedInset) + IntOffset(position.value.x.coerceIn(0f, maxX).roundToInt(), position.value.y.coerceIn(0f, maxY).roundToInt())
     }) { content() }
 }
 
