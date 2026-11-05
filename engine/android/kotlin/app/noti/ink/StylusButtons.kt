@@ -1,8 +1,11 @@
 package app.noti.ink
 
+import android.os.Build
 import android.view.InputDevice
 import android.view.KeyEvent
 import android.view.MotionEvent
+import android.view.Window
+import android.view.WindowManager
 import android.util.SparseArray
 import android.util.SparseIntArray
 import java.io.Closeable
@@ -146,6 +149,7 @@ class StylusKeyDispatcher {
     private class Client(val key: (KeyEvent) -> Boolean, val reset: () -> Unit)
     private val clients = mutableListOf<Client>()
     private var active = false
+    var hijackXiaomiOsShortcuts: Boolean = true
 
     fun register(key: (KeyEvent) -> Boolean, reset: () -> Unit): Closeable {
         clients.lastOrNull()?.reset?.invoke()
@@ -170,4 +174,65 @@ class StylusKeyDispatcher {
     fun dispatchFromFocusedWindow(event: KeyEvent): Boolean = clients.lastOrNull()?.key?.invoke(event) == true
 
     fun reset() { clients.forEach { it.reset() } }
+}
+
+/**
+ * HyperOS's MiuiStylusShortcutManager checks NOTE_PACKAGE_NAME.contains(mFocusedWindow.getOwningPackage())
+ * before arming the 380 ms Quick Note / Mi Canvas hold action and 400 ms key dispatch delay on
+ * KEYCODE_PAGE_DOWN (93). In system_server, WindowState.getOwningPackage() returns mAttrs.packageName.
+ *
+ * Because WindowManager.LayoutParams.copyFrom only copies packageName when the destination field is null,
+ * win.mAttrs.packageName in WindowManagerService is latched when the window is first added (addWindow).
+ * Setting window.attributes.packageName to "com.miui.notes" before WindowManagerGlobal.addView runs (and
+ * returning "com.miui.notes" when Window.adjustLayoutParamsForSubWindow or WindowManagerGlobal.addView
+ * queries Context.getPackageName() for Dialog/sub-windows) causes ViewRootImpl.setView and WindowState.<init>
+ * to latch "com.miui.notes" without root or ADB.
+ */
+object XiaomiStylusWindow {
+    const val NOTES_PACKAGE = "com.miui.notes"
+
+    fun isXiaomi(manufacturer: String? = Build.MANUFACTURER, brand: String? = Build.BRAND): Boolean {
+        val m = manufacturer.orEmpty().lowercase(java.util.Locale.ROOT)
+        val b = brand.orEmpty().lowercase(java.util.Locale.ROOT)
+        return m == "xiaomi" || b == "xiaomi" || b == "redmi" || b == "poco"
+    }
+
+    fun applyBeforeAdd(
+        attrs: WindowManager.LayoutParams,
+        hijack: Boolean = true,
+        isXiaomi: Boolean = isXiaomi(),
+    ): Boolean {
+        if (!isXiaomi || !hijack) return false
+        attrs.packageName = NOTES_PACKAGE
+        return true
+    }
+
+    fun applyBeforeAdd(
+        window: Window,
+        hijack: Boolean = true,
+        isXiaomi: Boolean = isXiaomi(),
+    ): Boolean {
+        if (!isXiaomi || !hijack) return false
+        val attrs = window.attributes
+        if (!applyBeforeAdd(attrs, hijack = true, isXiaomi = true)) return false
+        window.attributes = attrs
+        return true
+    }
+
+    fun isWindowAddCaller(stack: Array<StackTraceElement> = Throwable().stackTrace): Boolean =
+        stack.any { element ->
+            (element.className == "android.view.Window" && element.methodName == "adjustLayoutParamsForSubWindow") ||
+                (element.className == "android.view.WindowManagerGlobal" && element.methodName == "addView")
+        }
+
+    fun resolvePackageName(
+        appPackage: String,
+        hijack: Boolean = true,
+        isXiaomi: Boolean = isXiaomi(),
+        stack: Array<StackTraceElement>? = null,
+    ): String {
+        if (!isXiaomi || !hijack) return appPackage
+        val trace = stack ?: Throwable().stackTrace
+        return if (isWindowAddCaller(trace)) NOTES_PACKAGE else appPackage
+    }
 }

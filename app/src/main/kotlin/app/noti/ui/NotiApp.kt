@@ -13,6 +13,7 @@ import androidx.core.view.WindowCompat
 import app.noti.data.LibraryStore
 import app.noti.data.SettingsStore
 import app.noti.data.ThemeMode
+import app.noti.ink.StylusKeyHost
 import app.noti.ui.editor.EditorScreen
 import app.noti.ui.library.LibraryScreen
 import app.noti.ui.settings.SettingsScreen
@@ -27,6 +28,7 @@ private const val EDITOR = "editor:"
 fun NotiApp(library: LibraryStore, settings: SettingsStore) {
     NotiTheme(settings.theme) {
         SystemBarIcons(settings.theme)
+        XiaomiStylusHostSync(settings.penButtonsEnabled && settings.penLegacyKeys)
         var route by rememberSaveable { mutableStateOfRoute() }
         when {
             route == SETTINGS -> SettingsScreen(settings, onBack = { route = LIBRARY })
@@ -51,6 +53,15 @@ fun NotiApp(library: LibraryStore, settings: SettingsStore) {
 }
 
 private fun mutableStateOfRoute() = androidx.compose.runtime.mutableStateOf(LIBRARY)
+
+@Composable
+private fun XiaomiStylusHostSync(hijack: Boolean) {
+    val view = LocalView.current
+    SideEffect {
+        val activity = view.context as? Activity ?: return@SideEffect
+        (activity as? StylusKeyHost)?.stylusKeys?.hijackXiaomiOsShortcuts = hijack
+    }
+}
 
 /** Dark status/navigation bar icons on the light theme, light ones on the dark theme. */
 @Composable

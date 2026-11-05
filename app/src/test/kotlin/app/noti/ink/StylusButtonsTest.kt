@@ -3,6 +3,7 @@ package app.noti.ink
 import android.view.InputDevice
 import android.view.KeyEvent
 import android.view.MotionEvent
+import android.view.WindowManager
 import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -170,5 +171,68 @@ class StylusButtonsTest {
         assertEquals(PenButton.Secondary, map(93, name = "Xiaomi Focus Pen", opts = options.copy(swapLegacyKeys = true)))
         assertNull(map(93, name = "Xiaomi Focus Pen", opts = options.copy(legacyKeys = false)))
         assertNull(map(308, opts = options.copy(enabled = false)))
+    }
+
+    @Test fun xiaomiWindowAttributesLatchNotesPackageBeforeAddView() {
+        assertTrue(XiaomiStylusWindow.isXiaomi("Xiaomi", "Xiaomi"))
+        assertTrue(XiaomiStylusWindow.isXiaomi("Xiaomi", "Redmi"))
+        assertTrue(XiaomiStylusWindow.isXiaomi("unknown", "POCO"))
+        assertFalse(XiaomiStylusWindow.isXiaomi("Google", "google"))
+
+        val nonXiaomiAttrs = WindowManager.LayoutParams()
+        assertFalse(XiaomiStylusWindow.applyBeforeAdd(nonXiaomiAttrs, hijack = true, isXiaomi = false))
+        assertNull(nonXiaomiAttrs.packageName)
+
+        val disabledAttrs = WindowManager.LayoutParams()
+        assertFalse(XiaomiStylusWindow.applyBeforeAdd(disabledAttrs, hijack = false, isXiaomi = true))
+        assertNull(disabledAttrs.packageName)
+
+        val windowAttrs = WindowManager.LayoutParams()
+        assertTrue(XiaomiStylusWindow.applyBeforeAdd(windowAttrs, hijack = true, isXiaomi = true))
+        assertEquals(XiaomiStylusWindow.NOTES_PACKAGE, windowAttrs.packageName)
+
+        // Simulates ViewRootImpl.mWindowAttributes.copyFrom(wparams) and WindowState.mAttrs.copyFrom(attrs)
+        // during WindowManagerGlobal.addView -> WindowManagerService.addWindow:
+        val viewRootAttrs = WindowManager.LayoutParams().apply { copyFrom(windowAttrs) }
+        val windowStateAttrs = WindowManager.LayoutParams().apply { copyFrom(viewRootAttrs) }
+        assertEquals(XiaomiStylusWindow.NOTES_PACKAGE, windowStateAttrs.packageName)
+
+        // Subsequent relayouts with non-null app packageName do not clobber the latched WindowState packageName:
+        val relayoutAttrs = WindowManager.LayoutParams().apply { packageName = "app.noti" }
+        windowStateAttrs.copyFrom(relayoutAttrs)
+        assertEquals(XiaomiStylusWindow.NOTES_PACKAGE, windowStateAttrs.packageName)
+
+        val addViewStack = arrayOf(
+            StackTraceElement("app.noti.MainActivity", "getPackageName", "MainActivity.kt", 36),
+            StackTraceElement("android.view.WindowManagerGlobal", "addView", "WindowManagerGlobal.java", 390),
+        )
+        val subWindowStack = arrayOf(
+            StackTraceElement("app.noti.MainActivity", "getPackageName", "MainActivity.kt", 36),
+            StackTraceElement("android.view.Window", "adjustLayoutParamsForSubWindow", "Window.java", 815),
+        )
+        val normalStack = arrayOf(
+            StackTraceElement("app.noti.MainActivity", "getPackageName", "MainActivity.kt", 36),
+            StackTraceElement("android.content.ComponentName", "<init>", "ComponentName.java", 130),
+        )
+        assertEquals(
+            XiaomiStylusWindow.NOTES_PACKAGE,
+            XiaomiStylusWindow.resolvePackageName("app.noti", hijack = true, isXiaomi = true, stack = addViewStack),
+        )
+        assertEquals(
+            XiaomiStylusWindow.NOTES_PACKAGE,
+            XiaomiStylusWindow.resolvePackageName("app.noti", hijack = true, isXiaomi = true, stack = subWindowStack),
+        )
+        assertEquals(
+            "app.noti",
+            XiaomiStylusWindow.resolvePackageName("app.noti", hijack = false, isXiaomi = true, stack = addViewStack),
+        )
+        assertEquals(
+            "app.noti",
+            XiaomiStylusWindow.resolvePackageName("app.noti", hijack = true, isXiaomi = false, stack = addViewStack),
+        )
+        assertEquals(
+            "app.noti",
+            XiaomiStylusWindow.resolvePackageName("app.noti", hijack = true, isXiaomi = true, stack = normalStack),
+        )
     }
 }

@@ -10,6 +10,7 @@ import app.noti.data.SettingsStore
 import app.noti.ui.NotiApp
 import app.noti.ink.StylusKeyDispatcher
 import app.noti.ink.StylusKeyHost
+import app.noti.ink.XiaomiStylusWindow
 
 /**
  * The whole app is Compose. The ink itself never goes through Compose: each writing area
@@ -19,6 +20,9 @@ import app.noti.ink.StylusKeyHost
 class MainActivity : ComponentActivity(), StylusKeyHost {
     override val stylusKeys = StylusKeyDispatcher()
     private var resumed = false
+
+    override fun getPackageName(): String =
+        XiaomiStylusWindow.resolvePackageName(super.getPackageName(), stylusKeys.hijackXiaomiOsShortcuts)
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean =
         stylusKeys.dispatch(event) || super.dispatchKeyEvent(event)
@@ -43,10 +47,12 @@ class MainActivity : ComponentActivity(), StylusKeyHost {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        val settings = SettingsStore(this)
+        stylusKeys.hijackXiaomiOsShortcuts = settings.penButtonsEnabled && settings.penLegacyKeys
+        XiaomiStylusWindow.applyBeforeAdd(window, stylusKeys.hijackXiaomiOsShortcuts)
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         val library = LibraryStore(this)
-        val settings = SettingsStore(this)
         setContent { NotiApp(library, settings) }
     }
 }

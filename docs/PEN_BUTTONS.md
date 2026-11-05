@@ -1,8 +1,12 @@
 # Focus Pen buttons
 
 Noti supports the original three-button Xiaomi Focus Pen through Android input events. No root,
-accessibility service, privileged permission or Xiaomi SDK is required. This does not override events
-that HyperOS reserves for its own screenshot, Mi Canvas, pointer or camera features.
+accessibility service, privileged permission or Xiaomi SDK is required. On Xiaomi/Redmi/POCO devices
+with **Pen shortcuts** and **Xiaomi button compatibility** enabled, Noti sets its attached
+window's `WindowManager.LayoutParams.packageName` to `com.miui.notes` when windows are added so
+HyperOS's `MiuiStylusShortcutManager` (`NOTE_PACKAGE_NAME.contains(mFocusedWindow.getOwningPackage())`)
+disables the 380 ms OS Quick Note / Mi Canvas hold overlay and 400 ms dispatch delay on the writing
+button (`KEYCODE_PAGE_DOWN`).
 
 ## Using the shortcuts
 
