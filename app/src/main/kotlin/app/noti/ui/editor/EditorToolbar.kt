@@ -34,7 +34,10 @@ import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
 import app.noti.data.SettingsStore
 import app.noti.data.Tool
+import kotlin.math.cos
 import kotlin.math.roundToInt
+import kotlin.math.sin
+import kotlin.math.toRadians
 
 /** Compact controls in sub-panel windows, above the native ink input panel. */
 @Composable
@@ -180,7 +183,7 @@ private fun BoxScope.RadialTools(settings: SettingsStore, selectionCount: Int, w
     val opacity by animateFloatAsState(if (expanded) 1f else 0f, tween(100), label = "Tool palette opacity")
     val density = LocalDensity.current
     fun px(value: Dp) = with(density) { value.roundToPx() }
-    // Reserve the compact palette's footprint in both states. Keep clear of the scroll gutter.
+    // Reserve the radial selector's footprint in both states. Keep clear of the scroll gutter.
     val minX = -px((width - 332.dp).coerceAtLeast(0.dp)).toFloat()
     val minY = -px((height - 272.dp).coerceAtLeast(0.dp)).toFloat()
     val inset = IntOffset(-px(60.dp), -px(80.dp))
@@ -218,25 +221,30 @@ private fun BoxScope.RadialTools(settings: SettingsStore, selectionCount: Int, w
     }
     if (!dragging && (expanded || opacity > 0f)) {
         MovableToolIsland(position, minX, minY, inset + IntOffset(0, -px(60.dp)), floating) {
-            GlassSurface(Modifier.graphicsLayer { alpha = opacity }, RoundedCornerShape(20.dp)) {
-                Row(Modifier.padding(6.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Tool.entries.forEach { tool ->
-                        val active = settings.tool == tool
-                        IconButton(onClick = { settings.tool = tool; expanded = false; options = false },
-                            enabled = expanded, modifier = Modifier.size(48.dp).clip(RoundedCornerShape(14.dp))
-                                .background(if (active) colors.primaryContainer else Color.Transparent)
-                                .semantics { selected = active }) {
-                            Icon(tool.icon(), tool.label, Modifier.size(22.dp),
-                                tint = if (active) colors.onPrimaryContainer else colors.onSurfaceVariant)
-                        }
+            val ring = 66.dp
+            val step = 360f / (Tool.entries.size + 1)
+            GlassSurface(Modifier.size(192.dp).graphicsLayer { alpha = opacity }, CircleShape) {
+                Tool.entries.forEachIndexed { index, tool ->
+                    val angle = (-90f + index * step).toRadians()
+                    val active = settings.tool == tool
+                    IconButton(onClick = { settings.tool = tool; expanded = false; options = false },
+                        enabled = expanded, modifier = Modifier.align(Alignment.Center)
+                            .offset((cos(angle) * ring.value).dp, (sin(angle) * ring.value).dp)
+                            .size(48.dp).clip(CircleShape)
+                            .background(if (active) colors.primaryContainer else Color.Transparent)
+                            .semantics { selected = active }) {
+                        Icon(tool.icon(), tool.label, Modifier.size(22.dp),
+                            tint = if (active) colors.onPrimaryContainer else colors.onSurfaceVariant)
                     }
-                    Box(Modifier.padding(horizontal = 4.dp).width(1.dp).height(24.dp).background(colors.outlineVariant))
-                    Box {
-                        IconButton(onClick = { options = !options }, enabled = expanded && drawing, modifier = Modifier.size(48.dp)) {
-                            Icon(Icons.Outlined.Tune, "Brush options", Modifier.size(20.dp))
-                        }
-                        if (options) ToolOptionsPopup(settings) { options = false }
+                }
+                val tuneAngle = (-90f + Tool.entries.size * step).toRadians()
+                Box(Modifier.align(Alignment.Center)
+                    .offset((cos(tuneAngle) * ring.value).dp, (sin(tuneAngle) * ring.value).dp)) {
+                    IconButton(onClick = { options = !options }, enabled = expanded && drawing,
+                        modifier = Modifier.size(48.dp).clip(CircleShape)) {
+                        Icon(Icons.Outlined.Tune, "Brush options", Modifier.size(20.dp))
                     }
+                    if (options) ToolOptionsPopup(settings) { options = false }
                 }
             }
         }
