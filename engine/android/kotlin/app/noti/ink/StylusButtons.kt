@@ -12,7 +12,8 @@ import java.io.Closeable
 
 enum class PenButton(val label: String, val flag: Int) {
     Primary("Writing", NotiInk.FLAG_BUTTON_PRIMARY),
-    Secondary("Screenshot", NotiInk.FLAG_BUTTON_SECONDARY),
+    // Screenshot supports delivered clicks only; its hold stays with HyperOS.
+    Secondary("Screenshot", 0),
     Focus("Focus", 0),
 }
 
@@ -109,24 +110,28 @@ internal class StylusButtons(
             "screenshot ${if (bits and MotionEvent.BUTTON_STYLUS_SECONDARY != 0) "down" else "up"}")
     }
 
-    /** No allocations on the pen sample path. The native engine latches a tool at nib-down. */
+    /** Only writing can override ink while held. The native engine latches it at nib-down. */
     fun flags(device: Int, buttons: Int, contact: Boolean): Int {
         if (!options.enabled || !options.holds) return 0
         var flags = 0
         if (buttons and MotionEvent.BUTTON_STYLUS_PRIMARY != 0) flags = flags or NotiInk.FLAG_BUTTON_PRIMARY
-        if (buttons and MotionEvent.BUTTON_STYLUS_SECONDARY != 0) flags = flags or NotiInk.FLAG_BUTTON_SECONDARY
         // Xiaomi can expose the Bluetooth keys and digitizer as separate devices.
-        // With one pressed pen the association is unambiguous. Never guess when
-        // multiple key devices are pressed and none matches the digitizer.
-        val states = presses[device] ?: if (presses.size() == 1) presses.valueAt(0) else return flags
-        for (index in 0..1) {
-            val button = PenButton.entries[index]
-            val press = states[button.ordinal] ?: continue
-            if (button.flag == 0) continue
-            flags = flags or button.flag
-            if (contact) press.usedForInk = true
-        }
+        // Only pressed writing keys count toward association: a click-only
+        // screenshot or Focus key on another device cannot block a writing hold.
+        val press = presses[device]?.get(PenButton.Primary.ordinal) ?: singleWritingPress() ?: return flags
+        flags = flags or NotiInk.FLAG_BUTTON_PRIMARY
+        if (contact) press.usedForInk = true
         return flags
+    }
+
+    private fun singleWritingPress(): Press? {
+        var result: Press? = null
+        for (index in 0 until presses.size()) {
+            val candidate = presses.valueAt(index)[PenButton.Primary.ordinal] ?: continue
+            if (result != null) return null // Two pressed pens: do not guess their digitizer.
+            result = candidate
+        }
+        return result
     }
 
     fun reset() {

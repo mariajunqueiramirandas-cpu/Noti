@@ -6,7 +6,8 @@ with **Pen shortcuts** and **Xiaomi button compatibility** enabled, Noti sets it
 window's `WindowManager.LayoutParams.packageName` to `com.miui.notes` when windows are added so
 HyperOS's `MiuiStylusShortcutManager` (`NOTE_PACKAGE_NAME.contains(mFocusedWindow.getOwningPackage())`)
 disables the 380 ms OS Quick Note / Mi Canvas hold overlay and 400 ms dispatch delay on the writing
-button (`KEYCODE_PAGE_DOWN`).
+button (`KEYCODE_PAGE_DOWN`). Only the writing button supports holds in Noti; screenshot-button
+holds remain with HyperOS. Delivered screenshot short clicks still work.
 
 ## Using the shortcuts
 
@@ -19,11 +20,12 @@ next quick color, undo or redo. Focus defaults to no action and is passed to the
 Assigning Focus only captures Android's tertiary stylus code if the OS actually delivers it.
 Unknown vendor key codes are not guessed or captured.
 
-With **Hold to erase or select** enabled, a real held writing button temporarily erases; a real held
-screenshot button temporarily selects. A held key or stylus motion-button flag applies to strokes
+With **Hold writing button to erase** enabled, a real held writing button temporarily erases.
+A held writing key or primary stylus motion-button flag applies to strokes
 started while pressed. The native engine latches the tool at nib-down, so release never turns half
-an eraser gesture into ink: the selected tool returns on the next stroke. Both held together give
-eraser priority. Using a held button for ink suppresses its click, even if released quickly.
+an eraser gesture into ink: the selected tool returns on the next stroke. The screenshot button never
+sets a temporary tool override, including when both buttons are pressed. Using a held writing button
+for ink suppresses its click, even if released quickly.
 Long presses without ink also suppress clicks, using Android's configured long-press timeout.
 
 Turn holds off to keep only key click shortcuts. Turn **Pen shortcuts** off to pass keys through
@@ -43,16 +45,18 @@ Supported inputs:
 | Android key codes 308 / 309 | Primary (writing) / secondary (screenshot) |
 | Android key code 310 | Focus, only when assigned |
 | Page Down / Page Up (93 / 92) from a stylus source or a pen-named device | Xiaomi writing / screenshot compatibility mapping |
-| `BUTTON_STYLUS_PRIMARY` / `BUTTON_STYLUS_SECONDARY` in pen motion events | Temporary erase / lasso; no additional click |
+| `BUTTON_STYLUS_PRIMARY` in pen motion events | Temporary erase; no additional click |
+| `BUTTON_STYLUS_SECONDARY` in pen motion events | Diagnostic state only; no temporary tool override |
 
 The Xiaomi mapping is a compatibility default, not a guarantee for every firmware. **Swap Xiaomi
 button order** reverses it; **Xiaomi button compatibility** disables that path. Page keys from
 ordinary keyboards and remotes remain untouched. Tail, camera, volume and arbitrary gamepad codes
 are not intercepted. Standard stylus codes are recognized even when their input source is keyboard-like.
 
-Key states are tracked per input device. A single pressed pen key device may control a separate
-digitizer device (Bluetooth and tip events can come from different nodes). With multiple pressed
-key devices, Noti requires a matching device rather than guessing. Hover exit or motion events with
+Key states are tracked per input device. A single pressed writing-key device may control a separate
+digitizer device (Bluetooth and tip events can come from different nodes). Click-only buttons on other
+devices do not block this association. With multiple pressed writing-key devices, Noti requires a
+matching device rather than guessing. Hover exit or motion events with
 zero button flags do not erase a still-held key state. Physical release, canceled input, focus loss,
 pause, canvas disposal, device removal/change and configuration changes clear the applicable states.
 Repeats do not produce extra clicks. Motion events stay on the dedicated ink thread; diagnostic
@@ -64,19 +68,28 @@ notebook through its shortcuts. The tester never invokes notebook actions or cha
 
 ## Verify on the Xiaomi Pad 7
 
-Automated tests validate input interpretation and native tool behavior, not the tablet's firmware.
-There was no attached Android device during implementation. On the target tablet:
+The independent probe on Pad 7 (`uke`), Android 16 / OS3.0.303.0.WOZMIXM, established the
+quick-note whitelist bypass using the `com.miui.creation` window alias. The writing key remained
+uncanceled for 4.327 seconds while drawing; its key device was separate from the digitizer, whose
+motion button flags stayed zero. Noti's existing integration uses `com.miui.notes` from the same
+whitelist. The integrated app still needs a physical-device check.
+
+Screenshot protection (`FLAG_SECURE`) produced warnings and did not yield usable screenshot holds
+in the probe. Noti does not use it. Screenshot holds can still invoke the OS screenshot action.
+
+Automated tests cover input interpretation, the existing window helper and native tool behavior,
+not the tablet's firmware. On the target tablet:
 
 1. Open **Settings → Pen buttons**. Click writing and screenshot once each, near the screen and
    outside hover range. Confirm the names; swap the compatibility order if reversed.
-2. Hold each button for two seconds. A down report that remains until physical release followed
+2. Hold only the writing button for two seconds. Mi Canvas should stay closed. A down report that remains until physical release followed
    by a long-press report demonstrates key hold timing. An immediate click while still holding
    means that key stream exposes clicks only. Motion state reports may independently expose holds.
-3. Draw a line in the scratch area. Hold writing before touching it to erase; hold screenshot
-   before tracing a lasso. Check away/near-screen transitions while keeping the button pressed.
+3. Draw a line in the scratch area. Hold writing before touching it to erase. Check away/near-screen
+   transitions while keeping the writing button pressed, including the editor's settings dialog.
 4. In a notebook, verify click toggles, persistent return to pen/highlighter, undo/redo assignments,
    and that a real hold used for ink does not also toggle on release. Check both drawing tools.
-5. While holding a button, open settings, leave/reopen the editor, switch apps, rotate, disconnect
+5. While holding the writing button, open settings, leave/reopen the editor, switch apps, rotate, disconnect
    the pen, and turn shortcuts off/on. No tool should remain temporarily held after canceled input.
 6. Verify ordinary Bluetooth keyboard Page Up/Down, and Xiaomi's unassigned Focus button. OS-reserved
    functions may still take precedence; absence of an event is not evidence of a physical pen failure.

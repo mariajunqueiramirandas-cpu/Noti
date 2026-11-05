@@ -38,6 +38,8 @@ class PenButtonsSettingsTest {
         compose.runOnIdle { assertEquals(PenButtonAction.NextColor, SettingsStore(compose.activity).focusButtonAction) }
         compose.onNodeWithText("Swap Xiaomi button order").performScrollTo().performClick()
         compose.runOnIdle { assertTrue(settings.penSwapLegacyKeys) }
+        compose.onNodeWithText("Hold writing button to erase").performScrollTo().performClick()
+        compose.runOnIdle { assertFalse(SettingsStore(compose.activity).penButtonHolds) }
         compose.onNodeWithText("Test click and hold").performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("Waiting for pen button input…").performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("Scratch area").assertIsDisplayed()
