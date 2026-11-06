@@ -44,7 +44,8 @@ class BrandLayoutTest {
         var opened: String? = null
         render { LibraryScreen(library, SettingsStore(context), onOpen = { opened = it }, onSettings = {}) }
         compose.onNodeWithText("noti.").assertIsDisplayed()
-        compose.onAllNodesWithText("Little ideas welcome.").assertCountEquals(2)
+        compose.onNodeWithText("Little ideas welcome.").assertIsDisplayed()
+        compose.onNodeWithText("4 notebooks").assertIsDisplayed()
         compose.onNodeWithText("Small bright things").assertIsDisplayed()
         screenshot("tablet-library-light")
         compose.onNodeWithText("Small bright things").performClick()

@@ -5,6 +5,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.Immutable
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.Font
@@ -15,15 +17,38 @@ import androidx.compose.ui.unit.sp
 import app.noti.R
 import app.noti.data.ThemeMode
 
-/** Shared stationery colors. Accents decorate the library; the canvas stays neutral. */
+/**
+ * A page on a desk at dusk: a soft greige desk, a lighter sheet for content, aubergine
+ * charcoal ink, one plum accent shared with Doti, and honey only for favorite bookmarks.
+ * Pastel covers mark notebooks; the canvas itself stays neutral.
+ */
 object NotiBrand {
-    val Ink = Color(0xFF30332E)
-    val Paper = Color(0xFFFAF9F6)
-    val Lilac = Color(0xFFDED2F4)
-    val Butter = Color(0xFFF5D77E)
-    val Peach = Color(0xFFF6B6A6)
-    val Mint = Color(0xFFDDEBDD)
+    val Ink = Color(0xFF2A2830)
+    val Paper = Color(0xFFF3F1EE)
+    val Plum = Color(0xFF5C4A87)
+    val Honey = Color(0xFFE3AE3F)
+    val Lilac = Color(0xFFD9CFEE)
+    val Butter = Color(0xFFF1DFA6)
+    val Peach = Color(0xFFF2C6B8)
+    val Mint = Color(0xFFCFE1D3)
+    val Sky = Color(0xFFCBDCEB)
     const val Tagline = "Little ideas welcome."
+}
+
+/** Colors the Material scheme has no role for. */
+@Immutable
+data class NotiExtras(
+    /** The content sheet that sits on the desk (background). */
+    val sheet: Color,
+    /** Notebook spines, muted enough to sit quietly beside each other. */
+    val covers: List<Color>,
+    val bookmark: Color,
+    /** A soft drop shadow tint for floating chrome. */
+    val shadow: Color,
+)
+
+val LocalNotiExtras = staticCompositionLocalOf {
+    NotiExtras(Color.White, listOf(NotiBrand.Lilac), NotiBrand.Honey, Color.Black)
 }
 
 val NotiFont = FontFamily(
@@ -35,50 +60,70 @@ val NotiFont = FontFamily(
 )
 
 private val Light = lightColorScheme(
-    primary = Color(0xFF6D568F), onPrimary = Color.White,
-    primaryContainer = Color(0xFFECE4F6), onPrimaryContainer = Color(0xFF47315F),
-    secondary = Color(0xFF626D59), onSecondary = Color.White,
-    secondaryContainer = Color(0xFFE5EDDF), onSecondaryContainer = Color(0xFF35432E),
-    tertiary = Color(0xFF855A42), tertiaryContainer = Color(0xFFFFE8D9), onTertiaryContainer = Color(0xFF593D2B),
+    primary = NotiBrand.Plum, onPrimary = Color.White,
+    primaryContainer = Color(0xFFE9E3F4), onPrimaryContainer = Color(0xFF392B5A),
+    secondary = Color(0xFF6B6577), onSecondary = Color.White,
+    secondaryContainer = Color(0xFFECE9EF), onSecondaryContainer = Color(0xFF34303C),
+    tertiary = Color(0xFF8A6418), onTertiary = Color.White,
+    tertiaryContainer = Color(0xFFF7E8C5), onTertiaryContainer = Color(0xFF4F3908),
     background = NotiBrand.Paper, onBackground = NotiBrand.Ink,
-    surface = Color(0xFFFDFCFA), onSurface = NotiBrand.Ink,
-    surfaceVariant = Color(0xFFF1EFEA), onSurfaceVariant = Color(0xFF6A6E64),
-    surfaceContainerLowest = Color.White, surfaceContainerLow = Color(0xFFF5F4F0),
-    surfaceContainer = Color(0xFFF1EFEA), surfaceContainerHigh = Color(0xFFEDEAE4),
-    surfaceContainerHighest = Color(0xFFE7E4DE),
-    outline = Color(0xFFA4A99D), outlineVariant = Color(0xFFE1E3DA),
+    surface = Color(0xFFFBFAF8), onSurface = NotiBrand.Ink,
+    surfaceVariant = Color(0xFFEDEAE8), onSurfaceVariant = Color(0xFF6C6873),
+    surfaceContainerLowest = Color.White, surfaceContainerLow = Color(0xFFF6F4F2),
+    surfaceContainer = Color(0xFFF0EEEB), surfaceContainerHigh = Color(0xFFEBE8E5),
+    surfaceContainerHighest = Color(0xFFE5E2DF),
+    outline = Color(0xFFA8A3AD), outlineVariant = Color(0xFFE3DFE2),
+    error = Color(0xFFB3261E), onError = Color.White,
+    errorContainer = Color(0xFFF9DEDC), onErrorContainer = Color(0xFF410E0B),
 )
 
 private val Dark = darkColorScheme(
-    primary = Color(0xFFD4BEEB), onPrimary = Color(0xFF342344),
-    primaryContainer = Color(0xFF44334F), onPrimaryContainer = Color(0xFFEEE0FA),
-    secondary = Color(0xFFC2D2B8), secondaryContainer = Color(0xFF354230), onSecondaryContainer = Color(0xFFE1EEDB),
-    tertiary = Color(0xFFF0C7A9), tertiaryContainer = Color(0xFF50392C), onTertiaryContainer = Color(0xFFFFE7D7),
-    background = Color(0xFF1C1D1B), onBackground = Color(0xFFECEDE5),
-    surface = Color(0xFF252623), onSurface = Color(0xFFECEDE5),
-    surfaceVariant = Color(0xFF33352F), onSurfaceVariant = Color(0xFFB2B7AA),
-    surfaceContainerLowest = Color(0xFF181916), surfaceContainerLow = Color(0xFF222320),
-    surfaceContainer = Color(0xFF282A25), surfaceContainerHigh = Color(0xFF30322D),
-    surfaceContainerHighest = Color(0xFF373A33),
-    outline = Color(0xFF777D6F), outlineVariant = Color(0xFF3E4338),
+    primary = Color(0xFFCDBFF2), onPrimary = Color(0xFF2E2350),
+    primaryContainer = Color(0xFF3D3459), onPrimaryContainer = Color(0xFFE9E1FF),
+    secondary = Color(0xFFCAC4D3), secondaryContainer = Color(0xFF35323C), onSecondaryContainer = Color(0xFFE8E4EE),
+    tertiary = Color(0xFFF0C46A), tertiaryContainer = Color(0xFF4A3912), onTertiaryContainer = Color(0xFFFBE4B5),
+    background = Color(0xFF19181D), onBackground = Color(0xFFECE9F0),
+    surface = Color(0xFF211F25), onSurface = Color(0xFFECE9F0),
+    surfaceVariant = Color(0xFF2E2C33), onSurfaceVariant = Color(0xFFADA8B5),
+    surfaceContainerLowest = Color(0xFF141317), surfaceContainerLow = Color(0xFF1E1D22),
+    surfaceContainer = Color(0xFF26242A), surfaceContainerHigh = Color(0xFF2D2B32),
+    surfaceContainerHighest = Color(0xFF35333A),
+    outline = Color(0xFF7D7885), outlineVariant = Color(0xFF38353D),
+    error = Color(0xFFF2B8B5), onError = Color(0xFF601410),
 )
 
-private fun type(size: Int, height: Int, weight: FontWeight = FontWeight.Normal) =
-    TextStyle(fontFamily = NotiFont, fontSize = size.sp, lineHeight = height.sp, fontWeight = weight)
+private val LightExtras = NotiExtras(
+    sheet = Color(0xFFFBFAF8),
+    covers = listOf(NotiBrand.Lilac, NotiBrand.Butter, NotiBrand.Mint, NotiBrand.Peach, NotiBrand.Sky),
+    bookmark = NotiBrand.Honey,
+    shadow = Color(0xFF2A2235),
+)
 
+private val DarkExtras = NotiExtras(
+    sheet = Color(0xFF211F25),
+    covers = listOf(Color(0xFF8E80B3), Color(0xFFB8A56A), Color(0xFF7FA088), Color(0xFFB98D7F), Color(0xFF7F99B2)),
+    bookmark = Color(0xFFF0C46A),
+    shadow = Color.Black,
+)
+
+private fun type(size: Int, height: Int, weight: FontWeight = FontWeight.Normal, tracking: Float = 0f) =
+    TextStyle(fontFamily = NotiFont, fontSize = size.sp, lineHeight = height.sp, fontWeight = weight, letterSpacing = tracking.sp)
+
+/** One rounded family with calm weights: Bold only where a heading carries the page. */
 private val NotiTypography = Typography(
-    displayLarge = type(56, 64, FontWeight.ExtraBold), displayMedium = type(44, 52, FontWeight.ExtraBold),
-    displaySmall = type(36, 44, FontWeight.ExtraBold), headlineLarge = type(32, 40, FontWeight.ExtraBold),
-    headlineMedium = type(28, 36, FontWeight.Bold), headlineSmall = type(24, 32, FontWeight.Bold),
-    titleLarge = type(22, 28, FontWeight.Bold), titleMedium = type(16, 24, FontWeight.Bold),
-    titleSmall = type(14, 20, FontWeight.Bold), bodyLarge = type(16, 24), bodyMedium = type(14, 21),
-    bodySmall = type(12, 18), labelLarge = type(14, 20, FontWeight.Bold),
-    labelMedium = type(12, 16, FontWeight.SemiBold), labelSmall = type(11, 16, FontWeight.SemiBold),
+    displayLarge = type(56, 64, FontWeight.Bold, -1.2f), displayMedium = type(44, 52, FontWeight.Bold, -1f),
+    displaySmall = type(36, 44, FontWeight.Bold, -0.8f), headlineLarge = type(32, 40, FontWeight.Bold, -0.6f),
+    headlineMedium = type(28, 36, FontWeight.Bold, -0.5f), headlineSmall = type(24, 32, FontWeight.Bold, -0.3f),
+    titleLarge = type(20, 28, FontWeight.Bold, -0.2f), titleMedium = type(16, 24, FontWeight.SemiBold),
+    titleSmall = type(14, 20, FontWeight.SemiBold), bodyLarge = type(16, 24), bodyMedium = type(14, 21),
+    bodySmall = type(12, 17), labelLarge = type(14, 20, FontWeight.SemiBold),
+    labelMedium = type(12, 16, FontWeight.SemiBold), labelSmall = type(11, 14, FontWeight.SemiBold),
 )
 
+/** Radius follows hierarchy: controls 12, cards 16, panels 22, sheets and dialogs 28. */
 private val NotiShapes = Shapes(
-    extraSmall = RoundedCornerShape(6.dp), small = RoundedCornerShape(12.dp),
-    medium = RoundedCornerShape(14.dp), large = RoundedCornerShape(20.dp), extraLarge = RoundedCornerShape(24.dp),
+    extraSmall = RoundedCornerShape(8.dp), small = RoundedCornerShape(12.dp),
+    medium = RoundedCornerShape(16.dp), large = RoundedCornerShape(22.dp), extraLarge = RoundedCornerShape(28.dp),
 )
 
 @Composable
@@ -90,6 +135,14 @@ fun NotiTheme(mode: ThemeMode, content: @Composable () -> Unit) {
     }
     val colors = if (dark) Dark else Light
     MaterialTheme(colorScheme = colors, typography = NotiTypography, shapes = NotiShapes) {
-        CompositionLocalProvider(LocalContentColor provides colors.onSurface, content = content)
+        CompositionLocalProvider(
+            LocalContentColor provides colors.onSurface,
+            LocalNotiExtras provides if (dark) DarkExtras else LightExtras,
+            content = content,
+        )
     }
+}
+
+object Noti {
+    val extras: NotiExtras @Composable get() = LocalNotiExtras.current
 }

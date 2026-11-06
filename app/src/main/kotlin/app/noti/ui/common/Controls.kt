@@ -3,10 +3,12 @@ package app.noti.ui.common
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -20,14 +22,15 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 
-private val ActionShape = RoundedCornerShape(12.dp)
+/** Actions are pills: one soft, stable shape that never changes when pressed. */
+private val ActionShape = CircleShape
 
-/** Shared action hierarchy, including real disabled colors and stable pressed shapes. */
+/** Shared action hierarchy, including real disabled colors. */
 @Composable
 fun NotiButton(
     onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true,
     shape: Shape = ActionShape, destructive: Boolean = false,
-    contentPadding: PaddingValues = PaddingValues(horizontal = 20.dp, vertical = 12.dp),
+    contentPadding: PaddingValues = PaddingValues(horizontal = 22.dp, vertical = 12.dp),
     content: @Composable RowScope.() -> Unit,
 ) {
     val c = MaterialTheme.colorScheme
@@ -43,7 +46,7 @@ fun NotiButton(
 @Composable
 fun NotiTextButton(
     onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true,
-    destructive: Boolean = false, contentPadding: PaddingValues = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
+    destructive: Boolean = false, contentPadding: PaddingValues = PaddingValues(horizontal = 16.dp, vertical = 10.dp),
     content: @Composable RowScope.() -> Unit,
 ) {
     val c = MaterialTheme.colorScheme
@@ -61,9 +64,9 @@ fun NotiOutlinedButton(
     val c = MaterialTheme.colorScheme
     OutlinedButton(onClick, modifier.heightIn(min = 48.dp), enabled = enabled, shape = ActionShape,
         border = BorderStroke(1.dp, if (enabled) c.outlineVariant else c.outlineVariant.copy(alpha = 0.4f)),
-        colors = ButtonDefaults.outlinedButtonColors(containerColor = c.surface, contentColor = c.onSurface,
+        colors = ButtonDefaults.outlinedButtonColors(containerColor = Color.Transparent, contentColor = c.onSurface,
             disabledContentColor = c.onSurface.copy(alpha = 0.38f)),
-        contentPadding = PaddingValues(horizontal = 18.dp, vertical = 12.dp), content = content)
+        contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp), content = content)
 }
 
 @Composable
@@ -74,7 +77,7 @@ fun NotiTonalButton(
     val c = MaterialTheme.colorScheme
     FilledTonalButton(onClick, modifier.heightIn(min = 48.dp), enabled = enabled, shape = ActionShape,
         colors = ButtonDefaults.filledTonalButtonColors(containerColor = c.primaryContainer, contentColor = c.onPrimaryContainer),
-        contentPadding = PaddingValues(horizontal = 18.dp, vertical = 12.dp), content = content)
+        contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp), content = content)
 }
 
 @Composable
@@ -82,7 +85,7 @@ fun NotiIconButton(
     onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true,
     content: @Composable () -> Unit,
 ) {
-    IconButton(onClick, modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp).clip(ActionShape), enabled = enabled,
+    IconButton(onClick, modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp).clip(CircleShape), enabled = enabled,
         colors = IconButtonDefaults.iconButtonColors(contentColor = MaterialTheme.colorScheme.onSurface,
             disabledContentColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f)), content = content)
 }
@@ -94,19 +97,22 @@ fun NotiFilterChip(
 ) {
     val c = MaterialTheme.colorScheme
     FilterChip(selected, onClick, label, modifier.heightIn(min = 48.dp), enabled = enabled,
-        leadingIcon = leadingIcon, shape = RoundedCornerShape(10.dp),
-        colors = FilterChipDefaults.filterChipColors(containerColor = c.surface,
-            labelColor = c.onSurface, selectedContainerColor = c.primaryContainer,
-            selectedLabelColor = c.onPrimaryContainer, selectedLeadingIconColor = c.onPrimaryContainer),
-        border = BorderStroke(1.dp, if (selected) c.primary.copy(alpha = 0.5f) else c.outlineVariant))
+        leadingIcon = leadingIcon, shape = CircleShape,
+        colors = FilterChipDefaults.filterChipColors(containerColor = Color.Transparent,
+            labelColor = c.onSurface, selectedContainerColor = c.onSurface,
+            selectedLabelColor = c.surface, selectedLeadingIconColor = c.surface),
+        border = BorderStroke(1.dp, if (selected) c.onSurface else c.outlineVariant))
 }
 
-/** One explicit-width window frame: title and actions stay put while content scrolls. */
+/**
+ * One explicit-width window frame: the title and actions stay put while the content
+ * scrolls. No dividers; space does the separating.
+ */
 @Composable
 fun NotiDialogFrame(
     onDismissRequest: () -> Unit, title: @Composable () -> Unit,
     modifier: Modifier = Modifier, icon: (@Composable () -> Unit)? = null,
-    maxWidth: Dp = 480.dp, actions: @Composable FlowRowScope.() -> Unit,
+    maxWidth: Dp = 460.dp, actions: @Composable FlowRowScope.() -> Unit,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val configuration = LocalConfiguration.current
@@ -114,22 +120,24 @@ fun NotiDialogFrame(
     val height = (configuration.screenHeightDp.dp - 48.dp).coerceAtLeast(240.dp)
     val c = MaterialTheme.colorScheme
     Dialog(onDismissRequest, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        Surface(modifier.width(width), shape = RoundedCornerShape(20.dp), color = c.surface,
-            border = BorderStroke(0.75.dp, c.outlineVariant), shadowElevation = 6.dp) {
+        Surface(modifier.width(width), shape = MaterialTheme.shapes.extraLarge, color = c.surface,
+            shadowElevation = 12.dp) {
             Column(Modifier.fillMaxWidth().heightIn(max = height)) {
-                Row(Modifier.fillMaxWidth().padding(20.dp), verticalAlignment = Alignment.CenterVertically) {
+                Row(Modifier.fillMaxWidth().padding(start = 24.dp, end = 24.dp, top = 24.dp, bottom = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically) {
                     Box(Modifier.weight(1f).semantics { heading() }) {
                         ProvideTextStyle(MaterialTheme.typography.titleLarge, title)
                     }
                     if (icon != null) { Spacer(Modifier.width(16.dp)); icon() }
                 }
-                HorizontalDivider(thickness = 0.5.dp, color = c.outlineVariant)
-                Column(Modifier.weight(1f, fill = false).fillMaxWidth().verticalScroll(rememberScrollState()).padding(20.dp),
-                    verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                    ProvideTextStyle(MaterialTheme.typography.bodyMedium) { content() }
+                Column(Modifier.weight(1f, fill = false).fillMaxWidth().verticalScroll(rememberScrollState())
+                    .padding(horizontal = 24.dp, vertical = 16.dp),
+                    verticalArrangement = Arrangement.spacedBy(18.dp)) {
+                    CompositionLocalProvider(LocalContentColor provides c.onSurfaceVariant) {
+                        ProvideTextStyle(MaterialTheme.typography.bodyMedium) { content() }
+                    }
                 }
-                HorizontalDivider(thickness = 0.5.dp, color = c.outlineVariant)
-                FlowRow(Modifier.fillMaxWidth().padding(12.dp),
+                FlowRow(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, bottom = 16.dp, top = 4.dp),
                     horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
                     verticalArrangement = Arrangement.spacedBy(8.dp), content = actions)
             }
@@ -152,12 +160,12 @@ fun NotiAlertDialog(
 @Composable
 fun NotiDropdownMenu(
     expanded: Boolean, onDismissRequest: () -> Unit, modifier: Modifier = Modifier,
-    containerColor: Color = MaterialTheme.colorScheme.surface, shadowElevation: Dp = 3.dp,
+    containerColor: Color = MaterialTheme.colorScheme.surface, shadowElevation: Dp = 10.dp,
     content: @Composable ColumnScope.() -> Unit,
 ) {
-    DropdownMenu(expanded, onDismissRequest, modifier, shape = RoundedCornerShape(14.dp),
+    DropdownMenu(expanded, onDismissRequest, modifier, shape = RoundedCornerShape(18.dp),
         containerColor = containerColor, tonalElevation = 0.dp, shadowElevation = shadowElevation,
-        border = if (containerColor == Color.Transparent) null else BorderStroke(0.75.dp, MaterialTheme.colorScheme.outlineVariant),
+        border = if (containerColor == Color.Transparent) null else BorderStroke(0.5.dp, MaterialTheme.colorScheme.outlineVariant),
         content = content)
 }
 
@@ -168,9 +176,23 @@ fun NotiMenuItem(
     enabled: Boolean = true, destructive: Boolean = false,
 ) {
     val c = MaterialTheme.colorScheme
-    DropdownMenuItem(text, onClick, modifier.padding(horizontal = 4.dp).clip(RoundedCornerShape(8.dp)).heightIn(min = 48.dp),
+    DropdownMenuItem(text, onClick, modifier.padding(horizontal = 6.dp).clip(RoundedCornerShape(12.dp)).heightIn(min = 48.dp),
         leadingIcon = leadingIcon, trailingIcon = trailingIcon, enabled = enabled,
         colors = MenuDefaults.itemColors(textColor = if (destructive) c.error else c.onSurface,
             leadingIconColor = if (destructive) c.error else c.onSurfaceVariant),
         contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp))
+}
+
+/** A hairline-separated group of rows on a soft tinted card, for settings and lists. */
+@Composable
+fun NotiGroup(modifier: Modifier = Modifier, content: @Composable ColumnScope.() -> Unit) {
+    Surface(modifier.fillMaxWidth(), shape = MaterialTheme.shapes.large,
+        color = MaterialTheme.colorScheme.surfaceContainerLow) {
+        Column(Modifier.padding(horizontal = 18.dp, vertical = 6.dp), content = content)
+    }
+}
+
+@Composable
+fun NotiGroupDivider() {
+    HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outlineVariant)
 }
