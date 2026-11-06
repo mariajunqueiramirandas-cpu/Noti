@@ -239,6 +239,11 @@ scrolling cannot split a stroke. `set_page()` remains available for single-page 
 and transactional undo/redo. Cancellation rolls an erase or move back. `edit_page()` inserts, duplicates
 or removes page ink and rejects a duplicate before mutation if the arena lacks capacity.
 
+Tool 4 (transcribe) is a lasso whose loop selects without ever moving ink, draws in plum, and bumps
+`transcribe_serial()` so the app knows to read the selection. `selection_ink()` hands the selected strokes'
+canonical capsules to the app, and `replace_strokes()` swaps strokes for new ones (the app's typed-text ink,
+appended in page units, copied exactly) as one undoable edit, validating everything before touching the store.
+
 `StrokeStore::encode/decode` uses the versioned little-endian NTI1 format: magic, version, stroke count,
 then each visible stroke's page, capsule count, four premultiplied color floats and canonical capsule floats.
 Decode validates the complete bounded archive before replacing existing ink. Hidden undo/eraser records

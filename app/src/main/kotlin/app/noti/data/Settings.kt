@@ -13,8 +13,11 @@ enum class Predictor(val label: String, val engineId: Int) {
     Off("Off", 0), Linear("Linear", 1), Polynomial("Polynomial", 2), Kalman("Kalman", 3),
 }
 
+/** The engine takes a tool by [ordinal] (InkEngine::set_tool): keep this order. */
 enum class Tool(val label: String) {
     Pen("Pen"), Highlighter("Highlighter"), Eraser("Eraser"), Lasso("Lasso"),
+    /** A lasso whose loop turns the handwriting inside it into text. */
+    Transcribe("Transcribe"),
 }
 
 /** The three quick color slots and three quick width slots of a drawing tool. */
@@ -84,6 +87,11 @@ class SettingsStore(context: Context) {
     }
 
     var tapUndo by pref(true, { prefs.getBoolean("tapUndo", it) }) { putBoolean("tapUndo", it) }
+
+    /** The language the Transcribe tool reads (a BCP 47 tag); empty follows the device language. */
+    var handwritingLanguage by pref("", { prefs.getString("handwritingLanguage", null) ?: it }) {
+        putString("handwritingLanguage", it)
+    }
 
     private var storedTool by pref(Tool.Pen, { enumOr(prefs.getString("tool", null), it) }) { putString("tool", it.name) }
     var lastDrawingTool by pref(Tool.Pen, {

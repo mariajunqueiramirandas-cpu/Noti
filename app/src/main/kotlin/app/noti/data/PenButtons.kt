@@ -19,18 +19,25 @@ fun SettingsStore.buttonAction(button: PenButton) = when (button) {
     PenButton.Focus -> focusButtonAction
 }
 
+/** The dial's first quick-color segment: the tools come first (see RadialToolSelector). */
+val DialColors = Tool.entries.size
+/** The dial's first quick-width segment. */
+val DialWidths = DialColors + 3
+/** Segments around the dial: every tool, three quick colors, three quick widths. */
+val DialSegments = DialWidths + 3
+
 /**
- * One of the dial's ten segments (see RadialToolSelector): 0–3 tools, 4–6 quick colors,
- * 7–9 quick widths. A color or width returns to the last pen or highlighter if the
- * eraser or lasso is in hand, like [PenButtonAction.NextColor].
+ * One of the dial's segments (see RadialToolSelector): the tools, then the quick colors
+ * ([DialColors]) and the quick widths ([DialWidths]). A color or width returns to the
+ * last pen or highlighter if another tool is in hand, like [PenButtonAction.NextColor].
  */
 fun SettingsStore.applyDialSegment(segment: Int) {
     when (segment) {
-        in 0..3 -> tool = Tool.entries[segment]
-        in 4..9 -> {
+        in 0 until DialColors -> tool = Tool.entries[segment]
+        in DialColors until DialSegments -> {
             tool = lastDrawingTool
             val slots = if (tool == Tool.Highlighter) highlighterSlots else penSlots
-            val next = if (segment < 7) slots.copy(color = segment - 4) else slots.copy(width = segment - 7)
+            val next = if (segment < DialWidths) slots.copy(color = segment - DialColors) else slots.copy(width = segment - DialWidths)
             if (tool == Tool.Highlighter) highlighterSlots = next else penSlots = next
         }
     }

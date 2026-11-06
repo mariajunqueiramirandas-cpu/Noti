@@ -81,6 +81,27 @@ uint32_t StrokeStore::copy_stroke(uint32_t id, uint32_t page) noexcept {
   return stroke_count_++;
 }
 
+uint32_t StrokeStore::append(uint32_t page, const float color[4], const Capsule* canon, uint32_t n,
+                             const PageMap& map, bool on_screen) noexcept {
+  if (!n || !can_append(1, n)) return UINT32_MAX;
+  StrokeRecord& r = strokes_[stroke_count_];
+  r = StrokeRecord{};
+  r.first_capsule = capsule_count_;
+  r.capsule_count = n;
+  std::memcpy(r.color, color, sizeof(r.color));
+  r.page = page;
+  r.on_screen = on_screen;
+  RectF b;
+  for (uint32_t i = 0; i < n; ++i) {
+    canon_[capsule_count_ + i] = canon[i];
+    capsules_[capsule_count_ + i] = map.to_surface(canon[i]);
+    b.add(capsules_[capsule_count_ + i]);
+  }
+  r.bounds = b;
+  capsule_count_ += n; open_first_ = capsule_count_;
+  return stroke_count_++;
+}
+
 void StrokeStore::insert_page(uint32_t page) noexcept {
   for (uint32_t id = 0; id < stroke_count_; ++id) if (strokes_[id].page != UINT32_MAX && strokes_[id].page >= page) ++strokes_[id].page;
 }

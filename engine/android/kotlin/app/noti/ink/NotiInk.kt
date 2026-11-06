@@ -92,6 +92,11 @@ internal object NotiInk {
     @JvmStatic external fun nativeRestore(handle: Long, data: ByteArray): Boolean
     @JvmStatic external fun nativeDocumentAction(handle: Long, action: Int, page: Int): Boolean
     @JvmStatic external fun nativeDocumentState(handle: Long): DoubleArray
+    /** The selected strokes in page units (see InkEngine::selection_ink). */
+    @JvmStatic external fun nativeSelectionInk(handle: Long): FloatArray
+    /** Hides [ids] and adds strokes on [page], as one undoable edit (InkEngine::replace_strokes). */
+    @JvmStatic external fun nativeReplaceStrokes(handle: Long, ids: IntArray, page: Int, color: FloatArray,
+        capsules: FloatArray, sizes: IntArray): Boolean
 
     // Host-frame sync (Android 14+, see GlFrontBufferRenderer::host_frame). Main thread.
     /** Adds the ink layer's buffer/geometry for a host frame showing [pages] to [transaction]. */

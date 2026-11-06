@@ -164,6 +164,17 @@ class InkEngine {
   bool can_redo() const noexcept { return !redo_.empty(); }
   RectF selection_bounds() const noexcept;
   size_t selection_count() const noexcept { return selected_.size(); }
+  void clear_selection() noexcept { selected_.clear(); }
+  // Tool 4 (transcribe) is a lasso whose loop asks the app to read the ink it selects.
+  // Counts the loops finished, so the app notices each one.
+  uint64_t transcribe_serial() const noexcept { return transcribe_serial_; }
+  // The selected strokes, canonical: [count, then per stroke: id, page, r, g, b, a
+  // (premultiplied), n, then n capsules of x0 y0 r0 x1 y1 r1 in page units].
+  std::vector<float> selection_ink() const;
+  // One undoable edit: hides `ids` (visible strokes of `page`) and adds strokes on
+  // `page` cut from `capsules` (page units) by `sizes`. All or nothing.
+  bool replace_strokes(const std::vector<uint32_t>& ids, uint32_t page, const float color[4],
+                       const std::vector<Capsule>& capsules, const std::vector<uint32_t>& sizes);
 
   // ---- observation (any thread) ----
   const LatencyProbe& probe() const noexcept { return probe_; }
@@ -197,8 +208,8 @@ class InkEngine {
   struct EditAction;
   void apply_edit(bool forward, const EditAction& action);
   struct EditAction {
-    int kind = 0; // 0 add, 1 erase, 2 move
-    std::vector<uint32_t> ids;
+    int kind = 0; // 0 add, 1 erase, 2 move, 3 replace (erase ids, add `added`)
+    std::vector<uint32_t> ids, added;
     float dx = 0, dy = 0;
   };
   void remember_edit(EditAction action);
@@ -212,7 +223,7 @@ class InkEngine {
   bool editing_ = false, moving_selection_ = false, document_mode_ = false, layout_dirty_ = false;
   float edit_x_ = 0, edit_y_ = 0;
   RectF edit_bounds_;
-  uint64_t revision_ = 0;
+  uint64_t revision_ = 0, transcribe_serial_ = 0;
 
   EngineConfig cfg_;
   InkRenderer& renderer_;

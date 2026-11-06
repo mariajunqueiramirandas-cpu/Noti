@@ -26,7 +26,7 @@ bool hit_segment(float ax, float ay, float bx, float by, const Capsule& c, float
 }
 
 void InkEngine::remember_edit(EditAction action) {
-  if (action.ids.empty()) return;
+  if (action.ids.empty() && action.added.empty()) return;
   redo_.clear();
   undo_.push_back(std::move(action));
   if (undo_.size() > 256) undo_.erase(undo_.begin());
@@ -138,8 +138,9 @@ bool InkEngine::edit_sample(const InkSample& s) {
   } else {
     Capsule c{edit_x_, edit_y_, 1.5f, x, y, 1.5f};
     edit_bounds_.add(c);
-    const float blue[4] = {0.15f, 0.35f, 0.9f, 1.f};
-    FrameUpdate f; f.ink = &c; f.ink_count = 1; f.color = blue; RectF b; b.add(c);
+    // Lasso loops are blue; transcribe loops are Noti's plum.
+    static constexpr float kBlue[4] = {0.15f, 0.35f, 0.9f, 1.f}, kPlum[4] = {0.36f, 0.29f, 0.53f, 1.f};
+    FrameUpdate f; f.ink = &c; f.ink_count = 1; f.color = gesture_tool_ == 4 ? kPlum : kBlue; RectF b; b.add(c);
     f.ink_rect = pixel_bounds(b, surface_w_, surface_h_); renderer_.render(f);
     polygon_.push_back({x, y});
   }
@@ -150,7 +151,7 @@ bool InkEngine::edit_sample(const InkSample& s) {
 
 void InkEngine::end_edit(bool cancel) {
   editing_ = false;
-  if (gesture_tool_ == 3 && !moving_selection_) {
+  if ((gesture_tool_ == 3 || gesture_tool_ == 4) && !moving_selection_) {
     renderer_.cancel(pixel_bounds(edit_bounds_, surface_w_, surface_h_));
     if (!cancel && polygon_.size() >= 3) {
       auto inside = [&](float x, float y) {
@@ -171,6 +172,7 @@ void InkEngine::end_edit(bool cancel) {
         }
         if (contained) selected_.push_back(id);
       }
+      if (gesture_tool_ == 4) ++transcribe_serial_;
     }
   } else if (!edit_.ids.empty()) {
     if (cancel) { apply_edit(false, edit_); redraw_document(); }
@@ -180,6 +182,11 @@ void InkEngine::end_edit(bool cancel) {
 }
 
 void InkEngine::apply_edit(bool forward, const EditAction& action) {
+  if (action.kind == 3) {
+    for (auto id : action.ids) store_.set_hidden(id, forward);
+    for (auto id : action.added) store_.set_hidden(id, !forward);
+    return;
+  }
   for (auto id : action.ids) {
     if (action.kind == 2) {
       PageMap map = page_map_;
@@ -190,6 +197,61 @@ void InkEngine::apply_edit(bool forward, const EditAction& action) {
       store_.translate(id, sign * action.dx, sign * action.dy, map);
     } else store_.set_hidden(id, action.kind == 0 ? !forward : forward);
   }
+}
+
+std::vector<float> InkEngine::selection_ink() const {
+  std::vector<float> out{0.f};
+  uint32_t count = 0;
+  for (auto id : selected_) {
+    const auto& r = store_.stroke(id);
+    if (r.hidden) continue;
+    ++count;
+    out.insert(out.end(), {float(id), float(r.page), r.color[0], r.color[1], r.color[2], r.color[3], float(r.capsule_count)});
+    const Capsule* c = store_.canonical(id);
+    for (uint32_t j = 0; j < r.capsule_count; ++j) out.insert(out.end(), {c[j].x0, c[j].y0, c[j].r0, c[j].x1, c[j].y1, c[j].r1});
+  }
+  out[0] = float(count);
+  return out;
+}
+
+bool InkEngine::replace_strokes(const std::vector<uint32_t>& ids, uint32_t page, const float color[4],
+                                const std::vector<Capsule>& capsules, const std::vector<uint32_t>& sizes) {
+  if (active_) finish_stroke(last_t_);
+  if (editing_) end_edit(true);
+  if (ids.empty() && sizes.empty()) return false;
+  // Validate everything before touching the document.
+  uint64_t total = 0;
+  for (auto n : sizes) { if (!n) return false; total += n; }
+  if (total != capsules.size() || !store_.can_append(sizes.size(), total)) return false;
+  for (int i = 0; i < 4; ++i) if (!std::isfinite(color[i]) || color[i] < 0 || color[i] > 1) return false;
+  for (const auto& c : capsules) {
+    for (float v : {c.x0, c.y0, c.r0, c.x1, c.y1, c.r1}) if (!std::isfinite(v) || std::fabs(v) > 1e7f) return false;
+    if (c.r0 < 0 || c.r1 < 0) return false;
+  }
+  for (auto id : ids) {
+    if (id >= store_.stroke_count()) return false;
+    const auto& r = store_.stroke(id);
+    if (r.hidden || r.page != page) return false;
+  }
+  // Place the new strokes where their page is now (off screen, set_pages places them later).
+  PageMap map = page_map_;
+  bool on_screen = !document_mode_;
+  if (document_mode_) for (const auto& p : visible_pages_) if (p.page == page) {
+    cfg_.input_to_surface.apply(p.x, p.y, &map.ox, &map.oy);
+    map.s = p.width * scale_ / PageMap::kPageUnits;
+    on_screen = true;
+  }
+  EditAction action; action.kind = 3; action.ids = ids;
+  size_t at = 0;
+  for (auto n : sizes) {
+    action.added.push_back(store_.append(page, color, capsules.data() + at, n, map, on_screen));
+    at += n;
+  }
+  for (auto id : ids) store_.set_hidden(id, true);
+  selected_.clear();
+  remember_edit(std::move(action));
+  redraw_document();
+  return true;
 }
 
 void InkEngine::undo() {

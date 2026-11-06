@@ -32,6 +32,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -106,6 +107,7 @@ import app.noti.ui.brand.NotiWordmark
 import app.noti.ui.brand.FriendlyNote
 import app.noti.ui.theme.NotiBrand
 import app.noti.R
+import app.noti.transcribe.HandwritingLanguages
 
 private enum class Section(val label: String, val icon: ImageVector) {
     Pen("Pen", Icons.Outlined.Create),
@@ -451,6 +453,41 @@ private fun WritingSection(settings: SettingsStore) {
         "Ask before leaving a notebook", "Ink is saved automatically on this device.",
         checked = settings.confirmLeave,
     ) { settings.confirmLeave = it }
+    HandwritingLanguageRow(settings)
+}
+
+/** The language the Transcribe tool reads. Its model downloads the first time it's used. */
+@Composable
+private fun HandwritingLanguageRow(settings: SettingsStore) {
+    var choosing by remember { mutableStateOf(false) }
+    val device = remember { HandwritingLanguages.displayName(HandwritingLanguages.resolve("").languageTag) }
+    val current = settings.handwritingLanguage
+    Column {
+        ValueRow("Handwriting language", if (current.isEmpty()) "Match device" else HandwritingLanguages.displayName(current)) {
+            choosing = true
+        }
+        Text("What the Transcribe tool reads. Each language downloads once (about 20 MB), then works offline.",
+            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+    if (choosing) {
+        val languages = remember { listOf("" to "Match device ($device)") + HandwritingLanguages.available() }
+        AlertDialog(onDismissRequest = { choosing = false }, title = { Text("Handwriting language") },
+            text = {
+                LazyColumn(Modifier.heightIn(max = 420.dp)) {
+                    items(languages.size) { i ->
+                        val (tag, name) = languages[i]
+                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()
+                            .heightIn(min = 48.dp).selectable(selected = tag == current, role = Role.RadioButton) {
+                                settings.handwritingLanguage = tag; choosing = false
+                            }) {
+                            RadioButton(selected = tag == current, onClick = null)
+                            Text(name, Modifier.padding(start = 12.dp), style = MaterialTheme.typography.bodyLarge)
+                        }
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { choosing = false }) { Text("Close") } })
+    }
 }
 
 private fun SettingsStore.palmSpec() = PalmSpec(fingerDrawing, palmModel, onModel = { palmModel = it })

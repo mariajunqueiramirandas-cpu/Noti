@@ -48,12 +48,15 @@ actual statistics in it, and a cheerful lavender mascot. Priorities.
 <tr>
 <td width="33%" align="center">⚡<br><b>Fast ink</b><br><sub>Front-buffer rendering, a tuned predictor, and a UI thread that is politely not invited.</sub></td>
 <td width="33%" align="center">✋<br><b>Your palm is not a pen</b><br><sub>A sequential probability test decides that, usually before you've noticed you put it down.</sub></td>
-<td width="33%" align="center">🍩<br><b>One dial to rule the tools</b><br><sub>Ten segments. Every preset is one tap. The plum one is the boss.</sub></td>
+<td width="33%" align="center">🍩<br><b>One dial to rule the tools</b><br><sub>Eleven segments. Every preset is one tap. The plum one is the boss.</sub></td>
 </tr>
 <tr>
 <td align="center">📄<br><b>PDFs that keep up</b><br><sub>Tiled rendering, pinch from 25% to 600%, ink that stays glued to the page.</sub></td>
 <td align="center">🖊️<br><b>Pen buttons, reclaimed</b><br><sub>The Focus Pen's buttons do Noti things now (on Pad 7, Android 16, after a polite word with HyperOS).</sub></td>
 <td align="center">💾<br><b>Saves on its own</b><br><sub>Atomic, versioned, autosaved between strokes. Your notes are safe.</sub></td>
+</tr>
+<tr>
+<td colspan="3" align="center">🔤<br><b>Handwriting to text</b><br><sub>Loop it, read it, copy it or swap it for neat typed ink. On the tablet, offline, no account.</sub></td>
 </tr>
 </table>
 
@@ -121,9 +124,9 @@ naps either. Your tablet may get warm. That's the ink being enthusiastic. Detail
 <img align="right" src="docs/screenshots/radial-editor/highlighter-light.png" alt="The radial dial with the highlighter selected" width="260">
 
 The editor is a full canvas with a small pill header and a persistent **radial tool dial** at the upper left.
-Ten rounded segments, three groups, read clockwise:
+Eleven rounded segments, three groups, read clockwise:
 
-- **Top:** pen, highlighter, stroke eraser, lasso
+- **Top:** pen, highlighter, stroke eraser, lasso, transcribe
 - **Right:** your three saved colors
 - **Left:** three width presets
 
@@ -136,6 +139,20 @@ the lasso and the selection count). **Tap the hub** for full color, width and pr
 centered where it was. The chosen tool stays active while collapsed. More → Collapse tools / Expand tools does the same.
 
 <br clear="right">
+
+### 🔤 Handwriting to text
+
+Pick **Transcribe** (the **Tt** segment) and draw a loop around some handwriting. Noti reads it and opens a panel with the text,
+where you can fix anything it misread, then:
+
+- **Copy** it, to paste anywhere.
+- **Replace on page**, which swaps the handwriting for tidy typed ink in Nunito, in your ink's color, line by line where you wrote
+  it. It's still ink: erase it, lasso it, move it. **Undo** brings your handwriting back.
+
+Reading happens on the tablet with Google's ML Kit digital ink recognizer. The first time, it downloads the language's model
+(about 20 MB); after that it works offline and your notes never leave the device. It follows the device language; pick another
+in **Settings → Writing → Handwriting language**. Highlighter strokes in the loop are left out, and the lines are worked out from
+the ink itself, so dots, accents and descenders stay on the line they belong to.
 
 <details>
 <summary><b>🔧 How the floating bits stay out of the ink's way</b></summary>
