@@ -115,7 +115,7 @@ object DocumentExport {
     /** About 5 m: the largest page size common PDF viewers open. */
     private const val MAX_PDF_PT = 14400f
 
-    private fun drawInk(canvas: Canvas, stroke: InkArchive.Stroke) {
+    internal fun drawInk(canvas: Canvas, stroke: InkArchive.Stroke) {
         val alpha = stroke.color[3]
         if (alpha <= 0) return
         val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
