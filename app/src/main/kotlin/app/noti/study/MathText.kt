@@ -391,6 +391,8 @@ internal class Parser(private val s: String) {
             return if (list.size == 1) list[0] else Group(list)
         }
         if (i >= s.length) return Group(emptyList())
+        // An unbraced argument is one token: \frac12 is ½, x^23 is x²3.
+        if (s[i].isDigit()) return Sym(s[i++].toString(), Cls.Ord, Face.Upright)
         return parseAtom() ?: Group(emptyList())
     }
 

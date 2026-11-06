@@ -34,6 +34,7 @@ import androidx.compose.material.icons.automirrored.outlined.DriveFileMove
 import androidx.compose.material.icons.automirrored.outlined.LibraryBooks
 import androidx.compose.material.icons.automirrored.outlined.Sort
 import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.School
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.ContentCopy
@@ -96,6 +97,7 @@ import app.noti.data.InkFile
 import app.noti.data.LibraryStore
 import app.noti.data.Notebook
 import app.noti.data.Paper
+import app.noti.data.PaperTemplate
 import app.noti.data.SettingsStore
 import app.noti.data.SortOrder
 import app.noti.pdf.DocumentExport
@@ -120,6 +122,7 @@ private sealed interface Filter {
     data object Recent : Filter
     data object Favorites : Filter
     data object Pdfs : Filter
+    data object Boards : Filter
     data class InFolder(val id: String) : Filter
     data object Trash : Filter
 }
@@ -136,6 +139,7 @@ fun LibraryScreen(
     var sort by remember { mutableStateOf(SortOrder.Recent) }
     var selection by remember { mutableStateOf(emptySet<String>()) }
     var creating by remember { mutableStateOf(false) }
+    var creatingBoard by remember { mutableStateOf(false) }
     var creatingFolder by remember { mutableStateOf(false) }
     var renamingNotebook by remember { mutableStateOf<Notebook?>(null) }
     var renamingFolder by remember { mutableStateOf<Folder?>(null) }
@@ -193,6 +197,15 @@ fun LibraryScreen(
 
     BackHandler(enabled = selection.isNotEmpty()) { selection = emptySet() }
 
+    // What's due for review on each Study board, for its cover.
+    val boards = library.notebooks.filter { it.board && it.trashedAt == null }
+    val due by produceState(emptyMap<String, Int>(), boards.map { it.id }) {
+        value = withContext(Dispatchers.IO) {
+            val now = System.currentTimeMillis()
+            boards.associate { it.id to app.noti.study.StudyStore.dueCount(library.studyFile(it), now) }
+        }
+    }
+
     val inTrash = filter == Filter.Trash
     val visible = library.notebooks
         .filter { if (inTrash) it.trashedAt != null else it.trashedAt == null }
@@ -200,6 +213,7 @@ fun LibraryScreen(
             when (val f = filter) {
                 Filter.Favorites -> it.favorite
                 Filter.Pdfs -> it.isPdf
+                Filter.Boards -> it.board
                 is Filter.InFolder -> it.folderId == f.id
                 else -> true
             }
@@ -218,6 +232,7 @@ fun LibraryScreen(
         Filter.Recent -> "Recent"
         Filter.Favorites -> "Favorites"
         Filter.Pdfs -> "PDFs"
+        Filter.Boards -> "Study boards"
         is Filter.InFolder -> library.folders.firstOrNull { it.id == f.id }?.name ?: "Folder"
         Filter.Trash -> "Trash"
     }
@@ -261,7 +276,8 @@ fun LibraryScreen(
                             showSort = filter != Filter.Recent,
                             inTrash = inTrash,
                             trashNotEmpty = visible.isNotEmpty(),
-                            onNew = { creating = true },
+                            onNew = { creatingBoard = false; creating = true },
+                            onNewBoard = { creatingBoard = true; creating = true },
                             onImportPdf = onImportPdf,
                             onEmptyTrash = { confirmDeleteForever = visible.map { it.id }.toSet() },
                         )
@@ -321,12 +337,12 @@ fun LibraryScreen(
                             if (showRecentRow) {
                                 item(span = { GridItemSpan(maxLineSpan) }) { SectionLabel("Jump back in") }
                                 items(recent, key = { "r-" + it.id }) { nb ->
-                                    NotebookCard(nb, library.thumbnailFile(nb), nb.id in selection, inTrash, onTap, onLongPress)
+                                    NotebookCard(nb, library.thumbnailFile(nb), nb.id in selection, inTrash, onTap, onLongPress, due[nb.id] ?: 0)
                                 }
                                 item(span = { GridItemSpan(maxLineSpan) }) { SectionLabel("Everything") }
                             }
                             items(visible, key = { it.id }) { nb ->
-                                NotebookCard(nb, library.thumbnailFile(nb), nb.id in selection, inTrash, onTap, onLongPress)
+                                NotebookCard(nb, library.thumbnailFile(nb), nb.id in selection, inTrash, onTap, onLongPress, due[nb.id] ?: 0)
                             }
                         }
                     }
@@ -373,10 +389,11 @@ fun LibraryScreen(
     if (creating) {
         NewNotebookDialog(
             initialPaper = Paper(settings.defaultTemplate, settings.defaultColor),
+            initialBoard = creatingBoard || filter == Filter.Boards,
             onDismiss = { creating = false },
-            onCreate = { name, paper ->
+            onCreate = { name, paper, board ->
                 creating = false
-                val nb = library.create(name, paper, (filter as? Filter.InFolder)?.id)
+                val nb = library.create(name, paper, (filter as? Filter.InFolder)?.id, board)
                 onOpen(nb.id)
             },
         )
@@ -465,6 +482,7 @@ private fun Sidebar(
         SideItem("Recent", Icons.Outlined.History, filter == Filter.Recent) { onFilter(Filter.Recent) }
         SideItem("Favorites", Icons.Outlined.StarBorder, filter == Filter.Favorites) { onFilter(Filter.Favorites) }
         SideItem("PDFs", Icons.Outlined.PictureAsPdf, filter == Filter.Pdfs) { onFilter(Filter.Pdfs) }
+        SideItem("Study boards", Icons.Outlined.School, filter == Filter.Boards) { onFilter(Filter.Boards) }
 
         Row(Modifier.padding(start = 14.dp, top = 24.dp, bottom = 2.dp), verticalAlignment = Alignment.CenterVertically) {
             Text("Folders", style = MaterialTheme.typography.labelLarge, color = colors.onSurfaceVariant,
@@ -561,6 +579,7 @@ private fun TopBar(
     inTrash: Boolean,
     trashNotEmpty: Boolean,
     onNew: () -> Unit,
+    onNewBoard: () -> Unit,
     onImportPdf: () -> Unit,
     onEmptyTrash: () -> Unit,
 ) {
@@ -635,6 +654,11 @@ private fun TopBar(
                                 text = { Text("Notebook") },
                                 leadingIcon = { Icon(Icons.Outlined.Description, null) },
                                 onClick = { newMenu = false; onNew() },
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Study board") },
+                                leadingIcon = { Icon(Icons.Outlined.School, null) },
+                                onClick = { newMenu = false; onNewBoard() },
                             )
                             DropdownMenuItem(
                                 text = { Text("Import PDF") },
@@ -754,6 +778,7 @@ private fun NotebookCard(
     inTrash: Boolean,
     onTap: (Notebook) -> Unit,
     onLongPress: (Notebook) -> Unit,
+    due: Int = 0,
 ) {
     val colors = MaterialTheme.colorScheme
     val extras = Noti.extras
@@ -787,9 +812,16 @@ private fun NotebookCard(
             ) { Icon(Icons.Outlined.Check, null, Modifier.size(16.dp), tint = colors.onPrimary) }
             val tag = when {
                 nb.isPdf -> "PDF"
+                nb.board -> "Study"
                 nb.pageCount > 1 -> count(nb.pageCount, "page")
                 else -> null
             }
+            if (due > 0 && !inTrash) Text(
+                "$due due", style = MaterialTheme.typography.labelSmall, color = colors.onPrimary,
+                modifier = Modifier.align(Alignment.BottomStart).padding(start = 16.dp, bottom = 8.dp)
+                    .background(colors.primary, CircleShape).padding(horizontal = 8.dp, vertical = 3.dp)
+                    .semantics { contentDescription = "$due cards due for review" },
+            )
             if (tag != null) Text(
                 tag, style = MaterialTheme.typography.labelSmall, color = NotiBrand.Ink,
                 modifier = Modifier.align(Alignment.BottomEnd).padding(8.dp)
@@ -842,6 +874,7 @@ private fun EmptyState(filter: Filter, searching: Boolean, onNew: () -> Unit, on
     val (headline, body) = when {
         searching -> "Nothing found" to "Try a different word. Your idea might be hiding."
         filter == Filter.Pdfs -> "No PDFs yet" to "Import a PDF to write on it."
+        filter == Filter.Boards -> "No study boards yet" to "Make one, link a PDF, and get math and physics questions to work on the board."
         filter == Filter.Trash -> "Trash is empty" to "Deleted notebooks wait here until you delete them forever."
         filter == Filter.Favorites -> "No favorites yet" to "Long-press a notebook and tap Favorite."
         filter is Filter.InFolder -> "This folder is empty" to "Create a notebook here, or move notebooks in from All."
@@ -870,7 +903,7 @@ private fun EmptyState(filter: Filter, searching: Boolean, onNew: () -> Unit, on
             Button(onClick = onNew) {
                 Icon(Icons.Outlined.Add, null, Modifier.size(20.dp))
                 Spacer(Modifier.width(8.dp))
-                Text("New notebook")
+                Text(if (filter == Filter.Boards) "New study board" else "New notebook")
             }
         }
     }
@@ -879,19 +912,33 @@ private fun EmptyState(filter: Filter, searching: Boolean, onNew: () -> Unit, on
 // ---- dialogs ----
 
 @Composable
-private fun NewNotebookDialog(initialPaper: Paper, onDismiss: () -> Unit, onCreate: (String, Paper) -> Unit) {
+private fun NewNotebookDialog(initialPaper: Paper, initialBoard: Boolean, onDismiss: () -> Unit,
+    onCreate: (String, Paper, Boolean) -> Unit) {
     var name by remember { mutableStateOf("") }
-    var paper by remember { mutableStateOf(initialPaper) }
+    var board by remember { mutableStateOf(initialBoard) }
+    // A board starts on grid paper (handy for graphs and working), unless you pick another.
+    var paper by remember { mutableStateOf(if (initialBoard) initialPaper.copy(template = PaperTemplate.Grid) else initialPaper) }
     app.noti.ui.common.NotiDialogFrame(onDismiss,
-        title = { Text("New notebook") }, icon = { DotiMascot(Modifier.size(40.dp)) }, maxWidth = 540.dp,
+        title = { Text(if (board) "New study board" else "New notebook") }, icon = { DotiMascot(Modifier.size(40.dp)) }, maxWidth = 540.dp,
         actions = {
             TextButton(onClick = onDismiss) { Text("Cancel") }
-            Button(onClick = { onCreate(name.trim(), paper) }) { Text("Create notebook") }
+            Button(onClick = { onCreate(name.trim(), paper, board) }) { Text(if (board) "Create board" else "Create notebook") }
         }) {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            app.noti.ui.common.NotiFilterChip(selected = !board, onClick = { board = false }, label = { Text("Notebook") },
+                leadingIcon = { Icon(Icons.Outlined.Description, null, Modifier.size(18.dp)) })
+            app.noti.ui.common.NotiFilterChip(selected = board, onClick = {
+                if (!board && paper.template == initialPaper.template) paper = paper.copy(template = PaperTemplate.Grid)
+                board = true
+            }, label = { Text("Study board") }, leadingIcon = { Icon(Icons.Outlined.School, null, Modifier.size(18.dp)) })
+        }
+        if (board) Text("An endless canvas that studies a PDF with you: link one, get math and physics questions on a " +
+            "floating sheet, work them out on the board, and print the ones worth keeping.",
+            style = MaterialTheme.typography.bodyMedium)
         OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("Name") },
-            placeholder = { Text("What’s on your mind?") }, singleLine = true,
+            placeholder = { Text(if (board) "Physics 1, Calculus II…" else "What’s on your mind?") }, singleLine = true,
             shape = MaterialTheme.shapes.small, modifier = Modifier.fillMaxWidth())
-        PaperPicker(paper, onChange = { paper = it })
+        PaperPicker(paper, onChange = { paper = it }, showSize = !board)
     }
 }
 

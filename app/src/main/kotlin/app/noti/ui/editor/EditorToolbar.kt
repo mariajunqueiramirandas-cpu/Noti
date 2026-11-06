@@ -53,6 +53,8 @@ internal fun EditorToolbar(
     dial: PenDialState = remember { PenDialState() },
     /** Full screen hides the chrome; the pen can still summon the dial. */
     fullScreen: Boolean = false,
+    /** A Study board's Study button, shown in the header. */
+    studyButton: (@Composable () -> Unit)? = null,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
     var toolsExpanded by rememberSaveable { mutableStateOf(true) }
@@ -117,6 +119,7 @@ internal fun EditorToolbar(
                         .padding(start = 6.dp, end = 14.dp),
                         style = MaterialTheme.typography.titleSmall, color = colors.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     if (saveFailed) ToolbarButton(Icons.Outlined.ErrorOutline, saveStatus, onSave, tint = colors.error)
+                    studyButton?.invoke()
                     if (!wide) history()
                 }
             }

@@ -43,6 +43,8 @@ data class Notebook(
     val pageCount: Int = 1,
     /** Its ink is laid out on the Endless canvas (older Endless notebooks used A4 pages). */
     val canvasInk: Boolean = false,
+    /** A Study board: an Endless canvas that studies linked PDFs with you (see app.noti.study). */
+    val board: Boolean = false,
 ) {
     val isPdf get() = pdf != null
     /** A free canvas: one endless sheet instead of pages. */
@@ -65,6 +67,10 @@ class LibraryStore(context: Context) {
     val inkDir = File(context.filesDir, "ink").apply { mkdirs() }
     fun inkFile(nb: Notebook) = File(inkDir, "${nb.id}.noti")
 
+    /** A Study board's study material (app.noti.study.StudyStore). */
+    val studyDir = File(context.filesDir, "study").apply { mkdirs() }
+    fun studyFile(nb: Notebook) = File(studyDir, "${nb.id}.json")
+
     fun pdfFile(nb: Notebook): File? = nb.pdf?.let { File(pdfDir, it) }
     fun thumbnailFile(nb: Notebook): File? = nb.pdf?.let { File(pdfDir, it.removeSuffix(".pdf") + ".png") }
 
@@ -79,16 +85,19 @@ class LibraryStore(context: Context) {
 
     fun notebook(id: String): Notebook? = notebooks.firstOrNull { it.id == id }
 
-    fun create(name: String, paper: Paper, folderId: String?): Notebook {
+    /** A [board] is always an Endless canvas. */
+    fun create(name: String, paper: Paper, folderId: String?, board: Boolean = false): Notebook {
         val now = System.currentTimeMillis()
+        val sheet = if (board) paper.copy(size = PaperSize.Endless) else paper
         val nb = Notebook(
             id = UUID.randomUUID().toString(),
-            name = name.ifBlank { "Untitled" },
-            paper = paper,
+            name = name.ifBlank { if (board) "Study board" else "Untitled" },
+            paper = sheet,
             folderId = folderId,
             createdAt = now,
             openedAt = now,
-            canvasInk = paper.size == PaperSize.Endless,
+            canvasInk = sheet.size == PaperSize.Endless,
+            board = board,
         )
         notebooks = notebooks + nb
         save()
@@ -117,7 +126,7 @@ class LibraryStore(context: Context) {
     }
 
     fun rename(id: String, name: String) = update(id) { it.copy(name = name.ifBlank { it.name }) }
-    fun setPaper(id: String, paper: Paper) = update(id) { it.copy(paper = paper) }
+    fun setPaper(id: String, paper: Paper) = update(id) { it.copy(paper = if (it.board) paper.copy(size = PaperSize.Endless) else paper) }
     fun setPageCount(id: String, count: Int) = update(id) { it.copy(pageCount = count.coerceAtLeast(1)) }
     /** The notebook's saved ink has been moved onto the Endless canvas. */
     fun setCanvasInk(id: String) = update(id) { it.copy(canvasInk = true, pageCount = 1) }
@@ -131,6 +140,7 @@ class LibraryStore(context: Context) {
     fun deleteForever(ids: Set<String>) {
         notebooks.filter { it.id in ids }.forEach { nb ->
             InkFile.delete(inkFile(nb))
+            if (nb.board) app.noti.study.StudyStore.delete(studyFile(nb))
             pdfFile(nb)?.delete()
             thumbnailFile(nb)?.delete()
         }
@@ -150,6 +160,7 @@ class LibraryStore(context: Context) {
             }.getOrNull() ?: return@mapNotNull null
             runCatching { InkFile.open(inkFile(nb)).initial?.let { File(inkDir, "$id.noti").writeBytes(it) } }
                 .getOrElse { return@mapNotNull null }
+            if (nb.board) runCatching { app.noti.study.StudyStore.copy(studyFile(nb), File(studyDir, "$id.json")) }
             nb.copy(id = id, name = "${nb.name} (copy)", createdAt = now, openedAt = now, pdf = pdf)
         }
         notebooks = notebooks + copies
@@ -206,6 +217,7 @@ class LibraryStore(context: Context) {
                     pdf = o.optString("pdf").ifEmpty { null },
                     pageCount = o.optInt("pageCount", 1).coerceAtLeast(1),
                     canvasInk = o.optBoolean("canvasInk"),
+                    board = o.optBoolean("board"),
                 )
             }
         }
@@ -228,6 +240,7 @@ class LibraryStore(context: Context) {
                 .apply { nb.trashedAt?.let { put("trashedAt", it) } }
                 .put("pageCount", nb.pageCount)
                 .put("canvasInk", nb.canvasInk)
+                .put("board", nb.board)
                 .apply { nb.pdf?.let { put("pdf", it) } }
         }))
         // Write-then-rename so a crash mid-write never leaves a truncated library.

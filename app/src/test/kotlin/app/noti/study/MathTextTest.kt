@@ -26,6 +26,15 @@ class MathTextTest {
         assertTrue((nodes[4] as Root).index != null)
     }
 
+    @Test fun unbracedArgumentsAreOneToken() {
+        val frac = Parser("\\frac12").parseAll().single() as Frac
+        assertEquals("1", (frac.num as Sym).text)
+        assertEquals("2", (frac.den as Sym).text)
+        val power = Parser("x^23").parseAll()
+        assertEquals("2", ((power[0] as Scripts).sup as Sym).text)
+        assertEquals("3", (power[1] as Sym).text)
+    }
+
     @Test fun badInputDegradesInsteadOfThrowing() {
         listOf("\\frac{a", "x^", "\\left( x", "}}{{", "\\begin{pmatrix} 1 & 2", "\\unknowncommand{x}", "$", "^_^_").forEach {
             MathText.layout("Try \$$it\$ and $$$it$$", 400f, style)

@@ -139,6 +139,10 @@ fun InkCanvas(
     buttons: StylusButtonOptions = StylusButtonOptions(),
     onButtonClick: ((PenButton) -> Unit)? = null,
     onButtonDiagnostic: ((String) -> Unit)? = null,
+    /** A Study board's cards and pages, drawn on the sheet under the ink. */
+    board: app.noti.study.BoardLayer? = null,
+    /** A one-finger tap on the canvas, in its px (main thread). */
+    onTap: ((Float, Float) -> Unit)? = null,
 ) {
     // Previews and screenshot tests have no native engine: paper only.
     if (LocalInspectionMode.current) {
@@ -157,6 +161,7 @@ fun InkCanvas(
     val restoreError = rememberUpdatedState(onRestoreError)
     val buttonClick = rememberUpdatedState(onButtonClick)
     val buttonDiagnostic = rememberUpdatedState(onButtonDiagnostic)
+    val tap = rememberUpdatedState(onTap)
     val controller = pages ?: remember { PageController() }
 
     val rig = remember(pdf, inkFile) {
@@ -182,6 +187,7 @@ fun InkCanvas(
             ViewConfiguration.get(context).scaledTouchSlop.toFloat(), viewport,
             onTwoFingerTap = { if (undoTap.value) created.documentAction(0) },
             onTwoFingerDoubleTap = { main.post { doubleTap.value?.invoke() } },
+            onTap = { x, y -> tap.value?.invoke(x, y) },
         )
         created = InkLayer(
             anchor,
@@ -274,7 +280,7 @@ fun InkCanvas(
 
     DocumentViewport(modifier.onSizeChanged { size -> layer.runOnInkThread { rig.viewport.setCanvas(size.width, size.height) } }) {
         // Read in the draw phase only: scrolling and zooming redraw, never recompose.
-        DocumentBackground(paper, pdf, { controller.placement }, Modifier.fillMaxSize(), sheet = sheet)
+        DocumentBackground(paper, pdf, { controller.placement }, Modifier.fillMaxSize(), sheet = sheet, board = board)
         if (pdf != null) {
             pdf.error?.let { Text(it, modifier = Modifier.align(Alignment.Center), color = MaterialTheme.colorScheme.error) }
         }
@@ -321,7 +327,7 @@ internal fun PagePlacement.pageArray(): FloatArray {
  */
 @Composable
 internal fun DocumentBackground(paper: Paper, images: PageImages?, placement: () -> PagePlacement?, modifier: Modifier,
-    sheet: Boolean = false) {
+    sheet: Boolean = false, board: app.noti.study.BoardLayer? = null) {
     val backdrop = MaterialTheme.colorScheme.surfaceContainerLow
     Canvas(modifier) {
         drawRect(backdrop)
@@ -329,6 +335,7 @@ internal fun DocumentBackground(paper: Paper, images: PageImages?, placement: ()
         if (sheet) {
             current.visiblePages.forEach { p ->
                 drawPaperSheet(paper, p.left, p.top, p.width, p.height, p.width / (1000f * EndlessCanvas.SPAN))
+                if (board != null) drawIntoCanvas { canvas -> board.draw(canvas.nativeCanvas, p) }
             }
             return@Canvas
         }

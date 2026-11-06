@@ -50,6 +50,13 @@ data class ToolSlots(
 class SettingsStore(context: Context) {
     private val prefs = context.getSharedPreferences("settings", Context.MODE_PRIVATE)
 
+    /** The Mistral API key Study boards use, encrypted on the device. */
+    val studyKey = app.noti.study.ApiKeyStore(context)
+
+    /** New study items: how many, and how hard (1 review · 2 exam · 3 hard). */
+    var studyCount by pref(15, { prefs.getInt("studyCount", it) }) { putInt("studyCount", it) }
+    var studyLevel by pref(2, { prefs.getInt("studyLevel", it) }) { putInt("studyLevel", it) }
+
     var theme by pref(ThemeMode.System, { enumOr(prefs.getString("theme", null), it) }) { putString("theme", it.name) }
 
     /** Off = constant width, whatever the pressure. */
