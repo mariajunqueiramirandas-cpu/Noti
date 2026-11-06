@@ -96,7 +96,9 @@ import app.noti.data.ThemeMode
 import app.noti.data.PenButtonAction
 import app.noti.data.Tool
 import app.noti.data.penButtonOptions
+import app.noti.ink.PenButton
 import app.noti.ink.PenHold
+import app.noti.ink.PenVendor
 import app.noti.ui.common.StylusDialogKeys
 import app.noti.ui.common.BrushSpec
 import app.noti.ui.common.EngineSpec
@@ -316,7 +318,9 @@ private fun PenSection(settings: SettingsStore) {
             }
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text("Button shortcuts", style = MaterialTheme.typography.titleSmall)
-                Text("By default, click the writing button to toggle the eraser, or the screenshot button to toggle the lasso. " +
+                Text(if (PenVendor.isSamsung()) "By default, click the S Pen button to toggle the eraser. " +
+                    "Change this shortcut and test held buttons in Pen buttons."
+                else "By default, click the writing button to toggle the eraser, or the screenshot button to toggle the lasso. " +
                     "Change these shortcuts and test held buttons in Pen buttons.",
                     style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
@@ -344,6 +348,10 @@ private fun PenSection(settings: SettingsStore) {
 /** A local, bounded tester: no logging during normal writing and no notebook changes. */
 @Composable
 private fun PenButtonsSection(settings: SettingsStore) {
+    // The S Pen has one side button and no Focus button, and One UI never uses Page keys for it.
+    val samsung = remember { PenVendor.isSamsung() }
+    val writing = PenButton.Primary.title
+    val inSentence = PenButton.Primary.phrase
     var events by remember { mutableStateOf(emptyList<String>()) }
     var clears by remember { mutableIntStateOf(0) }
     SettingsSplit(controls = { paneModifier ->
@@ -354,37 +362,48 @@ private fun PenButtonsSection(settings: SettingsStore) {
                     settings.penButtonsEnabled = it
                 }
                 NotiGroupDivider()
-                ButtonActionRow("Writing button click", settings.primaryButtonAction) { settings.primaryButtonAction = it }
-                NotiGroupDivider()
-                ButtonActionRow("Screenshot button click", settings.secondaryButtonAction) { settings.secondaryButtonAction = it }
-                NotiGroupDivider()
-                ButtonActionRow("Focus button click", settings.focusButtonAction) { settings.focusButtonAction = it }
+                ButtonActionRow("$writing click", settings.primaryButtonAction) { settings.primaryButtonAction = it }
+                if (!samsung) {
+                    NotiGroupDivider()
+                    ButtonActionRow("Screenshot button click", settings.secondaryButtonAction) { settings.secondaryButtonAction = it }
+                    NotiGroupDivider()
+                    ButtonActionRow("Focus button click", settings.focusButtonAction) { settings.focusButtonAction = it }
+                }
             }
-            Hint("The Focus button normally stays with Xiaomi's pointer and camera controls. An assigned action works only if Xiaomi sends the press to Noti.")
+            Hint(if (samsung) "Click the S Pen button while it hovers over the page. Presses with the pen away from the screen (Air actions) stay with One UI."
+                else "The Focus button normally stays with Xiaomi's pointer and camera controls. An assigned action works only if Xiaomi sends the press to Noti.")
             NotiGroup {
-                HoldActionRow(settings.penButtonHold) { settings.penButtonHold = it }
+                HoldActionRow(settings.penButtonHold, inSentence) { settings.penButtonHold = it }
                 if (settings.penButtonHold == PenHold.Dial) {
                     NotiGroupDivider()
                     SwitchRow("Always show the tool dial", if (settings.toolDialAlways)
-                        "On: the dial stays on the page, and holding the writing button also opens it under the nib."
-                    else "Off: the dial stays out of the way until you hold the writing button and touch the page. More → Show tools also opens it.",
+                        "On: the dial stays on the page, and holding the $inSentence also opens it under the nib."
+                    else "Off: the dial stays out of the way until you hold the $inSentence and touch the page. More → Show tools also opens it.",
                         settings.toolDialAlways) { settings.toolDialAlways = it }
                 }
             }
-            Hint("Holding the screenshot button stays with HyperOS. Noti uses only its delivered short clicks.")
+            if (!samsung) Hint("Holding the screenshot button stays with HyperOS. Noti uses only its delivered short clicks.")
             NotiGroup {
-                SwitchRow("Xiaomi button compatibility", "Recognize pen buttons sent as Page Down and Page Up. Keyboard page navigation stays available.",
-                    settings.penLegacyKeys) { settings.penLegacyKeys = it }
-                NotiGroupDivider()
-                SwitchRow("Swap Xiaomi button order", "Use this if the writing and screenshot buttons are reversed on your tablet.",
-                    settings.penSwapLegacyKeys) { settings.penSwapLegacyKeys = it }
+                SwitchRow("S Pen button clicks", "Recognize clicks that the pen reports with its position, as the Samsung S Pen and most Wacom-style pens do. " +
+                    "Pens that send button keys keep using them.", settings.penMotionClicks) { settings.penMotionClicks = it }
+                if (!samsung) {
+                    NotiGroupDivider()
+                    SwitchRow("Xiaomi button compatibility", "Recognize pen buttons sent as Page Down and Page Up. Keyboard page navigation stays available.",
+                        settings.penLegacyKeys) { settings.penLegacyKeys = it }
+                    NotiGroupDivider()
+                    SwitchRow("Swap Xiaomi button order", "Use this if the writing and screenshot buttons are reversed on your tablet.",
+                        settings.penSwapLegacyKeys) { settings.penSwapLegacyKeys = it }
+                }
             }
+            if (samsung) Hint("If Air command opens when you click the S Pen button, turn it off in the system Settings " +
+                "(on most One UI versions: Advanced features → S Pen → Air command).")
             Spacer(Modifier.height(4.dp))
             Text("Test click and hold", style = MaterialTheme.typography.titleSmall)
-            Text("Click each button, then hold only the writing button for two seconds, both away from and near the screen. " +
+            Text((if (samsung) "Click the S Pen button while hovering, then hold it for two seconds near the screen. "
+                else "Click each button, then hold only the writing button for two seconds, both away from and near the screen. ") +
                 "If its click is reported before you release it, your tablet exposes clicks only; use toggle shortcuts. " +
-                "A writing hold used for ink does not also trigger its click action.", style = MaterialTheme.typography.bodyMedium)
-            Text(if (settings.penButtonHold == PenHold.Erase) "The scratch area tests temporary erasing with the writing button. Click results appear below without changing your notebook or selected tool."
+                "Holding the $inSentence for ink does not also trigger its click action.", style = MaterialTheme.typography.bodyMedium)
+            Text(if (settings.penButtonHold == PenHold.Erase) "The scratch area tests temporary erasing with the $inSentence. Click results appear below without changing your notebook or selected tool."
                 else "Click results appear below without changing your notebook or selected tool. The tool dial opens in notebooks; here a held stroke draws normally.",
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             TextButton(onClick = { events = emptyList() }) { Text("Clear button history") }
@@ -411,15 +430,15 @@ private fun PenButtonsSection(settings: SettingsStore) {
 }
 
 @Composable
-private fun HoldActionRow(hold: PenHold, onChange: (PenHold) -> Unit) {
+private fun HoldActionRow(hold: PenHold, name: String, onChange: (PenHold) -> Unit) {
     var open by remember { mutableStateOf(false) }
     Column {
-        ValueRow("Hold writing button", hold.label) { open = true }
+        ValueRow("Hold $name", hold.label) { open = true }
         Text(when (hold) {
-            PenHold.Dial -> "Hold the writing button and touch the page: the tool dial opens under the nib. Drag to a tool, color or width and lift to choose it. " +
+            PenHold.Dial -> "Hold the $name and touch the page: the tool dial opens under the nib. Drag to a tool, color or width and lift to choose it. " +
                 "Lift on the center to cancel, or on the lock to keep the dial open."
-            PenHold.Erase -> "Hold the writing button while drawing to erase temporarily. Your selected tool returns on the next stroke after release."
-            PenHold.Off -> "Holding the writing button changes nothing. Its click action still works."
+            PenHold.Erase -> "Hold the $name while drawing to erase temporarily. Your selected tool returns on the next stroke after release."
+            PenHold.Off -> "Holding the $name changes nothing. Its click action still works."
         }, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(bottom = 12.dp))
         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
@@ -702,7 +721,7 @@ private fun AboutSection() {
         Spacer(Modifier.height(4.dp))
         FriendlyNote("Meet Doti", "Part ink drop, part daydream. Always up for a fresh page.")
         Text("Version $version", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Text("Made for handwriting with the Xiaomi Pad 7 and Focus Pen.",
+        Text("Made for handwriting with the Xiaomi Pad 7 and Focus Pen, and Samsung Galaxy Tab S tablets with the S Pen.",
             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         TextButton(onClick = { licenseOpen = true }) { Text("Typeface license") }
     }

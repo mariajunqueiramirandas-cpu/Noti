@@ -8,13 +8,57 @@ import android.view.Window
 import android.view.WindowManager
 import android.util.SparseArray
 import android.util.SparseIntArray
+import kotlin.math.abs
 import java.io.Closeable
 
-enum class PenButton(val label: String, val flag: Int) {
-    Primary("Writing", NotiInk.FLAG_BUTTON_PRIMARY),
+/**
+ * The pen's buttons. [label] and [title] follow the tablet: on Xiaomi (and by default) they
+ * are the Focus Pen's writing / screenshot / Focus buttons; on Samsung, the S Pen's side button.
+ */
+enum class PenButton(private val xiaomi: String, private val samsung: String, val flag: Int) {
+    Primary("Writing", "S Pen", NotiInk.FLAG_BUTTON_PRIMARY),
     // Screenshot supports delivered clicks only; its hold stays with HyperOS.
-    Secondary("Screenshot", 0),
-    Focus("Focus", 0),
+    Secondary("Screenshot", "Second", 0),
+    Focus("Focus", "Focus", 0);
+
+    /** Short name, for diagnostics: "Writing", or "S Pen" on Samsung. */
+    val label: String get() = if (PenVendor.isSamsung()) samsung else xiaomi
+    /** "Writing button", or "S Pen button" on Samsung. */
+    val title: String get() = "$label button"
+    /** [title] inside a sentence: "writing button", but still "S Pen button". */
+    val phrase: String get() = if (PenVendor.isSamsung()) title else title.lowercase()
+}
+
+/** Which pen family the tablet ships with, for labels and vendor-specific input quirks. */
+object PenVendor {
+    fun isSamsung(manufacturer: String? = Build.MANUFACTURER, brand: String? = Build.BRAND): Boolean =
+        manufacturer.orEmpty().equals("samsung", ignoreCase = true) || brand.orEmpty().equals("samsung", ignoreCase = true)
+}
+
+/**
+ * Samsung S Pen quirk: some One UI digitizers report a stroke drawn with the side button held
+ * as private actions 211–214 (Samsung's pen down / up / move / cancel) instead of
+ * ACTION_DOWN / UP / MOVE / CANCEL, sometimes without the button in getButtonState(). Mapping
+ * them back lets such a stroke draw, and lets the held button open the dial or erase.
+ */
+object SamsungPenActions {
+    const val DOWN = 211
+    const val UP = 212
+    const val MOVE = 213
+    const val CANCEL = 214
+
+    /** The standard action for [actionMasked], or [actionMasked] unchanged. */
+    fun action(actionMasked: Int): Int = when (actionMasked) {
+        DOWN -> MotionEvent.ACTION_DOWN
+        UP -> MotionEvent.ACTION_UP
+        MOVE -> MotionEvent.ACTION_MOVE
+        CANCEL -> MotionEvent.ACTION_CANCEL
+        else -> actionMasked
+    }
+
+    /** [buttonState] with the side button held when [actionMasked] is one of Samsung's button actions. */
+    fun buttons(actionMasked: Int, buttonState: Int): Int =
+        if (actionMasked in DOWN..CANCEL) buttonState or MotionEvent.BUTTON_STYLUS_PRIMARY else buttonState
 }
 
 /** What holding the writing button does when the nib touches the page. */
@@ -33,6 +77,11 @@ data class StylusButtonOptions(
     val swapLegacyKeys: Boolean = false,
     // The spotlight button belongs to HyperOS unless explicitly assigned in the app.
     val captureFocus: Boolean = false,
+    /**
+     * Clicks from the pen's motion-event button flags, for pens that never send key events:
+     * the Samsung S Pen and most Wacom-style digitizer pens. Keys win wherever both exist.
+     */
+    val motionClicks: Boolean = true,
 )
 
 /** Map only documented Android codes and the Xiaomi Page Up/Down compatibility path. */
@@ -61,8 +110,13 @@ object StylusButtonKeys {
 
 /**
  * Ink-thread state. A synthetic down/up remains a click; we never invent a held
- * state after release. Motion flags and keys are merged per input device. Only
- * keys fire click actions, so a device reporting both paths cannot double-fire.
+ * state after release. Motion flags and keys are merged per input device.
+ *
+ * Keys fire click actions. Pens that report their buttons only in motion events (the
+ * Samsung S Pen) fire clicks from those flags when [StylusButtonOptions.motionClicks] is
+ * on. A device reporting both paths cannot double-fire: once a button has arrived as a
+ * key, its motion clicks stop, and a key click that repeats a motion click just made is
+ * dropped.
  */
 internal class StylusButtons(
     private val longPressMs: Long,
@@ -71,7 +125,13 @@ internal class StylusButtons(
 ) {
     private class Press(val downAt: Long) { var usedForInk = false }
     private val presses = SparseArray<Array<Press?>>()
+    // Pen motion button bits per device; a device is absent until its state is known again.
     private val motionStates = SparseIntArray()
+    private val motionPresses = SparseArray<Array<Press?>>()
+    // Buttons this tablet has delivered as keys: the key path is authoritative for them.
+    private val keyed = BooleanArray(PenButton.entries.size)
+    // Press time of each button's latest motion click, so a late key for it cannot click again.
+    private val motionClickAt = LongArray(PenButton.entries.size) { NEVER }
     var options = StylusButtonOptions()
         set(value) {
             if (field != value) reset()
@@ -87,6 +147,7 @@ internal class StylusButtons(
         when (action) {
             KeyEvent.ACTION_DOWN -> {
                 if (repeat != 0 || states[index]?.downAt == downTime) return
+                keyed[index] = true
                 // A new sequence recovers from a missing UP without firing the lost click.
                 states[index] = Press(downTime)
                 onDiagnostic?.invoke("${button.label}: down (device $device)")
@@ -96,10 +157,13 @@ internal class StylusButtons(
                 states[index] = null
                 if (states.all { it == null }) presses.remove(device)
                 val duration = (time - press.downAt).coerceAtLeast(0)
-                val click = !canceled && !press.usedForInk && duration < longPressMs
+                val pen = motionClickAt[index]
+                val alreadyClicked = pen != NEVER && abs(press.downAt - pen) < longPressMs
+                val click = !canceled && !press.usedForInk && !alreadyClicked && duration < longPressMs
                 onDiagnostic?.invoke("${button.label}: ${when {
                     canceled -> "canceled"
                     press.usedForInk -> "used while writing"
+                    alreadyClicked -> "already clicked by the pen"
                     click -> "click"
                     else -> "long press"
                 }} · $duration ms")
@@ -108,15 +172,66 @@ internal class StylusButtons(
         }
     }
 
-    /** Called for pen events only, including hover and button press/release. */
-    fun motion(device: Int, buttons: Int) {
+    /**
+     * Called for pen events only, including hover and button press/release. [time] is the
+     * event's uptime in ms. [contact]: the nib is on the page, so a held button is used for
+     * ink and will not click. [leaving]: the pen leaves hover range (or is about to touch);
+     * its held buttons are forgotten without clicking, and a button already held when the pen
+     * comes back is not a new press.
+     */
+    fun motion(device: Int, buttons: Int, time: Long = 0, contact: Boolean = false, leaving: Boolean = false) {
         if (!options.enabled) return
-        val bits = buttons and (MotionEvent.BUTTON_STYLUS_PRIMARY or MotionEvent.BUTTON_STYLUS_SECONDARY)
+        val bits = buttons and MOTION_BUTTONS
+        val known = motionStates.indexOfKey(device) >= 0
         val old = motionStates.get(device)
-        if (bits == old) return
-        if (bits == 0) motionStates.delete(device) else motionStates.put(device, bits)
-        onDiagnostic?.invoke("Pen state: writing ${if (bits and MotionEvent.BUTTON_STYLUS_PRIMARY != 0) "down" else "up"}, " +
-            "screenshot ${if (bits and MotionEvent.BUTTON_STYLUS_SECONDARY != 0) "down" else "up"}")
+        if (bits != old) {
+            onDiagnostic?.invoke("Pen state: ${PenButton.Primary.label} ${if (bits and MotionEvent.BUTTON_STYLUS_PRIMARY != 0) "down" else "up"}, " +
+                "${PenButton.Secondary.label} ${if (bits and MotionEvent.BUTTON_STYLUS_SECONDARY != 0) "down" else "up"}")
+        }
+        if (known && bits != old) {
+            motionEdge(device, PenButton.Primary, MotionEvent.BUTTON_STYLUS_PRIMARY, old, bits, time)
+            motionEdge(device, PenButton.Secondary, MotionEvent.BUTTON_STYLUS_SECONDARY, old, bits, time)
+        }
+        if (contact) motionPresses[device]?.forEach { it?.usedForInk = true }
+        if (leaving) {
+            motionStates.delete(device)
+            motionPresses.remove(device)
+        } else {
+            motionStates.put(device, bits)
+        }
+    }
+
+    private fun motionEdge(device: Int, button: PenButton, flag: Int, old: Int, bits: Int, time: Long) {
+        val was = old and flag != 0
+        val now = bits and flag != 0
+        val index = button.ordinal
+        if (!was && now) {
+            val states = motionPresses[device] ?: arrayOfNulls<Press>(PenButton.entries.size).also { motionPresses.put(device, it) }
+            states[index] = Press(time)
+        } else if (was && !now) {
+            val states = motionPresses[device] ?: return
+            val press = states[index] ?: return
+            states[index] = null
+            if (states.all { it == null }) motionPresses.remove(device)
+            // Keys are authoritative wherever the tablet sends them.
+            if (!options.motionClicks || keyed[index] || keyHeld(index)) return
+            val duration = (time - press.downAt).coerceAtLeast(0)
+            val click = !press.usedForInk && duration < longPressMs
+            onDiagnostic?.invoke("${button.label} (pen): ${when {
+                press.usedForInk -> "used while writing"
+                click -> "click"
+                else -> "long press"
+            }} · $duration ms")
+            if (click) {
+                motionClickAt[index] = press.downAt
+                onClick(button)
+            }
+        }
+    }
+
+    private fun keyHeld(index: Int): Boolean {
+        for (i in 0 until presses.size()) if (presses.valueAt(i)[index] != null) return true
+        return false
     }
 
     /** Only writing can override ink while held. The native engine latches it at nib-down. */
@@ -153,12 +268,19 @@ internal class StylusButtons(
     fun reset() {
         presses.clear()
         motionStates.clear()
+        motionPresses.clear()
         onDiagnostic?.invoke("Buttons released; waiting for new input")
     }
 
     fun removeDevice(device: Int) {
         presses.remove(device)
         motionStates.delete(device)
+        motionPresses.remove(device)
+    }
+
+    private companion object {
+        const val NEVER = Long.MIN_VALUE
+        const val MOTION_BUTTONS = MotionEvent.BUTTON_STYLUS_PRIMARY or MotionEvent.BUTTON_STYLUS_SECONDARY
     }
 }
 

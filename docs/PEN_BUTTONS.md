@@ -1,4 +1,4 @@
-# Focus Pen buttons
+# Pen buttons: Focus Pen and S Pen
 
 Noti supports the original three-button Xiaomi Focus Pen through Android input events. No root,
 accessibility service, privileged permission or Xiaomi SDK is required. On Xiaomi/Redmi/POCO devices
@@ -91,8 +91,9 @@ Supported inputs:
 | Android key codes 308 / 309 | Primary (writing) / secondary (screenshot) |
 | Android key code 310 | Focus, only when assigned |
 | Page Down / Page Up (93 / 92) from a stylus source or a pen-named device | Xiaomi writing / screenshot compatibility mapping |
-| `BUTTON_STYLUS_PRIMARY` in pen motion events | Tool dial or temporary erase, per the hold setting; no additional click |
-| `BUTTON_STYLUS_SECONDARY` in pen motion events | Diagnostic state only; no temporary tool override |
+| `BUTTON_STYLUS_PRIMARY` in pen motion events | Tool dial or temporary erase, per the hold setting; a click only from pens that never send it as a key (S Pen) |
+| `BUTTON_STYLUS_SECONDARY` in pen motion events | No temporary tool override; a click only from pens that never send it as a key |
+| Samsung touch actions 211–214 | Standard down / up / move / cancel with the side button held |
 
 The Xiaomi mapping is a compatibility default, not a guarantee for every firmware. **Swap Xiaomi
 button order** reverses it; **Xiaomi button compatibility** disables that path. Page keys from
@@ -111,6 +112,70 @@ messages are enabled only in the tester, whose history is bounded to 16 entries 
 Only the active canvas receives key shortcuts. Settings scratch canvases supersede the underlying
 editor, including settings opened in a dialog; dialogs and background windows cannot edit a hidden
 notebook through its shortcuts. The tester never invokes notebook actions or changes the selected tool.
+
+## Samsung Galaxy Tab and the S Pen
+
+The S Pen has one side button. One UI does not send it as a key: it appears only in the pen's own
+motion events, as `BUTTON_STYLUS_PRIMARY` in `getButtonState()` while the pen hovers or touches, with
+`ACTION_BUTTON_PRESS` / `ACTION_BUTTON_RELEASE` while it hovers. Noti treats the side button as the
+writing button:
+
+| You do this | Noti does this |
+| --- | --- |
+| Click the side button while the pen hovers | The writing-button click action (toggle eraser by default) |
+| Hold the side button and touch the page | The hold action: the tool dial (default) or temporary erase |
+| Hold the side button longer than the long-press timeout without touching | Nothing |
+| Use the S Pen's eraser end, where the pen has one | Erase (`TOOL_TYPE_ERASER`) |
+
+**Settings → Pen buttons** names the S Pen button on Samsung tablets and hides the Focus Pen's
+screenshot, Focus and Page Up/Down rows, which the S Pen does not have.
+
+### Clicks from motion flags
+
+**S Pen button clicks** (on by default, on every tablet) fires a click when a pen's motion button flag
+rises and falls within Android's long-press timeout. A press is not a click when:
+
+- the nib touched the page while it was held (it was used for ink or the dial);
+- the pen left hover range, or touched down, while it was held (`ACTION_HOVER_EXIT` forgets the press);
+- the button was already held when the pen came into range (its start is unknown);
+- the tablet has delivered that button as a key (308 / 309, or the Xiaomi Page keys) at any time since the
+  canvas opened. Keys are authoritative, and a key click for a press that motion flags already clicked is
+  dropped, so a tablet that reports both paths still clicks once.
+
+The Xiaomi Focus Pen reports zero motion flags, so this path does nothing there. Turn the switch off if
+a pen's motion flags ever produce clicks you did not make.
+
+### Samsung button actions 211–214
+
+Some Samsung digitizers report a stroke drawn with the side button held as private actions 211–214
+(Samsung's pen down / up / move / cancel) instead of `ACTION_DOWN` / `UP` / `MOVE` / `CANCEL`, sometimes
+with an empty button state. The ink window maps them back to the standard actions and treats the side
+button as held, so these strokes open the dial or erase instead of being dropped.
+
+### What stays with One UI
+
+- **Air command** may open when the side button is clicked while hovering. If it gets in the way, turn
+  it off in the system Settings (on most One UI versions: Advanced features → S Pen → Air command;
+  names vary between versions).
+- **Air actions** (Bluetooth presses and gestures with the pen away from the screen) are handled by One
+  UI. Noti does not use the S Pen Remote SDK and does not expect those presses to reach it.
+- Palm rejection, hover, pressure and tilt use standard Android events and need nothing Samsung-specific.
+  The palm filter takes the panel's pixel density from the display, not from a Xiaomi constant.
+
+### Verify on a Galaxy Tab S
+
+The S Pen path is covered by host tests of the event interpretation, not yet by a physical Galaxy Tab
+check. On the tablet:
+
+1. Open **Settings → Pen buttons**. The first row should read **S Pen button click**.
+2. Hover the pen over the scratch area and click the side button: the history shows
+   `S Pen (pen): click` and `S Pen: click received`. Hold it for two seconds: `long press`, no click.
+3. Hold the side button and draw in the scratch area with the hold set to **Erase temporarily**: it
+   erases, and releasing the button does not click. With **Open the tool dial**, in a notebook, the dial
+   opens under the nib.
+4. Lift the pen out of range with the button held and release it there: no click.
+5. If a single click is reported twice, note the history lines (`Key 308 …` lines mean this tablet also
+   sends keys) and report it; turning off **S Pen button clicks** keeps key clicks only.
 
 ## Verify on the Xiaomi Pad 7
 
