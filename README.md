@@ -237,10 +237,13 @@ No save button. You won't need one.
   Snapshots run between strokes; pausing, leaving and release also save.
 - **Safety:** invalid archives are preserved instead of being overwritten.
 - **Undo:** history lasts for the editing session (up to 256 operations); reopening restores the visible ink.
-- **Pages:** add, duplicate and delete pages. The last page is protected. A4 and Letter are supported; legacy Endless paper
-  uses the A4 proportion with more pages available from the toolbar or page panel.
+- **Pages:** add, duplicate and delete pages on A4 and Letter paper. The last page is protected.
+- **Endless:** a free canvas, not pages. One sheet of paper fills the screen edge to edge, 16 screens wide, and keeps
+  growing downwards for as long as you scroll. Pan in any direction, zoom from 25% to 600%; it opens at the top of the middle column.
+  Endless notebooks from before the canvas have their pages moved onto it, in order, the first time they open.
 - **Export:** a flattened PDF with paper/source PDF and annotations, from the editor or the library. Several library
-  selections export as a ZIP of PDFs. Source PDF pages are rasterized at up to 2× for export; ink stays vector.
+  selections export as a ZIP of PDFs. Source PDF pages are rasterized at up to 2× for export; ink stays vector. An Endless
+  canvas exports as one page around all of its ink.
 - **Duplicating** a notebook copies its saved ink. **Permanent deletion** removes it.
 
 ## 📱 Phones & tablets

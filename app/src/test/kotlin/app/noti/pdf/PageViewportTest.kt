@@ -212,4 +212,116 @@ class PageViewportTest {
         f.viewport.pan(0f, -0.4f)
         assertEquals(-19f, f.state.visiblePages.first().top, 0f)
     }
+
+    // ---- the Endless canvas: one sheet, no pages ----
+
+    /** A 300×400 view onto a sheet of 16 screens of 100 px, home 4 screens down, growing 8 ahead. */
+    private class SheetFixture(aspect: Float = 1f) {
+        lateinit var state: PagePlacement
+        val viewport = PageViewport(10f) { state = it }.apply {
+            setSheet(100f, 16f, 4f, 8f)
+            setCanvas(300, 400)
+            setDocument(floatArrayOf(aspect))
+        }
+        val sheet get() = state.visiblePages.single()
+    }
+
+    @Test fun sheetOpensAtHomeFillingTheViewWithoutPages() {
+        val f = SheetFixture()
+        assertEquals(0, f.state.page)
+        assertEquals(1600f, f.sheet.width, 0f)
+        // The middle column sits in the middle of the view, home row at the top (below the inset).
+        assertEquals(150f - 800f, f.sheet.left, 0f)
+        assertEquals(10f - 400f, f.sheet.top, 0f)
+        assertTrue("paper reaches past every edge of the view", f.sheet.left < 0 && f.sheet.top < 0 &&
+            f.sheet.left + f.sheet.width > 300 && f.sheet.top + f.sheet.height > 400)
+        assertEquals("no scroll thumb", 1f, f.state.viewportFraction, 0f)
+    }
+
+    @Test fun sheetPansFreelyInEveryDirectionUntilItsSideAndTopEdges() {
+        val f = SheetFixture()
+        val home = f.sheet
+        f.viewport.pan(250f, 300f)
+        assertEquals(home.left + 250f, f.sheet.left, 0f)
+        assertEquals(home.top + 300f, f.sheet.top, 0f)
+        f.viewport.pan(-500f, -200f)
+        assertEquals(home.left - 250f, f.sheet.left, 0f)
+        f.viewport.pan(1e6f, 1e6f)
+        assertEquals(0f, f.sheet.left, 0f)
+        assertEquals(0f, f.sheet.top, 0f)
+        f.viewport.pan(-1e6f, 0f)
+        assertEquals(300f, f.sheet.left + f.sheet.width, 0f)
+    }
+
+    @Test fun sheetGrowsAheadOfTheViewSoItNeverEnds() {
+        val f = SheetFixture()
+        val start = f.sheet.height
+        repeat(200) { f.viewport.pan(0f, -400f) }
+        // 200 screens of 400 px down: never stopped by the bottom, always 8 screens of room left.
+        assertEquals(-400f * 200 + (10f - 400f), f.sheet.top, 1f)
+        assertTrue(f.sheet.height > start)
+        assertEquals(400f + 8 * 100f, f.sheet.top + f.sheet.height, 1f)
+        // One huge jump only grows the sheet by a step, not by the whole jump.
+        val before = f.sheet.height
+        f.viewport.pan(0f, -1e7f)
+        assertTrue(f.sheet.height < before + 2000f)
+    }
+
+    @Test fun sheetKeepsInkFromAShorterDocumentAndNeverShrinks() {
+        val f = SheetFixture(aspect = 3f)
+        assertEquals(4800f, f.sheet.height, 0f)
+        f.viewport.setDocument(floatArrayOf(1f))
+        assertEquals(4800f, f.sheet.height, 0f)
+    }
+
+    @Test fun sheetZoomsAroundTheFingersAndResetKeepsTheCentre() {
+        val f = SheetFixture()
+        val before = f.sheet
+        val x = (100f - before.left) / before.width
+        val y = (300f - before.top) / before.width
+        f.viewport.pinch(100f, 300f, 0.5f, 0f, 0f)
+        assertEquals(0.5f, f.state.zoom, 0.001f)
+        assertEquals(x, (100f - f.sheet.left) / f.sheet.width, 0.001f)
+        assertEquals(y, (300f - f.sheet.top) / f.sheet.width, 0.001f)
+        val centre = (150f - f.sheet.left) / f.sheet.width to (200f - f.sheet.top) / f.sheet.width
+        f.viewport.resetZoom()
+        assertEquals(1f, f.state.zoom, 0f)
+        assertEquals(centre.first, (150f - f.sheet.left) / f.sheet.width, 0.001f)
+        assertEquals(centre.second, (200f - f.sheet.top) / f.sheet.width, 0.001f)
+        f.viewport.pinch(150f, 200f, 0.001f, 0f, 0f)
+        assertEquals(PageViewport.MIN_ZOOM, f.state.zoom, 0f)
+    }
+
+    @Test fun sheetKeepsTheSameInkSizeAndCentreWhenTheViewResizes() {
+        val f = SheetFixture()
+        f.viewport.pan(-120f, -80f)
+        val before = f.sheet
+        val cx = 150f - before.left; val cy = 200f - before.top
+        f.viewport.setCanvas(400, 300)
+        assertEquals("a screen is a fixed size, not the view's width", before.width, f.sheet.width, 0f)
+        assertEquals(cx, 200f - f.sheet.left, 1f)
+        assertEquals(cy, 150f - f.sheet.top, 1f)
+    }
+
+    @Test fun sheetGoesHomeForAnyPage() {
+        val f = SheetFixture()
+        val home = f.sheet
+        f.viewport.pinch(150f, 200f, 2f, 0f, 0f)
+        f.viewport.pan(-300f, -900f)
+        f.viewport.goTo(7)
+        assertEquals(0, f.state.page)
+        assertEquals(1f, f.state.zoom, 0f)
+        assertEquals(home.left, f.sheet.left, 0f)
+        assertEquals(home.top, f.sheet.top, 0f)
+    }
+
+    @Test fun sheetSetBeforeTheViewHasASizeStillOpensAtHome() {
+        lateinit var state: PagePlacement
+        val viewport = PageViewport(10f) { state = it }
+        viewport.setCanvas(300, 400)
+        viewport.setSheet(100f, 16f, 4f, 8f)
+        viewport.setDocument(floatArrayOf(1f))
+        assertEquals(-650f, state.left, 0f)
+        assertEquals(-390f, state.top, 0f)
+    }
 }

@@ -127,7 +127,7 @@ class TextInk(typeface: Typeface) {
     companion object {
         /** Page width in page units (PageMap::kPageUnits). */
         const val PageWidth = 1000f
-        private const val Margin = 24f
+        internal const val Margin = 24f
         /** Font pixels per page unit: shapes are traced to a quarter of a unit. */
         private const val Scale = 4f
     }

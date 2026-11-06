@@ -27,5 +27,14 @@ class InkFile(val file: File, val initial: ByteArray?) {
         fun open(file: File): InkFile = writer.submit<InkFile> {
             InkFile(file, if (file.exists() || File(file.path + ".bak").exists()) AtomicFile(file).readFully() else null)
         }.get()
+
+        /** Writes [bytes] in place of the file's ink, in order with other saves; blocks. Throws if it fails. */
+        fun replace(file: File, bytes: ByteArray): InkFile = writer.submit<InkFile> {
+            val atomic = AtomicFile(file)
+            val out = atomic.startWrite()
+            try { out.write(bytes); atomic.finishWrite(out) }
+            catch (e: Exception) { atomic.failWrite(out); throw e }
+            InkFile(file, bytes)
+        }.get()
     }
 }

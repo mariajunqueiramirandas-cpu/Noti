@@ -98,3 +98,44 @@ internal fun DrawScope.drawPaperPage(paper: Paper, width: Float, height: Float, 
         }
     }
 }
+
+/**
+ * The paper of a sheet larger than the view (the Endless canvas): its pattern, anchored at
+ * the sheet's corner ([left], [top]) with [unit] px per page unit of a one-screen page, drawn
+ * only where the sheet meets the area being drawn.
+ */
+internal fun DrawScope.drawPaperSheet(paper: Paper, left: Float, top: Float, width: Float, height: Float, unit: Float) {
+    val x0 = maxOf(left, 0f); val y0 = maxOf(top, 0f)
+    val x1 = minOf(left + width, size.width); val y1 = minOf(top + height, size.height)
+    if (x1 <= x0 || y1 <= y0) return
+    drawRect(Color(paper.color.argb), Offset(x0, y0), androidx.compose.ui.geometry.Size(x1 - x0, y1 - y0))
+    val step = 40f * unit
+    if (!(step >= 2f)) return
+    val line = if (paper.color.isDark) Color(0x33FFFFFF) else Color(0x2E3A5A8C)
+    val stroke = unit.coerceAtLeast(0.5f)
+    // First pattern position at or after [from], counting from [origin]; [skip] steps are blank.
+    fun first(origin: Float, from: Float, skip: Int) = origin + step * maxOf(skip.toFloat(), kotlin.math.ceil((from - origin) / step))
+    when (paper.template) {
+        PaperTemplate.Blank -> Unit
+        PaperTemplate.Lined, PaperTemplate.Grid -> {
+            var y = first(top, y0, if (paper.template == PaperTemplate.Lined) 2 else 1)
+            while (y < y1) { drawLine(line, Offset(x0, y), Offset(x1, y), stroke); y += step }
+            if (paper.template == PaperTemplate.Grid) {
+                var x = first(left, x0, 1)
+                while (x < x1) { drawLine(line, Offset(x, y0), Offset(x, y1), stroke); x += step }
+            }
+        }
+        PaperTemplate.Dots -> {
+            val dots = ArrayList<Offset>()
+            var y = first(top, y0, 1)
+            while (y < y1) {
+                var x = first(left, x0, 1)
+                while (x < x1) { dots += Offset(x, y); x += step }
+                y += step
+            }
+            // One call for every dot: zoomed out there are thousands.
+            drawPoints(dots, androidx.compose.ui.graphics.PointMode.Points, line,
+                strokeWidth = stroke * 2.8f, cap = androidx.compose.ui.graphics.StrokeCap.Round)
+        }
+    }
+}

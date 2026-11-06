@@ -17,11 +17,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import app.noti.R
+import app.noti.data.EndlessCanvas
 import app.noti.ink.InkLayer
 import app.noti.transcribe.HandwritingLanguages
 import app.noti.transcribe.HandwritingReader
 import app.noti.transcribe.InkLine
 import app.noti.transcribe.InkLines
+import app.noti.transcribe.PageFrame
 import app.noti.transcribe.TextInk
 import app.noti.ui.common.NotiButton
 import app.noti.ui.common.NotiDialogFrame
@@ -43,6 +45,8 @@ internal class TranscribeSession(
     val ids: IntArray,
     /** The most-used ink color among them, premultiplied: the typed text's color. */
     val color: FloatArray,
+    /** [lines] are in this frame's units; typed text is placed back through it. */
+    val frame: PageFrame = PageFrame.Identity,
 ) {
     sealed interface Phase {
         data object Preparing : Phase
@@ -85,8 +89,11 @@ internal class TranscribeSession(
     }
 
     companion object {
-        /** From InkLayer.selectionInk; null when the loop held no pen writing (highlights don't count). */
-        fun from(selection: FloatArray): TranscribeSession? {
+        /**
+         * From InkLayer.selectionInk; null when the loop held no pen writing (highlights don't count).
+         * On the Endless [canvas] the writing is read in a one-screen page frame.
+         */
+        fun from(selection: FloatArray, canvas: Boolean = false): TranscribeSession? {
             val writing = InkLines.parse(selection).filter { it.isWriting }
             if (writing.isEmpty()) return null
             // A loop stays on one page; keep the first stroke's in any case.
@@ -94,7 +101,8 @@ internal class TranscribeSession(
             val onPage = writing.filter { it.page == page }
             val color = onPage.groupBy { it.color.toList() }
                 .maxBy { (_, strokes) -> strokes.sumOf { it.points.size } }.key.toFloatArray()
-            return TranscribeSession(page, InkLines.group(onPage), onPage.map { it.id }.toIntArray(), color)
+            val frame = if (canvas) PageFrame.canvas(onPage, EndlessCanvas.SPAN) else PageFrame.Identity
+            return TranscribeSession(page, InkLines.group(onPage.map(frame::toPage)), onPage.map { it.id }.toIntArray(), color, frame)
         }
     }
 }
@@ -105,7 +113,7 @@ internal class TranscribeSession(
  * the panel with the text.
  */
 @Composable
-internal fun TranscribeTool(layer: InkLayer?, documentState: DoubleArray, languageTag: String) {
+internal fun TranscribeTool(layer: InkLayer?, documentState: DoubleArray, languageTag: String, canvas: Boolean = false) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val serial = documentState.getOrNull(9)?.toLong() ?: 0L
@@ -123,7 +131,7 @@ internal fun TranscribeTool(layer: InkLayer?, documentState: DoubleArray, langua
         if (serial <= handled) return@LaunchedEffect
         handled = serial
         current.selectionInk { data ->
-            val next = TranscribeSession.from(data)
+            val next = TranscribeSession.from(data, canvas)
             if (next == null) {
                 current.documentAction(ClearSelection)
                 Toast.makeText(context, if ((data.firstOrNull() ?: 0f) > 0f) "Only highlighter ink in that loop. Loop around pen writing to turn it into text."
@@ -141,7 +149,7 @@ internal fun TranscribeTool(layer: InkLayer?, documentState: DoubleArray, langua
         open.replacing = true
         scope.launch {
             val typeface = context.resources.getFont(R.font.nunito_regular)
-            val strokes = withContext(Dispatchers.Default) { TextInk(typeface).layout(open.text, open.lines) }
+            val strokes = withContext(Dispatchers.Default) { open.frame.toEngine(TextInk(typeface).layout(open.text, open.lines)) }
             current.replaceStrokes(open.ids, open.page, open.color, strokes.capsules, strokes.sizes) { ok ->
                 open.replacing = false
                 if (ok) {
