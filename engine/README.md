@@ -39,6 +39,26 @@ therefore its input dispatch, on that thread. The UI thread (Compose, layout, GC
 stage 4) is not on the ink path at all. Because the same thread renders, there's also no hand-off between "input
 thread" and "render thread". The input event is drawn before `onTouchEvent` returns.
 
+## Ink and the moving page
+
+The page under the ink (PDF or paper) is drawn by the editor's window; committed ink is the engine's own dry layer.
+Updated independently, the two reach SurfaceFlinger on different frames, so while a document is panned or zoomed the
+ink would lead or trail its page by a frame or two and settle when the motion stops. On Android 14+ the dry layer
+follows the editor window's frames instead (`GlFrontBufferRenderer::host_frame`):
+
+- a viewport change renders a dry buffer for the new layout and parks it;
+- just before the editor window draws (`OnPreDrawListener`), the parked buffer, if any, and the scale/offset that maps
+  the newest buffer's layout onto the layout being drawn go into a transaction applied with that very frame
+  (`ASurfaceTransaction_fromJava` + `applyTransactionOnDraw`). Pages sit on whole pixels, so a pan is an exact integral
+  offset; between buffers the geometry alone keeps the ink on its page. The dry layer sits in a container cropped to
+  the canvas, so a moved layer never paints outside it;
+- pen commits and edits stay on the transaction thread. They end the session and reset the geometry, and the
+  transaction thread first lets host frames already carrying dry-layer state land, so nothing older can cover a commit.
+  Watchdogs fall back to the engine's own path if the host stops drawing or its callbacks never return.
+
+The wet (front-buffer) layer and the pen's latency path are unchanged. Before Android 14 the dry layer follows the
+viewport on its own, as before.
+
 ## Performance policy: power is not a constraint
 
 The engine is built for minimum latency, with battery life and thermals explicitly out of scope. Everything that

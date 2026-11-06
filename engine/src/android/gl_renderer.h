@@ -1,9 +1,17 @@
 // OpenGL ES 3 front-buffer renderer on ASurfaceControl (plan §3, §4.2, §4.4).
 //
 //   SurfaceView window
-//    ├─ dry layer  (z=1)  3 × AHardwareBuffer, multi-buffered, committed ink
+//    ├─ clip       (z=1)  container cropped to the canvas
+//    │   └─ dry layer     3 × AHardwareBuffer, multi-buffered, committed ink
 //    └─ wet layer  (z=2)  2 × AHardwareBuffer with USAGE_FRONT_BUFFER,
 //                          drawn into *while scanned out*; ping-ponged on commit
+//
+// Host-frame sync (Android 14+): while the document moves, the dry layer's new
+// buffers and its geometry (the scale/offset from the layout a buffer was drawn for
+// to the layout the host window is drawing) are handed to the host window's next
+// frame (AttachedSurfaceControl.applyTransactionOnDraw), so ink and page move in the
+// same display frame. Every other dry update (pen commits, edits) stays on the
+// transaction thread, which first lets any host frame carrying dry-layer state land.
 //   private: backing texture (real wet ink, no prediction) + scratch texture
 //
 // Hot path (render), visible work first:
@@ -23,7 +31,10 @@
 #include <android/native_window.h>
 #include <android/surface_control.h>
 
+#include <jni.h>
+
 #include <atomic>
+#include <mutex>
 #include <thread>
 
 #include "noti/renderer.h"
@@ -63,7 +74,18 @@ class GlFrontBufferRenderer final : public InkRenderer {
   void commit(const StrokeStore& store, uint32_t id, const RectI& wet_rect) override;
   void cancel(const RectI& wet_rect) override;
   void redraw(const StrokeStore& store, uint32_t page) override;
+  void redraw_layout(const StrokeStore& store, uint32_t page, const float* pages, uint32_t n,
+                     const Affine2& to_surface) override;
   void batch_done(int64_t cpu_ns) override;
+
+  // Host-frame sync. set_host_sync: any thread. host_frame: main thread, just before the
+  // host window draws a frame showing `pages` (input coordinates); adds the dry layer's
+  // state for that frame to the Java SurfaceControl.Transaction `transaction`. Returns
+  // false (and adds nothing) when the dry layer is not following host frames.
+  void set_host_sync(bool on);
+  bool host_frame(JNIEnv* env, jobject transaction, const float* pages, uint32_t n);
+  // Any thread: a rendered buffer is waiting for the next host frame.
+  bool host_frame_wanted() const { return slot_full_.load(std::memory_order_acquire); }
   int64_t idle() override;
 
   bool front_buffer_supported() const { return front_buffer_supported_; }
@@ -81,6 +103,17 @@ class GlFrontBufferRenderer final : public InkRenderer {
   struct TxContext {
     GlFrontBufferRenderer* self;
     int8_t prev_wet, prev_dry;
+    bool host;  // presented by a host frame
+  };
+  // Visible pages, [page, x, y, width, height] in input coordinates.
+  static constexpr uint32_t kMaxLayoutPages = 32;
+  struct Layout {
+    uint32_t n = 0;
+    float v[kMaxLayoutPages * 5];
+    void set(const float* pages, uint32_t count) {
+      n = count < kMaxLayoutPages ? count : kMaxLayoutPages;
+      for (uint32_t i = 0; i < n * 5; ++i) v[i] = pages[i];
+    }
   };
   // Work for the transaction thread (POD: travels through an SPSC ring).
   struct TxJob {
@@ -90,6 +123,7 @@ class GlFrontBufferRenderer final : public InkRenderer {
     AHardwareBuffer* dry;
     TxContext* ctx;
     ARect damage;
+    bool reset_geometry;  // kCommit: dry layer back to identity after host frames moved it
   };
 
   bool create_target(Target& t, bool ahb_backed, bool front_buffer);
@@ -107,6 +141,16 @@ class GlFrontBufferRenderer final : public InkRenderer {
   // Swap in a new wet + dry pair with one atomic transaction (commit/redraw).
   void publish(int next_wet, int next_dry);
   void do_redraw();
+  void do_redraw_synced();
+  // Ink thread, before any dry update that doesn't go through a host frame.
+  void end_host_session();
+  void drop_slot_locked();
+  void host_watchdog(int64_t now);
+  bool host_usable() const;
+  bool can_redraw_synced() const;
+  void wait_host_frames();
+  bool layout_transform(const Layout& from, const float* to, uint32_t n, float* k, int32_t* x, int32_t* y) const;
+  static void on_host_commit(void* ctx, ASurfaceTransactionStats* stats);
   void apply_frame_rate();
   void resubmit_front();
   void post_tx(const TxJob& job);
@@ -146,7 +190,8 @@ class GlFrontBufferRenderer final : public InkRenderer {
   // Surface.
   ANativeWindow* window_ = nullptr;
   ASurfaceControl* wet_sc_ = nullptr;
-  ASurfaceControl* dry_sc_ = nullptr;
+  ASurfaceControl* dry_sc_ = nullptr;   // written under sync_mu_ (read by host_frame)
+  ASurfaceControl* clip_sc_ = nullptr;
   int32_t w_ = 0, h_ = 0;
   Target wet_[2];
   Target dry_[3];
@@ -159,6 +204,29 @@ class GlFrontBufferRenderer final : public InkRenderer {
   // A redraw waits until the previous wet/dry swap has been latched, so a pinch
   // (one redraw per frame) never draws into a buffer still on screen.
   bool redraw_pending_ = false;
+  bool redraw_synced_ = false;  // ...and it may go through a host frame
+
+  // Host-frame sync.
+  using TransactionFromJava = ASurfaceTransaction* (*)(JNIEnv*, jobject);
+  TransactionFromJava from_java_ = nullptr;  // API 34+, looked up at runtime
+  std::atomic<bool> host_sync_{false};
+  std::atomic<bool> host_failed_{false};     // callbacks never came back: stay on the native path
+  std::mutex sync_mu_;
+  // Under sync_mu_:
+  bool host_session_ = false;   // host frames own the dry layer's buffer and geometry
+  bool geometry_moved_ = false; // a host frame changed the dry layer's geometry
+  TxJob slot_job_{};            // a rendered dry buffer waiting for the next host frame
+  Layout slot_layout_;
+  Layout shown_layout_;         // layout of the newest dry buffer handed to SurfaceFlinger
+  Layout ink_layout_;           // layout the store is currently mapped to
+  Affine2 to_surface_;
+  int64_t slot_ns_ = 0;
+  std::atomic<bool> slot_full_{false};
+  std::atomic<int32_t> host_pending_{0};    // host frames with dry-layer state, not yet applied
+  std::atomic<int32_t> host_buffers_{0};    // dry buffers presented by host frames, not yet complete
+  std::atomic<int64_t> host_buffer_ns_{0};
+  std::atomic<int64_t> host_pending_ns_{0};     // last host commit (or first pending)
+  std::atomic<bool> host_overrun_{false};       // a commit stopped waiting for a late host frame
 
   // Transaction callbacks.
   TxContext tx_ctx_[16];

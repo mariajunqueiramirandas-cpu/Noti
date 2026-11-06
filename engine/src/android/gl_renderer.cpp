@@ -1,10 +1,12 @@
 #include "gl_renderer.h"
 
 #include <android/log.h>
+#include <dlfcn.h>
 #include <poll.h>
 #include <unistd.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 
 #include "noti/clock.h"
@@ -72,7 +74,10 @@ constexpr uint64_t kFrontBufferUsage = AHARDWAREBUFFER_USAGE_FRONT_BUFFER;  // A
 
 }  // namespace
 
-GlFrontBufferRenderer::GlFrontBufferRenderer(const GlRendererOptions& opt) : opt_(opt) {}
+GlFrontBufferRenderer::GlFrontBufferRenderer(const GlRendererOptions& opt) : opt_(opt) {
+  // API 34+: lets host frames carry the dry layer (see host_frame). Absent before.
+  from_java_ = reinterpret_cast<TransactionFromJava>(dlsym(RTLD_DEFAULT, "ASurfaceTransaction_fromJava"));
+}
 
 GlFrontBufferRenderer::~GlFrontBufferRenderer() = default;
 
@@ -415,6 +420,12 @@ void GlFrontBufferRenderer::on_tx_complete(void* ctx, ASurfaceTransactionStats* 
   };
   if (c->prev_wet >= 0 && self->wet_sc_) store_fence(self->wet_[c->prev_wet], self->wet_sc_);
   if (c->prev_dry >= 0 && self->dry_sc_) store_fence(self->dry_[c->prev_dry], self->dry_sc_);
+  if (c->host) {
+    // A watchdog may already have written this one off (host_watchdog).
+    int32_t n = self->host_buffers_.load(std::memory_order_acquire);
+    while (n > 0 && !self->host_buffers_.compare_exchange_weak(n, n - 1, std::memory_order_acq_rel)) {}
+    if (n <= 0) return;
+  }
   self->tx_pending_.fetch_sub(1, std::memory_order_acq_rel);
 }
 
@@ -479,8 +490,16 @@ void GlFrontBufferRenderer::tx_thread_main() {
           if (j.damage.right > j.damage.left) ASurfaceTransaction_setDamageRegion(tx, wet_sc_, &j.damage, 1);
           break;
         case TxJob::kCommit:
+          // Host frames carrying dry-layer state must land first, or one of them could
+          // put an older buffer or a stale offset back on top of this commit.
+          wait_host_frames();
           ASurfaceTransaction_setBuffer(tx, dry_sc_, j.dry, j.fence >= 0 ? dup(j.fence) : -1);
           ASurfaceTransaction_setBuffer(tx, wet_sc_, j.wet, j.fence);
+          if (j.reset_geometry) {
+            ASurfaceTransaction_setScale(tx, dry_sc_, 1.0f, 1.0f);
+            ASurfaceTransaction_setPosition(tx, dry_sc_, 0, 0);
+            ASurfaceTransaction_setVisibility(tx, dry_sc_, ASURFACE_TRANSACTION_VISIBILITY_SHOW);
+          }
           ASurfaceTransaction_setOnComplete(tx, j.ctx, &GlFrontBufferRenderer::on_tx_complete);
           break;
         case TxJob::kFrameRate:
@@ -521,8 +540,13 @@ void GlFrontBufferRenderer::destroy_surface_resources() {
   destroy_target(backing_);
   destroy_target(scratch_);
   if (wet_sc_) ASurfaceControl_release(wet_sc_);
-  if (dry_sc_) ASurfaceControl_release(dry_sc_);
-  wet_sc_ = dry_sc_ = nullptr;
+  {
+    std::lock_guard<std::mutex> lock(sync_mu_);
+    if (dry_sc_) ASurfaceControl_release(dry_sc_);
+    dry_sc_ = nullptr;
+  }
+  if (clip_sc_) ASurfaceControl_release(clip_sc_);
+  wet_sc_ = clip_sc_ = nullptr;
   if (window_) ANativeWindow_release(window_);
   window_ = nullptr;
   w_ = h_ = 0;
@@ -587,7 +611,15 @@ void GlFrontBufferRenderer::surface_changed(void* native_window, int32_t w, int3
   const int fence = native_fence();
 
   wet_sc_ = ASurfaceControl_createFromWindow(window_, "noti-wet");
-  dry_sc_ = ASurfaceControl_createFromWindow(window_, "noti-dry");
+  // The dry layer moves with host frames (see host_frame); its parent keeps it inside the canvas.
+  clip_sc_ = ASurfaceControl_createFromWindow(window_, "noti-clip");
+  {
+    std::lock_guard<std::mutex> lock(sync_mu_);
+    dry_sc_ = clip_sc_ ? ASurfaceControl_create(clip_sc_, "noti-dry") : nullptr;
+    host_session_ = false;
+    geometry_moved_ = false;
+    shown_layout_ = ink_layout_;
+  }
   if (!wet_sc_ || !dry_sc_) {
     LOGE("ASurfaceControl_createFromWindow failed");
     if (fence >= 0) close(fence);
@@ -595,8 +627,11 @@ void GlFrontBufferRenderer::surface_changed(void* native_window, int32_t w, int3
     return;
   }
   ASurfaceTransaction* tx = ASurfaceTransaction_create();
-  ASurfaceTransaction_setZOrder(tx, dry_sc_, 1);
+  ASurfaceTransaction_setZOrder(tx, clip_sc_, 1);
   ASurfaceTransaction_setZOrder(tx, wet_sc_, 2);
+  const ARect canvas{0, 0, w_, h_};
+  ASurfaceTransaction_setCrop(tx, clip_sc_, canvas);
+  ASurfaceTransaction_setVisibility(tx, clip_sc_, ASURFACE_TRANSACTION_VISIBILITY_SHOW);
   ASurfaceTransaction_setBuffer(tx, dry_sc_, dry_[0].ahb, fence >= 0 ? dup(fence) : -1);
   ASurfaceTransaction_setBuffer(tx, wet_sc_, wet_[0].ahb, fence);
   ASurfaceTransaction_setBufferTransparency(tx, dry_sc_, ASURFACE_TRANSACTION_TRANSPARENCY_TRANSLUCENT);
@@ -612,11 +647,17 @@ void GlFrontBufferRenderer::surface_changed(void* native_window, int32_t w, int3
 }
 
 void GlFrontBufferRenderer::surface_destroyed() {
+  {
+    std::lock_guard<std::mutex> lock(sync_mu_);
+    drop_slot_locked();
+    host_session_ = false;
+  }
   drain_tx();  // queued transactions reference our layers and buffers
   if (wet_sc_ || dry_sc_) {
     ASurfaceTransaction* tx = ASurfaceTransaction_create();
     if (wet_sc_) ASurfaceTransaction_reparent(tx, wet_sc_, nullptr);
     if (dry_sc_) ASurfaceTransaction_reparent(tx, dry_sc_, nullptr);
+    if (clip_sc_) ASurfaceTransaction_reparent(tx, clip_sc_, nullptr);
     ASurfaceTransaction_apply(tx);
     ASurfaceTransaction_delete(tx);
     // Outstanding completion callbacks reference our layers: let them land.
@@ -718,7 +759,14 @@ void GlFrontBufferRenderer::batch_done(int64_t cpu_ns) { perf_.report(cpu_ns); }
 
 int64_t GlFrontBufferRenderer::idle() {
   if (!wet_sc_) return -1;
-  if (redraw_pending_ && store_ && tx_pending_.load(std::memory_order_acquire) == 0) do_redraw();
+  host_watchdog(now_ns());
+  if (redraw_pending_ && store_) {
+    if (redraw_synced_ && host_usable()) {
+      if (can_redraw_synced()) do_redraw_synced();
+    } else if (tx_pending_.load(std::memory_order_acquire) == 0) {
+      do_redraw();
+    }
+  }
   const int64_t now = now_ns();
   if (resubmit_pending_) resubmit_front();
   if (opt_.gpu_keepalive_ns <= 0) return -1;
@@ -765,6 +813,7 @@ void GlFrontBufferRenderer::draw_stroke_into_dry(Target& dry, const StrokeStore&
 void GlFrontBufferRenderer::commit(const StrokeStore& store, uint32_t id, const RectI& wet_rect) {
   store_ = &store;
   if (!wet_sc_) return;
+  end_host_session();
   const int next_wet = 1 - cur_wet_;
   const int next_dry = (cur_dry_ + 1) % 3;
   Target& nw = wet_[next_wet];
@@ -799,10 +848,15 @@ void GlFrontBufferRenderer::publish(int next_wet, int next_dry) {
   // content appears in the same frame the wet stroke disappears. No flicker,
   // no gap, no hide/show of the wet layer, no binder call on this thread.
   TxContext& c = tx_ctx_[tx_next_++ % (sizeof(tx_ctx_) / sizeof(tx_ctx_[0]))];
-  c = {this, int8_t(cur_wet_), int8_t(cur_dry_)};
+  c = {this, int8_t(cur_wet_), int8_t(cur_dry_), false};
   tx_pending_.fetch_add(1, std::memory_order_acq_rel);
   TxJob j{};
   j.kind = TxJob::kCommit;
+  {
+    std::lock_guard<std::mutex> lock(sync_mu_);
+    j.reset_geometry = geometry_moved_;
+    geometry_moved_ = false;
+  }
   j.fence = fence;
   j.wet = nw.ahb;
   j.dry = nd.ahb;
@@ -816,6 +870,7 @@ void GlFrontBufferRenderer::publish(int next_wet, int next_dry) {
 }
 
 void GlFrontBufferRenderer::redraw(const StrokeStore& store, uint32_t page) {
+  redraw_synced_ = false;
   store_ = &store;
   page_ = page;
   ++epoch_;
@@ -829,6 +884,7 @@ void GlFrontBufferRenderer::redraw(const StrokeStore& store, uint32_t page) {
 
 void GlFrontBufferRenderer::do_redraw() {
   redraw_pending_ = false;
+  end_host_session();
   const StrokeStore& store = *store_;
   const int next_wet = 1 - cur_wet_;
   const int next_dry = (cur_dry_ + 1) % 3;
@@ -855,6 +911,227 @@ void GlFrontBufferRenderer::cancel(const RectI& wet_rect) {
   if (opt_.resubmit_front_buffer) {
     resubmit_damage_ = resubmit_damage_.united(wet_rect);
     resubmit_front();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Host-frame sync (Android 14+)
+//
+// The page under the ink is drawn by the host window, which reaches the screen on
+// its own schedule. While the document moves, the dry layer therefore takes its
+// buffers and geometry from the host's frames: redraw_layout renders a buffer for the
+// new layout and parks it in a slot; just before the host draws, host_frame (main
+// thread) adds the parked buffer, if any, and the scale/offset that maps the newest
+// buffer's layout onto the layout being drawn to a transaction the host applies
+// with that very frame. Between buffers, the geometry alone keeps the ink on its
+// page. Any other dry update ends the session and resets the geometry; the
+// transaction thread first waits for host frames already carrying dry-layer state.
+// ---------------------------------------------------------------------------
+
+namespace {
+constexpr int64_t kSlotTimeoutNs = 100'000'000;      // host didn't draw: present it ourselves
+constexpr int64_t kHostWaitNs = 60'000'000;          // longest a commit waits for host frames
+constexpr int64_t kHostLostNs = 1'000'000'000;       // callbacks never came: give up on host sync
+}  // namespace
+
+bool GlFrontBufferRenderer::host_usable() const {
+  return from_java_ && host_sync_.load(std::memory_order_acquire) && !host_failed_.load(std::memory_order_acquire);
+}
+
+void GlFrontBufferRenderer::set_host_sync(bool on) { host_sync_.store(on && from_java_ != nullptr, std::memory_order_release); }
+
+// One dry buffer in flight at a time, as on our own path: then the buffer after it
+// has been released by the time anything (a commit included) draws into it. Between
+// buffers, host frames keep the ink in place with geometry alone.
+bool GlFrontBufferRenderer::can_redraw_synced() const {
+  return !slot_full_.load(std::memory_order_acquire) && tx_pending_.load(std::memory_order_acquire) == 0;
+}
+
+void GlFrontBufferRenderer::redraw_layout(const StrokeStore& store, uint32_t page, const float* pages, uint32_t n,
+                                          const Affine2& to_surface) {
+  {
+    std::lock_guard<std::mutex> lock(sync_mu_);
+    ink_layout_.set(pages, n);
+    to_surface_ = to_surface;
+  }
+  if (!host_usable() || n == 0) {
+    redraw(store, page);
+    return;
+  }
+  store_ = &store;
+  page_ = page;
+  ++epoch_;
+  if (!wet_sc_) return;
+  redraw_synced_ = true;
+  if (!can_redraw_synced()) {
+    redraw_pending_ = true;  // idle() runs it once a buffer is free
+    return;
+  }
+  do_redraw_synced();
+}
+
+void GlFrontBufferRenderer::do_redraw_synced() {
+  // Wet ink still on screen belongs to our own path: present everything there.
+  if (!wet_[cur_wet_].dirty.empty()) {
+    redraw_synced_ = false;
+    do_redraw();  // can_redraw_synced(): nothing in flight
+    return;
+  }
+  redraw_pending_ = false;
+  const StrokeStore& store = *store_;
+  const int next_dry = (cur_dry_ + 1) % 3;
+  Target& nd = dry_[next_dry];
+  gpu_wait_release(nd);
+  clear_rect(nd, RectI{0, 0, w_, h_});
+  for (uint32_t s = 0; s < store.stroke_count(); ++s) draw_stroke_into_dry(nd, store, s);
+  nd.seq = store.stroke_count();
+  nd.epoch = epoch_;
+  const int fence = native_fence();
+  TxContext& c = tx_ctx_[tx_next_++ % (sizeof(tx_ctx_) / sizeof(tx_ctx_[0]))];
+  c = {this, int8_t(-1), int8_t(cur_dry_), true};
+  tx_pending_.fetch_add(1, std::memory_order_acq_rel);
+  {
+    std::lock_guard<std::mutex> lock(sync_mu_);
+    slot_job_ = TxJob{};
+    slot_job_.kind = TxJob::kCommit;
+    slot_job_.fence = fence;
+    slot_job_.dry = nd.ahb;
+    slot_job_.ctx = &c;
+    slot_layout_ = ink_layout_;
+    slot_ns_ = now_ns();
+    host_session_ = true;
+    slot_full_.store(true, std::memory_order_release);
+  }
+  cur_dry_ = next_dry;
+  last_gpu_ns_ = now_ns();
+}
+
+// sync_mu_ held, ink thread: forget a parked buffer the host never took.
+void GlFrontBufferRenderer::drop_slot_locked() {
+  if (!slot_full_.load(std::memory_order_acquire)) return;
+  if (slot_job_.fence >= 0) close(slot_job_.fence);
+  slot_job_.fence = -1;
+  cur_dry_ = slot_job_.ctx->prev_dry;  // it was never shown: the previous buffer still is
+  tx_pending_.fetch_sub(1, std::memory_order_acq_rel);
+  slot_full_.store(false, std::memory_order_release);
+}
+
+void GlFrontBufferRenderer::end_host_session() {
+  std::lock_guard<std::mutex> lock(sync_mu_);
+  drop_slot_locked();
+  host_session_ = false;
+  shown_layout_ = ink_layout_;  // what our own path presents next
+}
+
+bool GlFrontBufferRenderer::host_frame(JNIEnv* env, jobject transaction, const float* pages, uint32_t n) {
+  if (!host_usable()) return false;
+  std::lock_guard<std::mutex> lock(sync_mu_);
+  if (!host_session_ || !dry_sc_) return false;
+  ASurfaceTransaction* tx = from_java_(env, transaction);
+  if (!tx) return false;
+  const int64_t now = now_ns();
+  if (slot_full_.load(std::memory_order_acquire)) {
+    ASurfaceTransaction_setBuffer(tx, dry_sc_, slot_job_.dry, slot_job_.fence);  // takes the fence
+    ASurfaceTransaction_setOnComplete(tx, slot_job_.ctx, &GlFrontBufferRenderer::on_tx_complete);
+    slot_job_.fence = -1;
+    shown_layout_ = slot_layout_;
+    host_buffers_.fetch_add(1, std::memory_order_acq_rel);
+    host_buffer_ns_.store(now, std::memory_order_release);
+    slot_full_.store(false, std::memory_order_release);
+  }
+  float k = 1;
+  int32_t x = 0, y = 0;
+  if (layout_transform(shown_layout_, pages, n, &k, &x, &y)) {
+    ASurfaceTransaction_setScale(tx, dry_sc_, k, k);
+    ASurfaceTransaction_setPosition(tx, dry_sc_, x, y);
+    ASurfaceTransaction_setVisibility(tx, dry_sc_, ASURFACE_TRANSACTION_VISIBILITY_SHOW);
+  } else {
+    // No page in common (a jump): show nothing rather than ink on the wrong page.
+    ASurfaceTransaction_setVisibility(tx, dry_sc_, ASURFACE_TRANSACTION_VISIBILITY_HIDE);
+  }
+  geometry_moved_ = true;
+  if (host_pending_.fetch_add(1, std::memory_order_acq_rel) == 0) host_pending_ns_.store(now, std::memory_order_release);
+  ASurfaceTransaction_setOnCommit(tx, this, &GlFrontBufferRenderer::on_host_commit);
+  return true;
+}
+
+// Surface px: drawn = k · buffer + (x, y), from any page both layouts show. Pages share
+// one horizontal position and scale, so one page fixes the transform for all of them.
+bool GlFrontBufferRenderer::layout_transform(const Layout& from, const float* to, uint32_t n, float* k, int32_t* x,
+                                             int32_t* y) const {
+  for (uint32_t i = 0; i < n; ++i) {
+    const float* b = to + i * 5;
+    for (uint32_t j = 0; j < from.n; ++j) {
+      const float* a = from.v + j * 5;
+      if (uint32_t(a[0]) != uint32_t(b[0]) || !(a[3] > 0) || !(b[3] > 0)) continue;
+      float scale = b[3] / a[3];
+      if (std::fabs(scale - 1.0f) < 1e-5f) scale = 1.0f;  // at rest: exactly the rendered pixels
+      float ax, ay, bx, by;
+      to_surface_.apply(a[1], a[2], &ax, &ay);
+      to_surface_.apply(b[1], b[2], &bx, &by);
+      *k = scale;
+      *x = int32_t(std::lround(bx - scale * ax));
+      *y = int32_t(std::lround(by - scale * ay));
+      return true;
+    }
+  }
+  return false;
+}
+
+void GlFrontBufferRenderer::on_host_commit(void* ctx, ASurfaceTransactionStats*) {
+  auto* self = static_cast<GlFrontBufferRenderer*>(ctx);
+  int32_t n = self->host_pending_.load(std::memory_order_acquire);
+  while (n > 0 && !self->host_pending_.compare_exchange_weak(n, n - 1, std::memory_order_acq_rel)) {}
+  self->host_pending_ns_.store(now_ns(), std::memory_order_release);
+}
+
+// Transaction thread.
+void GlFrontBufferRenderer::wait_host_frames() {
+  if (host_pending_.load(std::memory_order_acquire) <= 0) return;
+  const int64_t deadline = now_ns() + kHostWaitNs;
+  while (host_pending_.load(std::memory_order_acquire) > 0) {
+    if (now_ns() > deadline) {
+      // The host is late: go ahead, and repaint once its frames have landed (idle()).
+      host_overrun_.store(true, std::memory_order_release);
+      return;
+    }
+    usleep(250);
+  }
+}
+
+// Ink thread (idle): recover from a host that stopped drawing or never reports back.
+void GlFrontBufferRenderer::host_watchdog(int64_t now) {
+  bool slot_stale;
+  {
+    std::lock_guard<std::mutex> lock(sync_mu_);
+    slot_stale = slot_full_.load(std::memory_order_acquire) && now - slot_ns_ > kSlotTimeoutNs;
+  }
+  if (slot_stale) {
+    end_host_session();
+    redraw_pending_ = true;
+    redraw_synced_ = false;
+  }
+  const bool buffers_lost = host_buffers_.load(std::memory_order_acquire) > 0 &&
+                            now - host_buffer_ns_.load(std::memory_order_acquire) > kHostLostNs;
+  const bool commits_lost = host_pending_.load(std::memory_order_acquire) > 0 &&
+                            now - host_pending_ns_.load(std::memory_order_acquire) > kHostLostNs;
+  if ((buffers_lost || commits_lost) && !host_failed_.exchange(true, std::memory_order_acq_rel)) {
+    LOGW("host frames stopped reporting back: the ink layer follows the document on its own");
+    tx_pending_.fetch_sub(host_buffers_.exchange(0, std::memory_order_acq_rel), std::memory_order_acq_rel);
+    host_pending_.store(0, std::memory_order_release);
+    end_host_session();
+    std::lock_guard<std::mutex> lock(sync_mu_);
+    geometry_moved_ = true;  // a late host frame may still move the layer: reset it
+    redraw_pending_ = true;
+    redraw_synced_ = false;
+  }
+  if (host_overrun_.load(std::memory_order_acquire) && host_pending_.load(std::memory_order_acquire) <= 0) {
+    // A host frame landed after a commit that stopped waiting for it: repaint and reset.
+    host_overrun_.store(false, std::memory_order_release);
+    std::lock_guard<std::mutex> lock(sync_mu_);
+    geometry_moved_ = true;
+    redraw_pending_ = true;
+    redraw_synced_ = false;
   }
 }
 

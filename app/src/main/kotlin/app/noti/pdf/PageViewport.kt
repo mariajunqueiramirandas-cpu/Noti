@@ -1,6 +1,12 @@
 package app.noti.pdf
 
-/** A page in canvas pixels. [visiblePages] is populated on the current-page update. */
+import kotlin.math.floor
+import kotlin.math.roundToInt
+
+/**
+ * A page in canvas pixels. [visiblePages] is populated on the current-page update, and
+ * [nearbyPages] adds the pages within about a screen above and below (for prefetching).
+ */
 data class PagePlacement(
     val page: Int,
     val left: Float,
@@ -14,6 +20,7 @@ data class PagePlacement(
     val visiblePages: List<PagePlacement> = emptyList(),
     val scrollFraction: Float = 0f,
     val viewportFraction: Float = 1f,
+    val nearbyPages: List<PagePlacement> = emptyList(),
 ) {
     val fitWidth get() = width / zoom
 }
@@ -112,7 +119,8 @@ class PageViewport(private val marginPx: Float, private val onChange: (PagePlace
     fun end() { moving = false; emit() }
     private fun ready() = canvasW > 0 && canvasH > 0 && aspects.isNotEmpty()
     private fun layout() {
-        baseWidth = (canvasW - 2 * marginPx).coerceAtLeast(1f)
+        // Whole pixels at 100%, so a page's pixels map 1:1 onto the screen's.
+        baseWidth = floor(canvasW - 2 * marginPx).coerceAtLeast(1f)
         starts = FloatArray(aspects.size)
         var y = 0f
         aspects.forEachIndexed { i, aspect -> starts[i] = y; y += baseWidth * aspect + marginPx }
@@ -127,30 +135,38 @@ class PageViewport(private val marginPx: Float, private val onChange: (PagePlace
         val availableHeight = (canvasH - topInset - bottomInset).coerceAtLeast(1f)
         documentTop = if (height < availableHeight) topInset + (availableHeight - height) / 2
             else documentTop.coerceIn((canvasH - height - bottomInset).coerceAtMost(topInset), topInset)
+        // Pages sit on whole pixels: sharp PDF text at rest, and a pan is an integral
+        // translation that the ink layer can follow exactly in the same display frame.
+        val x = left.roundToInt().toFloat()
+        val y = documentTop.roundToInt().toFloat()
         // Binary search the page intersecting the viewport centre.
-        val centre = (canvasH / 2f - documentTop) / zoom
+        val centre = (canvasH / 2f - y) / zoom
         var lo = 0; var hi = starts.lastIndex
         while (lo < hi) {
             val mid = (lo + hi + 1) / 2
             if (starts[mid] <= centre) lo = mid else hi = mid - 1
         }
         page = lo
-        fun placement(i: Int) = PagePlacement(i, left, documentTop + starts[i] * zoom, width,
+        fun placement(i: Int) = PagePlacement(i, x, (y + starts[i] * zoom).roundToInt().toFloat(), width,
             width * aspects[i], zoom, canvasW, canvasH, settled = !moving)
         val visible = ArrayList<PagePlacement>()
+        val nearby = ArrayList<PagePlacement>()
         // Walk only pages around the current one, even in a thousand-page PDF.
+        val above = -canvasH.toFloat()
+        val below = 2f * canvasH
         var first = page
-        while (first > 0 && documentTop + (starts[first - 1] + baseWidth * aspects[first - 1]) * zoom >= 0) first--
+        while (first > 0 && y + (starts[first - 1] + baseWidth * aspects[first - 1]) * zoom >= above) first--
         var i = first
         while (i < aspects.size) {
             val p = placement(i)
-            if (p.top > canvasH) break
-            if (p.top + p.height >= 0) visible.add(p)
+            if (p.top > below) break
+            if (p.top + p.height >= above) nearby.add(p)
+            if (p.top <= canvasH && p.top + p.height >= 0) visible.add(p)
             i++
         }
         val range = (height + topInset + bottomInset - canvasH).coerceAtLeast(0f)
-        onChange(placement(page).copy(visiblePages = visible,
-            scrollFraction = if (range > 0f) ((topInset - documentTop) / range).coerceIn(0f, 1f) else 0f,
+        onChange(placement(page).copy(visiblePages = visible, nearbyPages = nearby,
+            scrollFraction = if (range > 0f) ((topInset - y) / range).coerceIn(0f, 1f) else 0f,
             viewportFraction = (availableHeight / height).coerceIn(0f, 1f)))
     }
 

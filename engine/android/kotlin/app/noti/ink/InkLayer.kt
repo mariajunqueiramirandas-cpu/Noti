@@ -3,10 +3,13 @@ package app.noti.ink
 import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
+import android.os.Build
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.Process
+import android.view.SurfaceControl
 import android.view.View
+import android.view.ViewTreeObserver
 import android.view.KeyEvent
 import android.view.ViewConfiguration
 import android.hardware.input.InputManager
@@ -147,8 +150,50 @@ class InkLayer(
             ink.post(documentPoll)
             initialModel?.let { NotiInk.nativeSetPalmModel(handle, it) }
             NotiInk.nativeSetFingerInk(handle, fingerDrawing)
-            window = InkWindow(context, handle, ink, gestures, ::flushPage, buttons).also { it.add(token, bounds) }
+            window = InkWindow(context, handle, ink, gestures, ::flushPage, buttons, onIdle = ::requestHostFrame)
+                .also { it.add(token, bounds) }
         }
+        anchor.viewTreeObserver.addOnPreDrawListener(preDraw)
+        observer = anchor.viewTreeObserver
+    }
+
+    // ---- host-frame sync (Android 14+) ----
+    //
+    // The document under the ink (PDF, paper) is drawn by the host window, the ink by
+    // this layer's own SurfaceFlinger layers. Updated separately, they reach the screen
+    // on different frames, so the ink trails or leads the page while it moves. Instead,
+    // just before the host draws a frame, the engine adds its dry layer's newest buffer
+    // and the exact scale/offset from that buffer's layout to the layout being drawn to
+    // a transaction that SurfaceFlinger applies together with that frame. Pen ink (the
+    // front-buffer wet layer) stays on the engine's own low-latency path.
+
+    private var hostSource: (() -> FloatArray?)? = null  // main thread
+    private var observer: ViewTreeObserver? = null
+    private val preDraw = ViewTreeObserver.OnPreDrawListener { syncHostFrame(); true }
+
+    /**
+     * [source] returns the visible pages (as for [setPages]) of the frame the host is about
+     * to draw, or null. Main thread. Without a source (or before Android 14) the ink layer
+     * follows the viewport on its own.
+     */
+    fun setHostFrameSource(source: (() -> FloatArray?)?) {
+        if (released) return
+        hostSource = source
+        NotiInk.nativeSetHostSync(handle, source != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE)
+    }
+
+    private fun syncHostFrame() {
+        if (released || Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE) return
+        val source = hostSource ?: return
+        val root = anchor.rootSurfaceControl ?: return
+        val pages = source() ?: return
+        val t = SurfaceControl.Transaction()
+        if (NotiInk.nativeHostFrame(handle, t, pages)) root.applyTransactionOnDraw(t) else t.close()
+    }
+
+    /** Any thread: makes sure the host draws a frame soon if a redraw is waiting for one. */
+    private fun requestHostFrame() {
+        if (!released && NotiInk.nativeHostFrameWanted(handle)) anchor.postInvalidateOnAnimation()
     }
 
     /**
@@ -318,7 +363,10 @@ class InkLayer(
     }
 
     private fun flushPage() {
-        pendingPages.getAndSet(null)?.let { NotiInk.nativeSetPages(handle, it) }
+        pendingPages.getAndSet(null)?.let {
+            NotiInk.nativeSetPages(handle, it)
+            requestHostFrame()
+        }
         val r = pendingPage.getAndSet(null) ?: return
         NotiInk.nativeSetPage(handle, r.page, r.x, r.y, r.width)
     }
@@ -351,6 +399,10 @@ class InkLayer(
         inputManager.unregisterInputDeviceListener(deviceListener)
         anchor.removeOnAttachStateChangeListener(attachListener)
         boundsObserver.stop()
+        hostSource = null
+        observer?.takeIf { it.isAlive }?.removeOnPreDrawListener(preDraw)
+        anchor.viewTreeObserver.removeOnPreDrawListener(preDraw)
+        observer = null
         ink.removeCallbacks(documentPoll)
         ink.post {
             buttons.reset()

@@ -64,7 +64,8 @@ class PageViewportTest {
         assertTrue(f.state.visiblePages.size >= 4)
         f.viewport.scrollTo(1f)
         assertEquals(19, f.state.visiblePages.last().page)
-        assertEquals(390f, f.state.visiblePages.last().let { it.top + it.height }, 0.001f)
+        // Pages snap to whole pixels.
+        assertEquals(390f, f.state.visiblePages.last().let { it.top + it.height }, 1f)
     }
 
     @Test fun zoomingOutPreservesVerticalFocalPointAndResetReturnsToFitWidth() {
@@ -177,4 +178,38 @@ class PageViewportTest {
         assertEquals(390f, f.state.visiblePages.last().let { it.top + it.height }, 0.001f)
     }
 
+    @Test fun nearbyPagesReachAboutAScreenBeyondTheViewportForPrefetching() {
+        val f = Fixture(FloatArray(20) { 1f })
+        f.viewport.goTo(10)
+        val visible = f.state.visiblePages.map { it.page }
+        val nearby = f.state.nearbyPages.map { it.page }
+        assertTrue(nearby.containsAll(visible))
+        assertTrue("pages above are prefetched", nearby.first() < visible.first())
+        assertTrue("pages below are prefetched", nearby.last() > visible.last())
+        f.state.nearbyPages.forEach { p ->
+            assertTrue(p.top + p.height >= -400f && p.top <= 800f)
+        }
+    }
+
+    @Test fun pagesSnapToWholePixelsWithoutLosingSubPixelMotion() {
+        val f = Fixture(FloatArray(5) { 1f })
+        f.viewport.begin()
+        f.viewport.pan(0f, -10.3f)
+        f.viewport.pan(0f, -10.3f)
+        val moving = f.state.visiblePages.first()
+        assertFalse(f.state.settled)
+        assertEquals(moving.top, Math.round(moving.top).toFloat(), 0f)
+        // Integral page tops while moving: a pan is an integral translation for every page.
+        val before = f.state.visiblePages.map { it.page to it.top }.toMap()
+        f.viewport.pan(0f, -7.6f)
+        f.state.visiblePages.forEach { p ->
+            before[p.page]?.let { top -> assertEquals(Math.round(top - p.top).toFloat(), top - p.top, 0.001f) }
+        }
+        f.viewport.end()
+        assertTrue(f.state.settled)
+        assertEquals(-18f, f.state.visiblePages.first().top, 0f)
+        // Sub-pixel motion isn't lost, only snapped when shown.
+        f.viewport.pan(0f, -0.4f)
+        assertEquals(-19f, f.state.visiblePages.first().top, 0f)
+    }
 }

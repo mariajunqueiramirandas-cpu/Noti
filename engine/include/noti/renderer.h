@@ -63,6 +63,13 @@ class InkRenderer {
   virtual void commit(const StrokeStore& store, uint32_t stroke_id, const RectI& wet_rect) = 0;
   virtual void cancel(const RectI& wet_rect) = 0;
   virtual void redraw(const StrokeStore& /*store*/, uint32_t /*page*/) {}
+  // A redraw because the document moved (pan, zoom, scroll). `pages` holds `n` visible
+  // pages as [page, x, y, width, height] in input coordinates; `to_surface` maps them to
+  // surface pixels. A renderer may present it in sync with the host window's frame.
+  virtual void redraw_layout(const StrokeStore& store, uint32_t page, const float* /*pages*/, uint32_t /*n*/,
+                             const Affine2& /*to_surface*/) {
+    redraw(store, page);
+  }
 
   // Work for the batch is done (e.g. report ADPF actual duration).
   virtual void batch_done(int64_t /*cpu_ns*/) {}

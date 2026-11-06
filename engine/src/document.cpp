@@ -55,7 +55,10 @@ void InkEngine::set_pages(const std::vector<VisiblePage>& pages) {
     store_.remap_page(p.page, m);
     store_.set_on_screen(p.page, true);
   }
-  redraw_document();
+  std::vector<float> flat;
+  flat.reserve(pages.size() * 5);
+  for (const auto& p : pages) flat.insert(flat.end(), {float(p.page), p.x, p.y, p.width, p.height});
+  renderer_.redraw_layout(store_, UINT32_MAX, flat.data(), uint32_t(pages.size()), cfg_.input_to_surface);
 }
 
 bool InkEngine::pick_page(float x, float y) noexcept {

@@ -216,6 +216,17 @@ void nativeSetPages(JNIEnv* env, jclass, jlong h, jfloatArray input) {
   for (int k = 0; k < n; k += 5) pages.push_back({uint32_t(values[k]), values[k+1], values[k+2], values[k+3], values[k+4]});
   inst(h)->engine.set_pages(pages);
 }
+// Host-frame sync (main thread, Android 14+): see GlFrontBufferRenderer::host_frame.
+jboolean nativeHostFrame(JNIEnv* env, jclass, jlong h, jobject transaction, jfloatArray input) {
+  constexpr jsize kMax = 32 * 5;
+  jfloat values[kMax];
+  const jsize n = std::min(env->GetArrayLength(input), kMax);
+  if (n % 5 != 0) return JNI_FALSE;
+  env->GetFloatArrayRegion(input, 0, n, values);
+  return inst(h)->renderer.host_frame(env, transaction, values, uint32_t(n / 5)) ? JNI_TRUE : JNI_FALSE;
+}
+void nativeSetHostSync(jlong h, jboolean on) { inst(h)->renderer.set_host_sync(on); }
+jboolean nativeHostFrameWanted(jlong h) { return inst(h)->renderer.host_frame_wanted() ? JNI_TRUE : JNI_FALSE; }
 jbyteArray nativeSnapshot(JNIEnv* env, jclass, jlong h) {
   const auto data = inst(h)->engine.snapshot();
   auto out = env->NewByteArray(jsize(data.size()));
@@ -396,6 +407,9 @@ const JNINativeMethod kMethods[] = {
     M(nativeSetTool, "(JI)V"),
     M(nativeSetPages, "(J[F)V"),
     M(nativeSnapshot, "(J)[B"),
+    M(nativeHostFrame, "(JLandroid/view/SurfaceControl$Transaction;[F)Z"),
+    M(nativeSetHostSync, "(JZ)V"),
+    M(nativeHostFrameWanted, "(J)Z"),
     M(nativeRestore, "(J[B)Z"),
     M(nativeDocumentAction, "(JII)Z"),
     M(nativeDocumentState, "(J)[D"),

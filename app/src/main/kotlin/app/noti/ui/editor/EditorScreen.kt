@@ -20,6 +20,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import kotlin.math.roundToInt
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -132,6 +133,10 @@ private fun EditorContent(notebook: Notebook, library: LibraryStore, settings: S
     DisposableEffect(pdf) { onDispose { pdf?.close() } }
     val pages = remember { PageController() }
     val pageCount = if (pdf != null) pdf.pageCount.takeIf { it > 0 } ?: notebook.pageCount else notebook.pageCount
+    // The placement changes every frame while scrolling; the chrome only needs these.
+    val currentPage by remember { derivedStateOf { pages.page } }
+    val zoom by remember { derivedStateOf { ((pages.placement?.zoom ?: 1f) * 100).roundToInt() / 100f } }
+    val viewportFraction by remember { derivedStateOf { ((pages.placement?.viewportFraction ?: 1f) * 1000).roundToInt() / 1000f } }
 
     fun changePages(operation: Int, index: Int) {
         if (pageBusy || notebook.isPdf || layer == null) return
@@ -182,13 +187,13 @@ private fun EditorContent(notebook: Notebook, library: LibraryStore, settings: S
                         fullScreen = true
                         Toast.makeText(context, "Two-finger double-tap or Back to exit full screen", Toast.LENGTH_SHORT).show()
                     },
-                    onSettings = { settingsOpen = true }, pdfPage = pages.page to pageCount, onPage = pages::goTo,
+                    onSettings = { settingsOpen = true }, pdfPage = currentPage to pageCount, onPage = pages::goTo,
                     canUndo = pages.canUndo, canRedo = pages.canRedo,
                     onUndo = { layer?.documentAction(0) }, onRedo = { layer?.documentAction(1) },
                     onExport = { if (!exporting && layer != null) export.launch("${notebook.name.replace(Regex("[^a-zA-Z0-9 ._-]"), "_")}.pdf") },
                     onAddPage = if (notebook.isPdf) null else { { changePages(0, notebook.pageCount) } },
-                    zoom = pages.placement?.zoom ?: 1f, scrollFraction = pages.placement?.scrollFraction ?: 0f,
-                    viewportFraction = pages.placement?.viewportFraction ?: 1f, onResetZoom = pages::resetZoom, onScroll = pages::scrollTo,
+                    zoom = zoom, scrollFraction = { pages.placement?.scrollFraction ?: 0f },
+                    viewportFraction = viewportFraction, onResetZoom = pages::resetZoom, onScroll = pages::scrollTo,
                     saveStatus = saveStatus, onSave = { layer?.saveNow() }, selectionCount = pages.documentState[3].toInt(), isPdf = notebook.isPdf,
                 )
             }
@@ -199,9 +204,9 @@ private fun EditorContent(notebook: Notebook, library: LibraryStore, settings: S
                     onDismissRequest = { pagesOpen = false }) {
                     GlassSurface(Modifier.padding(10.dp).fillMaxHeight(0.7f), MaterialTheme.shapes.extraLarge) {
                         if (pdf != null) {
-                            PdfPagesPanel(pdf, pages.page, pages::goTo, onClose = { pagesOpen = false })
+                            PdfPagesPanel(pdf, currentPage, pages::goTo, onClose = { pagesOpen = false })
                         } else {
-                            PagesPanel(notebook, pages.page, pageBusy, pages::goTo, onClose = { pagesOpen = false },
+                            PagesPanel(notebook, currentPage, pageBusy, pages::goTo, onClose = { pagesOpen = false },
                                 onAdd = { changePages(0, notebook.pageCount) }, onDuplicate = { changePages(1, it) },
                                 onDelete = { deletingPage = it }, onChangePaper = { choosingPaper = true })
                         }

@@ -50,8 +50,15 @@ and permanent deletion uses the destructive role. Dialog titles and actions stay
 **Pages**: notebooks and imported PDFs scroll vertically as a continuous document. Drag to scroll,
 pinch to zoom from 25% to 600%, drag the slim right-hand scroll indicator, and use the pages panel or page actions in More to jump.
 The page counter, proportional scroll thumb and zoom percentage follow the live viewport; tap zoom to fit width. Momentum stops when the pen touches down.
-Only visible pages are rendered; PDF neighbours are prefetched and zoomed detail is rendered after scrolling settles.
-Ink uses canonical page coordinates, so scrolling, zooming, rotation and reopening do not move annotations.
+PDFs open at once (page sizes are measured in the background) and render in tiles: a small preview of each page
+shows its content immediately, then sharp 512 px tiles at the nearest of a set of zoom levels √2 apart (100%, 200% and
+400% are pixel-exact) fill in, visible tiles from the centre out, then the pages and tiles about a screen ahead. Work for
+pages that scrolled away is dropped, and tiles are uploaded to the GPU off the UI thread (`pdf/PdfDocument.kt`).
+Scrolling and zooming only redraw the document, never recompose the editor; momentum follows the display's refresh.
+Ink uses canonical page coordinates, so scrolling, zooming, rotation and reopening do not move annotations. On Android 14+
+the ink layer moves in the same display frame as the page under it: its buffers and offset ride along with the editor
+window's frame (`applyTransactionOnDraw`), so ink no longer drifts against the page while you pan
+(see [the engine README](engine/README.md#ink-and-the-moving-page)).
 
 **Writing**: the radial dial offers the pen, highlighter, stroke eraser and lasso, with direct quick width and color presets.
 Save status is in More, with a visible retry control when saving fails. Circle whole strokes with the lasso, then drag inside
