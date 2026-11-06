@@ -191,6 +191,47 @@ class StudyBoardUiTest {
         screenshot("board-phone")
     }
 
+    @Test fun checkingWithoutAKeyAsksForOneAndLeavesTheToolAlone() {
+        study.settings.tool = Tool.Pen
+        study.settings.studyKey.clear()
+        study.select("q4")
+        study.startCheck(serial = 3)
+        assertNull(study.loop)
+        assertEquals(Tool.Pen, study.settings.tool)
+        assertTrue(study.problem!!.contains("Settings"))
+    }
+
+    @Test fun anExamHidesItsResultsUntilTheEndThenSchedulesThem() {
+        study.startExam(count = 2, minutes = 10, topics = setOf("Kinematics"))
+        val exam = study.exam!!
+        assertEquals(listOf("q1"), exam.itemIds)
+        assertEquals("the exam starts from scratch", -1, study.data.progressOf("q1").chosen)
+        study.choose(0)
+        study.choose(1)
+        assertEquals("answers can change until the end", 1, study.data.progressOf("q1").chosen)
+        assertNull("no review until it's over", study.data.progressOf("q1").srs)
+        val face = CardFace.layout(items[0], study.data.progressOf("q1"), 360f, fonts, CardFace.Mode.Exam)
+        assertTrue(face.heightDp > 0f)
+        study.finishExam()
+        assertNull(study.exam)
+        assertEquals(exam.id, study.examResults)
+        assertEquals(Rating.Good, study.data.progressOf("q1").srs!!.lastRating)
+    }
+
+    @Test fun arrangingByTopicMakesAColumnPerTopicWithAHeading() {
+        study.store.update { d -> d.copy(cards = listOf(
+            PinnedCard("a", "q2", 700f, 90f, 360f, 0.0625f), PinnedCard("b", "q1", 500f, 60f, 360f, 0.0625f),
+            PinnedCard("c", "q4", 900f, 300f, 300f, 0.0625f),
+        )) }
+        study.arrangeByTopic()
+        val d = study.data
+        assertEquals(setOf("Kinematics", "Energy", "Calculus"), d.labels.map { it.text }.toSet())
+        val xs = d.topics().mapNotNull { t -> d.cards.firstOrNull { d.item(it.itemId)?.topic == t }?.x }
+        assertEquals("columns follow the deck's topic order, left to right", xs.sorted(), xs)
+        assertEquals(3, xs.distinct().size)
+        assertEquals("cards keep their size", setOf(360f, 300f), d.cards.map { it.widthDp }.toSet())
+    }
+
     @Test fun cardFacesForEveryState() {
         val faces = items.map { item ->
             CardFace.layout(item, study.data.progressOf(item.id).copy(answerShown = item.id == "q4"), 360f, fonts, CardFace.Mode.Board,

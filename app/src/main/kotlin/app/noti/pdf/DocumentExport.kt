@@ -34,8 +34,12 @@ object DocumentExport {
         if (notebook.isCanvas) {
             // A notebook never opened since Endless became a canvas still has page-shaped ink.
             val ink = if (notebook.canvasInk) bytes else EndlessCanvas.fromPages(bytes)
+            // A Study board also prints its cards, headings, score cards and source pages.
+            val board = if (!notebook.board) null else app.noti.study.BoardExport.read(library.studyFile(notebook))?.let { study ->
+                app.noti.study.BoardExport.of(library.appContext, study) { id -> library.notebook(id)?.let(library::pdfFile)?.takeIf { it.exists() } }
+            }
             val output = android.graphics.pdf.PdfDocument()
-            try { writeCanvas(notebook.paper, InkArchive.decode(ink), output); output.writeTo(stream) }
+            try { writeCanvas(notebook.paper, InkArchive.decode(ink), output, board); output.writeTo(stream) }
             finally { output.close() }
             return
         }
@@ -81,7 +85,8 @@ object DocumentExport {
      * The Endless canvas as one page around all of its ink (or home, when there is none),
      * a screen of canvas as wide as A4, smaller if the page would exceed what PDF viewers open.
      */
-    private fun writeCanvas(paper: Paper, strokes: List<InkArchive.Stroke>, output: android.graphics.pdf.PdfDocument) {
+    private fun writeCanvas(paper: Paper, strokes: List<InkArchive.Stroke>, output: android.graphics.pdf.PdfDocument,
+        board: app.noti.study.BoardExport? = null) {
         var x0 = Float.MAX_VALUE; var y0 = Float.MAX_VALUE; var x1 = -Float.MAX_VALUE; var y1 = -Float.MAX_VALUE
         for (s in strokes) {
             val c = s.capsules
@@ -90,6 +95,7 @@ object DocumentExport {
                 y0 = minOf(y0, c[i + 1] - c[i + 2]); y1 = max(y1, c[i + 1] + c[i + 2])
             }
         }
+        board?.bounds?.let { b -> x0 = minOf(x0, b.left); y0 = minOf(y0, b.top); x1 = max(x1, b.right); y1 = max(y1, b.bottom) }
         val unit = EndlessCanvas.BASE_UNITS
         if (x0 > x1) {
             x0 = EndlessCanvas.HOME_LEFT_UNITS; y0 = EndlessCanvas.HOME_TOP_UNITS
@@ -108,6 +114,7 @@ object DocumentExport {
         drawPaper(canvas, paper, width.toFloat(), height.toFloat(), k * unit / 1000f, x0 * k, y0 * k)
         canvas.scale(k, k)
         canvas.translate(-x0, -y0)
+        board?.draw(canvas)
         strokes.forEach { drawInk(canvas, it) }
         output.finishPage(page)
     }

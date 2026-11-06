@@ -61,6 +61,8 @@ enum class SortOrder(val label: String) { Recent("Last opened"), Name("Name"), C
  * Imported PDFs are copied into [pdfDir], with a first-page thumbnail beside each.
  */
 class LibraryStore(context: Context) {
+    /** For resources (fonts) when exporting outside the UI. */
+    val appContext: Context = context.applicationContext
     private val file = File(context.filesDir, "library.json")
     val pdfDir = File(context.filesDir, "pdfs").apply { mkdirs() }
 
