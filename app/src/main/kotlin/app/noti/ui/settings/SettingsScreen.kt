@@ -94,6 +94,7 @@ import app.noti.data.ThemeMode
 import app.noti.data.PenButtonAction
 import app.noti.data.Tool
 import app.noti.data.penButtonOptions
+import app.noti.ink.PenHold
 import app.noti.ui.common.StylusDialogKeys
 import app.noti.ui.common.BrushSpec
 import app.noti.ui.common.EngineSpec
@@ -353,8 +354,14 @@ private fun PenButtonsSection(settings: SettingsStore) {
             }
             Hint("The Focus button normally stays with Xiaomi's pointer and camera controls. An assigned action works only if Xiaomi sends the press to Noti.")
             NotiGroup {
-                SwitchRow("Hold writing button to erase", "Hold the writing button while drawing to erase temporarily. Your selected tool returns on the next stroke after release.",
-                    settings.penButtonHolds) { settings.penButtonHolds = it }
+                HoldActionRow(settings.penButtonHold) { settings.penButtonHold = it }
+                if (settings.penButtonHold == PenHold.Dial) {
+                    NotiGroupDivider()
+                    SwitchRow("Always show the tool dial", if (settings.toolDialAlways)
+                        "On: the dial stays on the page, and holding the writing button also opens it under the nib."
+                    else "Off: the dial stays out of the way until you hold the writing button and touch the page. More → Show tools also opens it.",
+                        settings.toolDialAlways) { settings.toolDialAlways = it }
+                }
             }
             Hint("Holding the screenshot button stays with HyperOS. Noti uses only its delivered short clicks.")
             NotiGroup {
@@ -369,7 +376,8 @@ private fun PenButtonsSection(settings: SettingsStore) {
             Text("Click each button, then hold only the writing button for two seconds, both away from and near the screen. " +
                 "If its click is reported before you release it, your tablet exposes clicks only; use toggle shortcuts. " +
                 "A writing hold used for ink does not also trigger its click action.", style = MaterialTheme.typography.bodyMedium)
-            Text("The scratch area tests temporary erasing with the writing button. Click results appear below without changing your notebook or selected tool.",
+            Text(if (settings.penButtonHold == PenHold.Erase) "The scratch area tests temporary erasing with the writing button. Click results appear below without changing your notebook or selected tool."
+                else "Click results appear below without changing your notebook or selected tool. The tool dial opens in notebooks; here a held stroke draws normally.",
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             TextButton(onClick = { events = emptyList() }) { Text("Clear button history") }
             if (events.isEmpty()) Text("Waiting for pen button input…", style = MaterialTheme.typography.bodySmall)
@@ -392,6 +400,26 @@ private fun PenButtonsSection(settings: SettingsStore) {
             }
         }
     })
+}
+
+@Composable
+private fun HoldActionRow(hold: PenHold, onChange: (PenHold) -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    Column {
+        ValueRow("Hold writing button", hold.label) { open = true }
+        Text(when (hold) {
+            PenHold.Dial -> "Hold the writing button and touch the page: the tool dial opens under the nib. Drag to a tool, color or width and lift to choose it. " +
+                "Lift on the center to cancel, or on the lock to keep the dial open."
+            PenHold.Erase -> "Hold the writing button while drawing to erase temporarily. Your selected tool returns on the next stroke after release."
+            PenHold.Off -> "Holding the writing button changes nothing. Its click action still works."
+        }, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(bottom = 12.dp))
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            PenHold.entries.forEach { value ->
+                DropdownMenuItem(text = { Text(value.label) }, onClick = { onChange(value); open = false })
+            }
+        }
+    }
 }
 
 @Composable

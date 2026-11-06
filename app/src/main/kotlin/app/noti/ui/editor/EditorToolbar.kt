@@ -50,6 +50,9 @@ internal fun EditorToolbar(
     zoom: Float = 1f, scrollFraction: () -> Float = { 0f }, viewportFraction: Float = 1f,
     onResetZoom: () -> Unit = {}, onScroll: (Float) -> Unit = {},
     floatingWindows: Boolean = true,
+    dial: PenDialState = remember { PenDialState() },
+    /** Full screen hides the chrome; the pen can still summon the dial. */
+    fullScreen: Boolean = false,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
     var toolsExpanded by rememberSaveable { mutableStateOf(true) }
@@ -91,7 +94,10 @@ internal fun EditorToolbar(
                         DropdownMenuItem(text = { Text("Export PDF") }, leadingIcon = { Icon(Icons.Outlined.IosShare, null) },
                             onClick = { menuOpen = false; onExport() })
                         HorizontalDivider(Modifier.padding(vertical = 4.dp), color = colors.outlineVariant)
-                        DropdownMenuItem(text = { Text(if (toolsExpanded) "Collapse tools" else "Expand tools") },
+                        if (settings.toolDialOnHold) DropdownMenuItem(text = { Text("Show tools") },
+                            leadingIcon = { Icon(Icons.Outlined.Palette, null) },
+                            onClick = { menuOpen = false; dial.open() })
+                        else DropdownMenuItem(text = { Text(if (toolsExpanded) "Collapse tools" else "Expand tools") },
                             leadingIcon = { Icon(if (toolsExpanded) Icons.Outlined.UnfoldLess else Icons.Outlined.UnfoldMore, null) },
                             onClick = { menuOpen = false; toolsExpanded = !toolsExpanded })
                         if (!wide) DropdownMenuItem(text = { Text("Full screen") }, leadingIcon = { Icon(Icons.Outlined.Fullscreen, null) },
@@ -102,7 +108,7 @@ internal fun EditorToolbar(
                 }
             }
         }
-        FloatingIsland(Alignment.TopStart, IntOffset(px(halo), px(halo)), floatingWindows) {
+        if (!fullScreen) FloatingIsland(Alignment.TopStart, IntOffset(px(halo), px(halo)), floatingWindows) {
             GlassSurface(if (wide) Modifier.widthIn(max = headerWidth) else Modifier.width(headerWidth)) {
                 Row(Modifier.padding(4.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
                     ToolbarButton(Icons.AutoMirrored.Outlined.ArrowBack, "Back to library", onBack)
@@ -115,10 +121,10 @@ internal fun EditorToolbar(
                 }
             }
         }
-        if (wide) FloatingIsland(Alignment.TopEnd, IntOffset(-px(halo), px(halo)), floatingWindows) {
+        if (wide && !fullScreen) FloatingIsland(Alignment.TopEnd, IntOffset(-px(halo), px(halo)), floatingWindows) {
             GlassSurface { Box(Modifier.padding(4.dp)) { history() } }
         }
-        FloatingIsland(Alignment.BottomCenter, IntOffset(0, -px(halo)), floatingWindows) {
+        if (!fullScreen) FloatingIsland(Alignment.BottomCenter, IntOffset(0, -px(halo)), floatingWindows) {
             GlassSurface(Modifier.widthIn(max = dockWidth)) {
                 Row(Modifier.padding(4.dp), verticalAlignment = Alignment.CenterVertically) {
                     pdfPage?.let { (page, count) ->
@@ -138,11 +144,12 @@ internal fun EditorToolbar(
                 }
             }
         }
-        if (viewportFraction < 0.999f) FloatingIsland(Alignment.CenterEnd, IntOffset(px((-4).dp), 0), floatingWindows, halo = 0.dp) {
+        if (viewportFraction < 0.999f && !fullScreen) FloatingIsland(Alignment.CenterEnd, IntOffset(px((-4).dp), 0), floatingWindows, halo = 0.dp) {
             ScrollIndicator(scrollFraction, viewportFraction, onScroll, Modifier.height((maxHeight * 0.25f).coerceIn(96.dp, 180.dp)))
         }
         RadialToolSelector(settings, selectionCount, maxWidth, maxHeight, floatingWindows,
-            expanded = toolsExpanded, onExpandedChange = { toolsExpanded = it })
+            expanded = toolsExpanded, onExpandedChange = { toolsExpanded = it },
+            dial = dial, docked = !fullScreen && !settings.toolDialOnHold)
     }
 }
 

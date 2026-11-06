@@ -15,7 +15,9 @@ import org.robolectric.annotation.Config
 class StylusButtonsTest {
     private val clicks = mutableListOf<PenButton>()
     private val reports = mutableListOf<String>()
+    // Most cases check the hold-to-erase path; the dial cases switch to the default.
     private val buttons = StylusButtons(500, clicks::add, reports::add)
+        .apply { options = StylusButtonOptions(hold = PenHold.Erase) }.also { reports.clear() }
     private fun down(button: PenButton = PenButton.Primary, time: Long = 100, device: Int = 7, repeat: Int = 0, downTime: Long = time) =
         buttons.key(button, device, KeyEvent.ACTION_DOWN, time, repeat, downTime = downTime)
     private fun up(button: PenButton = PenButton.Primary, time: Long = 150, device: Int = 7, canceled: Boolean = false) =
@@ -85,11 +87,49 @@ class StylusButtonsTest {
     }
 
     @Test fun holdsCanBeDisabledWithoutLosingClickActions() {
-        buttons.options = buttons.options.copy(holds = false)
+        buttons.options = buttons.options.copy(hold = PenHold.Off)
         down()
         assertEquals(0, buttons.flags(7, MotionEvent.BUTTON_STYLUS_PRIMARY, true))
         up()
         assertEquals(listOf(PenButton.Primary), clicks)
+    }
+
+    @Test fun theToolDialIsTheDefaultHold() {
+        assertEquals(PenHold.Dial, StylusButtonOptions().hold)
+    }
+
+    @Test fun aWritingHoldSummonsTheDialInsteadOfErasingAndSuppressesItsClick() {
+        buttons.options = StylusButtonOptions()
+        down()
+        assertEquals(0, buttons.flags(7, 0, true))
+        assertTrue(buttons.summonsDial(7, 0))
+        up()
+        assertTrue(clicks.isEmpty())
+        assertTrue(reports.last().contains("used while writing"))
+    }
+
+    @Test fun theDialNeedsAHeldWritingButton() {
+        buttons.options = StylusButtonOptions()
+        assertFalse(buttons.summonsDial(7, 0))
+        assertFalse(buttons.summonsDial(7, MotionEvent.BUTTON_STYLUS_SECONDARY))
+        assertTrue(buttons.summonsDial(7, MotionEvent.BUTTON_STYLUS_PRIMARY))
+        // A synthetic click pair leaves nothing held.
+        down(); up(time = 101)
+        assertFalse(buttons.summonsDial(7, 0))
+        assertEquals(listOf(PenButton.Primary), clicks)
+        // A split Bluetooth key device still summons on the digitizer.
+        down(device = 18, time = 200)
+        assertTrue(buttons.summonsDial(14, 0))
+    }
+
+    @Test fun eraseAndOffHoldsNeverSummonTheDial() {
+        down()
+        assertFalse(buttons.summonsDial(7, MotionEvent.BUTTON_STYLUS_PRIMARY))
+        buttons.options = buttons.options.copy(hold = PenHold.Off)
+        down(time = 300)
+        assertFalse(buttons.summonsDial(7, MotionEvent.BUTTON_STYLUS_PRIMARY))
+        buttons.options = StylusButtonOptions(enabled = false)
+        assertFalse(buttons.summonsDial(7, MotionEvent.BUTTON_STYLUS_PRIMARY))
     }
 
     @Test fun bothMotionAndKeyPathsProduceOnlyOneClick() {

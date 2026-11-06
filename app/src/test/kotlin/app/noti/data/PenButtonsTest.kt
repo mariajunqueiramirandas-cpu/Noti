@@ -2,6 +2,7 @@ package app.noti.data
 
 import android.content.Context
 import app.noti.ink.PenButton
+import app.noti.ink.PenHold
 import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Test
@@ -76,7 +77,8 @@ class PenButtonsTest {
         settings.secondaryButtonAction = PenButtonAction.NextColor
         settings.focusButtonAction = PenButtonAction.Redo
         settings.penButtonsEnabled = false
-        settings.penButtonHolds = false
+        settings.penButtonHold = PenHold.Off
+        settings.toolDialAlways = true
         settings.penLegacyKeys = false
         settings.penSwapLegacyKeys = true
         settings = SettingsStore(context)
@@ -84,13 +86,15 @@ class PenButtonsTest {
         assertEquals(PenButtonAction.NextColor, settings.secondaryButtonAction)
         assertEquals(PenButtonAction.Redo, settings.focusButtonAction)
         assertTrue(settings.penButtonOptions().captureFocus)
-        assertFalse(settings.penButtonsEnabled); assertFalse(settings.penButtonHolds); assertFalse(settings.penLegacyKeys)
+        assertFalse(settings.penButtonsEnabled); assertEquals(PenHold.Off, settings.penButtonHold); assertTrue(settings.toolDialAlways); assertFalse(settings.penLegacyKeys)
         assertTrue(settings.penSwapLegacyKeys)
         context.getSharedPreferences("settings", Context.MODE_PRIVATE).edit()
-            .putString("primaryButtonAction", "removed action").putString("lastDrawingTool", "Eraser").commit()
+            .putString("primaryButtonAction", "removed action").putString("lastDrawingTool", "Eraser")
+            .putString("penButtonHold", "removed hold").remove("penButtonHolds").commit()
         settings = SettingsStore(context)
         assertEquals(PenButtonAction.ToggleEraser, settings.primaryButtonAction)
         assertEquals(Tool.Pen, settings.lastDrawingTool)
+        assertEquals(PenHold.Dial, settings.penButtonHold)
     }
 
     @Test fun existingHighlighterSettingMigratesWithoutLosingTheReturnTool() {
@@ -99,5 +103,43 @@ class PenButtonsTest {
         settings.performButtonAction(PenButtonAction.ToggleEraser)
         settings.performButtonAction(PenButtonAction.ToggleEraser)
         assertEquals(Tool.Highlighter, settings.tool)
+    }
+    @Test fun theToolDialIsTheDefaultHoldAndTheOldEraseSwitchMigrates() {
+        assertEquals(PenHold.Dial, settings.penButtonHold)
+        assertEquals(PenHold.Dial, settings.penButtonOptions().hold)
+        context.getSharedPreferences("settings", Context.MODE_PRIVATE).edit().putBoolean("penButtonHolds", false).commit()
+        assertEquals(PenHold.Off, SettingsStore(context).penButtonHold)
+        context.getSharedPreferences("settings", Context.MODE_PRIVATE).edit().putBoolean("penButtonHolds", true).commit()
+        assertEquals(PenHold.Dial, SettingsStore(context).penButtonHold)
+        settings.penButtonHold = PenHold.Erase
+        assertEquals(PenHold.Erase, SettingsStore(context).penButtonHold)
+    }
+
+    @Test fun theDialHidesOnlyWhenThePenCanSummonIt() {
+        assertTrue(settings.toolDialOnHold)
+        settings.toolDialAlways = true
+        assertFalse(settings.toolDialOnHold)
+        settings.toolDialAlways = false
+        settings.penButtonHold = PenHold.Erase
+        assertFalse(settings.toolDialOnHold)
+        settings.penButtonHold = PenHold.Dial
+        settings.penButtonsEnabled = false
+        assertFalse(settings.toolDialOnHold)
+    }
+
+    @Test fun dialSegmentsPickToolsAndReturnToTheLastDrawingToolForPresets() {
+        settings.applyDialSegment(1)
+        assertEquals(Tool.Highlighter, settings.tool)
+        settings.applyDialSegment(2)
+        assertEquals(Tool.Eraser, settings.tool)
+        settings.applyDialSegment(6)
+        assertEquals(Tool.Highlighter, settings.tool)
+        assertEquals(2, settings.highlighterSlots.color)
+        settings.applyDialSegment(0)
+        settings.applyDialSegment(3)
+        settings.applyDialSegment(9)
+        assertEquals(Tool.Pen, settings.tool)
+        assertEquals(2, settings.penSlots.width)
+        assertEquals(SettingsStore.DEFAULT_HIGHLIGHTER.width, settings.highlighterSlots.width)
     }
 }

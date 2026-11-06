@@ -63,8 +63,10 @@ window's frame (`applyTransactionOnDraw`), so ink no longer drifts against the p
 **Writing**: the radial dial offers the pen, highlighter, stroke eraser and lasso, with direct quick width and color presets.
 Save status is in More, with a visible retry control when saving fails. Circle whole strokes with the lasso, then drag inside
 the selection to move them. Click the Focus Pen's writing button to toggle the eraser, or its screenshot button
-to toggle the lasso; click again to return to your last pen/highlighter. Hold the writing button to erase
-temporarily for strokes begun while pressed; an eraser tip also erases. On Pad 7 with Android 16, Noti
+to toggle the lasso; click again to return to your last pen/highlighter. Hold the writing button and touch the
+page to open the dial under the nib: drag to a tool, color or width and lift to choose it, lift on the centre to
+cancel, or on the lock to keep it open. The dial stays hidden otherwise (More → Show tools, or keep it on the page
+in settings); holding can erase temporarily instead. An eraser tip also erases. On Pad 7 with Android 16, Noti
 suppresses the writing button's Mi Canvas launch using the verified window workaround. Screenshot-button
 holds stay with HyperOS. Configure clicks and writing holds in **Settings → Pen buttons**.
 The Focus/Spotlight button stays with the system unless assigned and delivered to the app.
