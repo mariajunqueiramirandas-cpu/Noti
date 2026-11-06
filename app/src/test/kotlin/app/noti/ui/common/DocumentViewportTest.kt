@@ -23,6 +23,7 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.unit.dp
 import app.noti.data.Paper
 import app.noti.data.PaperColor
+import app.noti.pdf.PageImages
 import app.noti.pdf.PagePlacement
 import org.junit.Assert.*
 import org.junit.Rule
@@ -44,14 +45,18 @@ class DocumentViewportTest {
         var placement by mutableStateOf(page(-160f, 600f))
         var clicks = 0
         val bitmap = Bitmap.createBitmap(32, 32, Bitmap.Config.ARGB_8888).apply { eraseColor(android.graphics.Color.RED) }
-        val images = DocumentImages(page = { _, _ -> bitmap })
+        val images = object : PageImages {
+            override fun drawPage(canvas: android.graphics.Canvas, p: PagePlacement) {
+                canvas.drawBitmap(bitmap, null, android.graphics.RectF(p.left, p.top, p.left + p.width, p.top + p.height), null)
+            }
+        }
         compose.setContent {
             val view = LocalView.current
             SideEffect { renderView = view }
             Column(Modifier.requiredSize(320.dp, 400.dp).background(Color.Blue).testTag("screen")) {
                 Box(Modifier.fillMaxWidth().height(40.dp).background(Color.Green).testTag("toolbar").clickable { clicks++ })
                 DocumentViewport(Modifier.fillMaxWidth().height(300.dp)) {
-                    DocumentBackground(Paper(), images, placement, Modifier.fillMaxSize())
+                    DocumentBackground(Paper(), images, { placement }, Modifier.fillMaxSize())
                     // Selection and shadow-like drawing must be contained by the same clip.
                     Canvas(Modifier.fillMaxSize()) {
                         drawRect(Color.Magenta, Offset(-100f, -100f), Size(600f, 110f))
@@ -81,7 +86,7 @@ class DocumentViewportTest {
             Column(Modifier.requiredSize(320.dp, 400.dp).background(Color.Green).testTag("screen")) {
                 Spacer(Modifier.height(top.dp))
                 DocumentViewport(Modifier.width(240.dp).height(200.dp)) {
-                    DocumentBackground(Paper(color = PaperColor.Cream), null, page(-100f, 500f), Modifier.fillMaxSize())
+                    DocumentBackground(Paper(color = PaperColor.Cream), null, { page(-100f, 500f) }, Modifier.fillMaxSize())
                     Canvas(Modifier.fillMaxSize()) { drawRect(Color.Red, Offset(-300f, -300f), Size(1000f, 1000f)) }
                 }
             }
@@ -96,6 +101,30 @@ class DocumentViewportTest {
         assertBounds(100)
         compose.runOnIdle { top = 0 }
         assertBounds(0)
+    }
+
+    @Test fun pageImagesGetExactPagePositionsAndOneEndOfFramePerDraw() {
+        val drawn = ArrayList<PagePlacement>()
+        var frames = 0
+        val images = object : PageImages {
+            override fun drawPage(canvas: android.graphics.Canvas, p: PagePlacement) { drawn += p }
+            override fun endFrame(placement: PagePlacement) { frames++ }
+        }
+        val first = PagePlacement(3, 12.5f, -40.25f, 280.5f, 392.7f, 1.5f, 320, 300, false)
+        val second = first.copy(page = 4, top = first.top + first.height + 24f)
+        compose.setContent {
+            val view = LocalView.current
+            SideEffect { renderView = view }
+            DocumentViewport(Modifier.requiredSize(320.dp, 300.dp).testTag("doc")) {
+                DocumentBackground(Paper(), images, { first.copy(visiblePages = listOf(first, second)) }, Modifier.fillMaxSize())
+            }
+        }
+        compose.captureRenderedView(renderView, "doc")
+        assertTrue(frames >= 1)
+        assertEquals(listOf(3, 4), drawn.take(2).map { it.page })
+        assertEquals(12.5f, drawn[0].left, 0f)
+        assertEquals(-40.25f, drawn[0].top, 0f)
+        assertEquals(second.top, drawn[1].top, 0f)
     }
 
     private fun page(top: Float, width: Float): PagePlacement {

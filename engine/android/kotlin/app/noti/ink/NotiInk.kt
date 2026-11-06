@@ -93,6 +93,13 @@ internal object NotiInk {
     @JvmStatic external fun nativeDocumentAction(handle: Long, action: Int, page: Int): Boolean
     @JvmStatic external fun nativeDocumentState(handle: Long): DoubleArray
 
+    // Host-frame sync (Android 14+, see GlFrontBufferRenderer::host_frame). Main thread.
+    /** Adds the ink layer's buffer/geometry for a host frame showing [pages] to [transaction]. */
+    @JvmStatic external fun nativeHostFrame(handle: Long, transaction: android.view.SurfaceControl.Transaction, pages: FloatArray): Boolean
+    @CriticalNative @JvmStatic external fun nativeSetHostSync(handle: Long, on: Boolean)
+    /** Any thread: a redraw is waiting for the next host frame. */
+    @CriticalNative @JvmStatic external fun nativeHostFrameWanted(handle: Long): Boolean
+
     /** Runs the palm filter on `count` staged contacts (and any finger ink); returns the next deadline (ns) or -1. */
     @CriticalNative @JvmStatic external fun nativeTouch(handle: Long, count: Int): Long
 

@@ -1,8 +1,5 @@
 package app.noti.ui.common
 
-import android.graphics.Rect
-import android.graphics.Bitmap
-import android.graphics.RectF
 import android.os.Handler
 import android.os.Looper
 import android.view.View
@@ -29,18 +26,16 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.FilterQuality
-import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.graphics.drawscope.clipRect
+import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
+import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.runtime.snapshots.Snapshot
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalInspectionMode
-import androidx.compose.ui.unit.IntOffset
-import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -52,10 +47,10 @@ import app.noti.ink.PenButton
 import app.noti.ink.StylusButtonOptions
 import app.noti.pdf.PageViewport
 import app.noti.pdf.PagePlacement
+import app.noti.pdf.PageImages
 import app.noti.pdf.PdfDocument
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
-import kotlin.math.roundToInt
 
 /** What the pen draws with. [pressureGamma] null = constant width. */
 data class BrushSpec(
@@ -166,7 +161,7 @@ fun InkCanvas(
         val posted = AtomicBoolean(false)
         lateinit var created: InkLayer
         val viewport = PageViewport(marginPx) { p ->
-            created.setPages(p.visiblePages.flatMap { listOf(it.page.toFloat(), it.left, it.top, it.width, it.height) }.toFloatArray())
+            created.setPages(p.pageArray())
             latest.set(p)
             if (posted.compareAndSet(false, true)) {
                 main.post {
@@ -177,8 +172,6 @@ fun InkCanvas(
         }
         val gestures = CanvasGestures(
             ViewConfiguration.get(context).scaledTouchSlop.toFloat(), viewport,
-            schedule = { task, delay -> created.scheduleInk(task, delay) },
-            cancel = { task -> created.cancelInk(task) },
             onTwoFingerTap = { if (undoTap.value) created.documentAction(0) },
             onTwoFingerDoubleTap = { main.post { doubleTap.value?.invoke() } },
         )
@@ -227,8 +220,11 @@ fun InkCanvas(
         layer.setStylusOptions(buttons)
     }
 
-    val aspects = pdf?.pageSizes?.map { it.height / it.width }
-        ?: List(pageCount) { if (paper.size == app.noti.data.PaperSize.Letter) 11f / 8.5f else 1.4142f }
+    val sizes = pdf?.pageSizes
+    val aspects = remember(sizes, pageCount, paper.size) {
+        sizes?.map { it.height / it.width }
+            ?: List(pageCount) { if (paper.size == app.noti.data.PaperSize.Letter) 11f / 8.5f else 1.4142f }
+    }
     LaunchedEffect(aspects, controller.requestedPage) {
         if (aspects.isNotEmpty()) {
             val target = controller.requestedPage
@@ -255,41 +251,21 @@ fun InkCanvas(
         controller.requestedScroll = null
         controller.resetZoomRequested = false
     }
-    if (pdf != null) {
-        val placement = controller.placement
-        // Sharp detail once a zoomed page comes to rest; neighbours ready for a page turn.
-        LaunchedEffect(placement) {
-            val p = placement ?: return@LaunchedEffect
-            if (!p.settled) return@LaunchedEffect
-            if (p.zoom > 1.05f) {
-                val visible = Rect(
-                    p.left.coerceAtLeast(0f).roundToInt(), p.top.coerceAtLeast(0f).roundToInt(),
-                    (p.left + p.width).coerceAtMost(p.canvasWidth.toFloat()).roundToInt(),
-                    (p.top + p.height).coerceAtMost(p.canvasHeight.toFloat()).roundToInt(),
-                )
-                pdf.requestDetail(p.page, RectF(p.left, p.top, p.left + p.width, p.top + p.height), visible)
-            } else {
-                pdf.clearDetail()
-            }
-            val fit = p.fitWidth.roundToInt()
-            pdf.prefetch(p.page + 1, fit)
-            pdf.prefetch(p.page - 1, fit)
+    // Ink follows the document in the same display frame: the engine's ink layer moves
+    // with the placement the canvas is about to draw (Android 14+, see InkLayer).
+    DisposableEffect(layer, controller) {
+        layer.setHostFrameSource {
+            // Deliver pending state changes first, so the canvas redraws the placement
+            // read here in this very frame.
+            Snapshot.sendApplyNotifications()
+            controller.placement?.pageArray()
         }
+        onDispose { layer.setHostFrameSource(null) }
     }
 
     DocumentViewport(modifier.onSizeChanged { size -> layer.runOnInkThread { rig.viewport.setCanvas(size.width, size.height) } }) {
-        val images = remember(pdf) {
-            pdf?.let { document ->
-                DocumentImages(
-                    page = { index, width ->
-                        @Suppress("UNUSED_VARIABLE") val version = document.version
-                        document.page(index, width)
-                    },
-                    detail = { document.detail },
-                )
-            }
-        }
-        DocumentBackground(paper, images, controller.placement, Modifier.fillMaxSize())
+        // Read in the draw phase only: scrolling and zooming redraw, never recompose.
+        DocumentBackground(paper, pdf, { controller.placement }, Modifier.fillMaxSize())
         if (pdf != null) {
             pdf.error?.let { Text(it, modifier = Modifier.align(Alignment.Center), color = MaterialTheme.colorScheme.error) }
         }
@@ -318,19 +294,27 @@ internal fun DocumentViewport(modifier: Modifier = Modifier, content: @Composabl
 /** One canvas's engine and, for a PDF, its page viewport (owned by the ink thread). */
 private class Rig(val layer: InkLayer, val viewport: PageViewport, val gestures: CanvasGestures)
 
-/** Images arrive from the PDF worker; reads during drawing subscribe to its bitmap updates. */
-internal class DocumentImages(
-    val page: (Int, Int) -> Bitmap?,
-    val detail: () -> PdfDocument.Detail? = { null },
-)
+/** The visible pages as the engine's flat [page, x, y, width, height] list. */
+internal fun PagePlacement.pageArray(): FloatArray {
+    val out = FloatArray(visiblePages.size * 5)
+    visiblePages.forEachIndexed { i, p ->
+        out[i * 5] = p.page.toFloat(); out[i * 5 + 1] = p.left; out[i * 5 + 2] = p.top
+        out[i * 5 + 3] = p.width; out[i * 5 + 4] = p.height
+    }
+    return out
+}
 
-/** Render only pages intersecting the viewport; paper and ink share the same transform. */
+/**
+ * Renders only pages intersecting the viewport; paper, PDF and ink share the same transform.
+ * [placement] is read while drawing, so a moving document redraws without recomposing.
+ * Positions are not rounded: the page sits exactly where the ink engine puts its ink.
+ */
 @Composable
-internal fun DocumentBackground(paper: Paper, images: DocumentImages?, placement: PagePlacement?, modifier: Modifier) {
+internal fun DocumentBackground(paper: Paper, images: PageImages?, placement: () -> PagePlacement?, modifier: Modifier) {
     val backdrop = MaterialTheme.colorScheme.surfaceContainerLow
     Canvas(modifier) {
         drawRect(backdrop)
-        val current = placement ?: return@Canvas
+        val current = placement() ?: return@Canvas
         current.visiblePages.forEach { p ->
             drawRect(Color(0x12000000), Offset(p.left + 2f, p.top + 4f), Size(p.width, p.height))
             if (images == null) {
@@ -341,36 +325,16 @@ internal fun DocumentBackground(paper: Paper, images: DocumentImages?, placement
                 }
             } else {
                 drawRect(Color.White, Offset(p.left, p.top), Size(p.width, p.height))
-                images.page(p.page, p.fitWidth.roundToInt())?.let { bmp ->
-                    drawBitmap(bmp.asImageBitmap(), bmp.width, bmp.height, p.left, p.top, p.width, p.height)
-                }
-                images.detail()?.takeIf { it.index == p.page }?.let { d ->
-                    val k = p.width / d.pageRect.width()
-                    drawBitmap(d.bitmap.asImageBitmap(), d.bitmap.width, d.bitmap.height,
-                        p.left + (d.visible.left - d.pageRect.left) * k,
-                        p.top + (d.visible.top - d.pageRect.top) * k, d.visible.width() * k, d.visible.height() * k)
+                drawIntoCanvas { canvas ->
+                    val native = canvas.nativeCanvas
+                    val save = native.save()
+                    native.clipRect(p.left, p.top, p.left + p.width, p.top + p.height)
+                    images.drawPage(native, p)
+                    native.restoreToCount(save)
                 }
             }
             drawRect(Color(0x18000000), Offset(p.left, p.top), Size(p.width, p.height), style = Stroke(1f))
         }
+        images?.endFrame(current)
     }
-}
-
-private fun DrawScope.drawBitmap(
-    img: androidx.compose.ui.graphics.ImageBitmap,
-    srcW: Int,
-    srcH: Int,
-    x: Float,
-    y: Float,
-    w: Float,
-    h: Float,
-) {
-    drawImage(
-        img,
-        srcOffset = IntOffset.Zero,
-        srcSize = IntSize(srcW, srcH),
-        dstOffset = IntOffset(x.roundToInt(), y.roundToInt()),
-        dstSize = IntSize(w.roundToInt().coerceAtLeast(1), h.roundToInt().coerceAtLeast(1)),
-        filterQuality = FilterQuality.Medium,
-    )
 }

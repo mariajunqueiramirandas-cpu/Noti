@@ -57,6 +57,8 @@ internal class InkWindow(
     private val gestures: GestureListener?,
     private val onFrame: () -> Unit,
     private val buttons: StylusButtons,
+    /** After housekeeping (which may have run a deferred redraw). */
+    private val onIdle: () -> Unit = {},
 ) : SurfaceView(context), SurfaceHolder.Callback {
 
     private val wm = context.getSystemService(WindowManager::class.java)
@@ -80,6 +82,7 @@ internal class InkWindow(
         idleAtMs = 0L
         val next = NotiInk.nativeIdle(handle)
         drainGestures()
+        onIdle()
         schedule(next)
     }
 

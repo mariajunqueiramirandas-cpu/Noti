@@ -47,7 +47,7 @@ internal fun EditorToolbar(
     onUndo: () -> Unit = {}, onRedo: () -> Unit = {}, onExport: () -> Unit = {},
     onAddPage: (() -> Unit)? = null, saveStatus: String = "Autosave on", onSave: () -> Unit = {},
     selectionCount: Int = 0, isPdf: Boolean = false,
-    zoom: Float = 1f, scrollFraction: Float = 0f, viewportFraction: Float = 1f,
+    zoom: Float = 1f, scrollFraction: () -> Float = { 0f }, viewportFraction: Float = 1f,
     onResetZoom: () -> Unit = {}, onScroll: (Float) -> Unit = {},
     floatingWindows: Boolean = true,
 ) {
@@ -189,19 +189,22 @@ private fun BoxScope.FloatingIsland(alignment: Alignment, offset: IntOffset, flo
 }
 
 @Composable
-internal fun ScrollIndicator(fraction: Float, visible: Float, onScroll: (Float) -> Unit, modifier: Modifier = Modifier) {
-    val current by rememberUpdatedState(fraction.coerceIn(0f, 1f))
+internal fun ScrollIndicator(fraction: () -> Float, visible: Float, onScroll: (Float) -> Unit, modifier: Modifier = Modifier) {
+    // Read in semantics, gestures and drawing only: scrolling moves the thumb without recomposing.
+    val source by rememberUpdatedState(fraction)
+    fun current() = source().coerceIn(0f, 1f)
+    val percent by remember { derivedStateOf { (current() * 100).roundToInt() / 100f } }
     val action by rememberUpdatedState(onScroll)
     val thumbFraction = visible.coerceIn(0.12f, 1f)
     val color = MaterialTheme.colorScheme.onSurfaceVariant
     Box(modifier.width(48.dp).semantics {
         contentDescription = "Document scroll"
-        progressBarRangeInfo = ProgressBarRangeInfo(current, 0f..1f)
+        progressBarRangeInfo = ProgressBarRangeInfo(percent, 0f..1f)
         setProgress { action(it.coerceIn(0f, 1f)); true }
     }.pointerInput(thumbFraction) {
         var start = 0f
         var travel = 0f
-        detectVerticalDragGestures(onDragStart = { start = current; travel = 0f }) { change, delta ->
+        detectVerticalDragGestures(onDragStart = { start = current(); travel = 0f }) { change, delta ->
             change.consume(); travel += delta
             val range = (size.height * (1f - thumbFraction) - 16.dp.toPx()).coerceAtLeast(1f)
             action((start + travel / range).coerceIn(0f, 1f))
@@ -209,7 +212,7 @@ internal fun ScrollIndicator(fraction: Float, visible: Float, onScroll: (Float) 
     }) {
         Canvas(Modifier.fillMaxSize().padding(horizontal = 21.5.dp, vertical = 8.dp)) {
             val h = size.height * thumbFraction
-            drawRoundRect(color.copy(alpha = 0.35f), topLeft = Offset(0f, (size.height - h) * current),
+            drawRoundRect(color.copy(alpha = 0.35f), topLeft = Offset(0f, (size.height - h) * current()),
                 size = androidx.compose.ui.geometry.Size(size.width, h), cornerRadius = androidx.compose.ui.geometry.CornerRadius(size.width))
         }
     }

@@ -3,7 +3,9 @@ package app.noti.ui.common
 import app.noti.ink.GestureListener
 import app.noti.ink.NotiInk
 import app.noti.pdf.PageViewport
+import android.view.Choreographer
 import kotlin.math.hypot
+import kotlin.math.pow
 import kotlin.math.max
 
 /**
@@ -19,8 +21,6 @@ import kotlin.math.max
 internal class CanvasGestures(
     private val slopPx: Float,
     private val viewport: PageViewport?,
-    private val schedule: (Runnable, Long) -> Unit,
-    private val cancel: (Runnable) -> Unit,
     private val onTwoFingerTap: () -> Unit = {},
     private val onTwoFingerDoubleTap: () -> Unit,
 
@@ -31,16 +31,36 @@ internal class CanvasGestures(
     private var vy = 0f
     private var batchTime = 0L
     private var eventTime = 0L
-    private val fling = object : Runnable {
-        override fun run() {
-            viewport?.pan(vx * 0.016f, vy * 0.016f)
-            vx *= 0.91f; vy *= 0.91f
-            if (hypot(vx, vy) > 30f) schedule(this, 16) else viewport?.end()
+    // Momentum runs on the ink thread's own display clock: one step per refresh (144 Hz on
+    // the Pad 7), sized by the real frame interval, so it glides instead of stepping.
+    private var choreographer: Choreographer? = null
+    private var flinging = false
+    private var lastFrameNanos = 0L
+    private val fling = object : Choreographer.FrameCallback {
+        override fun doFrame(frameTimeNanos: Long) {
+            if (!flinging) return
+            val dt = if (lastFrameNanos == 0L) 1f / 120f else ((frameTimeNanos - lastFrameNanos) / 1e9f).coerceIn(0f, 0.05f)
+            lastFrameNanos = frameTimeNanos
+            viewport?.pan(vx * dt, vy * dt)
+            val decay = FRICTION_PER_16MS.pow(dt / 0.016f)
+            vx *= decay; vy *= decay
+            if (hypot(vx, vy) > 30f) clock().postFrameCallback(this) else { flinging = false; viewport?.end() }
         }
     }
-    fun stopMotion() { cancel(fling); viewport?.end() }
+    private fun clock() = choreographer ?: Choreographer.getInstance().also { choreographer = it }
+    private fun startFling() {
+        flinging = true
+        lastFrameNanos = 0L
+        clock().postFrameCallback(fling)
+    }
+    private fun cancelFling() {
+        if (!flinging) return
+        flinging = false
+        clock().removeFrameCallback(fling)
+    }
+    fun stopMotion() { cancelFling(); viewport?.end() }
     override fun onPenDown() { stopMotion(); main.removeCallbacks(tapAction) }
-    fun close() { main.removeCallbacks(tapAction); cancel(fling) }
+    fun close() { main.removeCallbacks(tapAction); cancelFling() }
     private class Pointer(var x: Float, var y: Float, val x0: Float, val y0: Float)
 
     private val pointers = LinkedHashMap<Int, Pointer>()
@@ -62,7 +82,7 @@ internal class CanvasGestures(
         when (action) {
             NotiInk.GESTURE_DOWN -> {
                 if (pointers.isEmpty()) {
-                    cancel(fling)
+                    cancelFling()
                     vx = 0f; vy = 0f; batchTime = 0L
                     sessionStart = timeNanos
                     maxPointers = 0
@@ -129,7 +149,7 @@ internal class CanvasGestures(
     private fun endSession(t: Long) {
         if (!cancelled && moved && t - batchTime < 100_000_000 && hypot(vx, vy) > 150f) {
             viewport?.begin()
-            schedule(fling, 16)
+            startFling()
         } else viewport?.end()
         lastCount = 0
         val tap = !cancelled && maxPointers == 2 && !moved && t - sessionStart < TAP_NS
@@ -145,6 +165,7 @@ internal class CanvasGestures(
     }
 
     private companion object {
+        const val FRICTION_PER_16MS = 0.91f
         const val TAP_NS = 300_000_000L
         const val DOUBLE_TAP_NS = 450_000_000L
     }

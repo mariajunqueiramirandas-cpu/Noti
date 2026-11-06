@@ -286,7 +286,7 @@ class EditorToolbarTest {
                         DocumentViewport(Modifier.fillMaxSize()) {
                             DocumentBackground(Paper(template = PaperTemplate.Blank,
                                 color = if (theme == ThemeMode.Dark) PaperColor.Dark else PaperColor.White), null,
-                                page.copy(visiblePages = listOf(page, page.copy(page = 3, top = page.top + page.height + 12f))), Modifier.fillMaxSize())
+                                { page.copy(visiblePages = listOf(page, page.copy(page = 3, top = page.top + page.height + 12f))) }, Modifier.fillMaxSize())
                         }
                         Box(Modifier.fillMaxSize().testTag("toolbar")) {
                             EditorToolbar(
@@ -294,7 +294,7 @@ class EditorToolbarTest {
                                 onBack = {}, onRename = {}, onTogglePages = {}, onPagePaper = { papers++ }, onFullScreen = {}, onSettings = { precision++ },
                                 pdfPage = 2 to 30, onPage = { requestedPage = it }, canUndo = true, canRedo = true, zoom = 1.75f,
                                 saveStatus = saveStatus, onSave = { saves++ }, onExport = { exports++ },
-                                scrollFraction = 0.3f, viewportFraction = 0.15f, onResetZoom = { resets++ }, onScroll = { scrolled = it },
+                                scrollFraction = { 0.3f }, viewportFraction = 0.15f, onResetZoom = { resets++ }, onScroll = { scrolled = it },
                                 onUndo = { undos++ }, onRedo = { redos++ }, floatingWindows = floating,
                             )
                         }
