@@ -1,5 +1,7 @@
 package app.noti.ink
 
+import android.content.Context
+import android.content.pm.PackageManager
 import android.os.Build
 import android.view.InputDevice
 import android.view.KeyEvent
@@ -217,6 +219,26 @@ object XiaomiStylusWindow {
         val b = brand.orEmpty().lowercase(java.util.Locale.ROOT)
         return m == "xiaomi" || b == "xiaomi" || b == "redmi" || b == "poco"
     }
+
+    /**
+     * Whether this device can use the Focus Pen at all: a Xiaomi/Redmi/POCO tablet (the pen only pairs
+     * with Xiaomi Pads) that ships the Notes app the shortcut manager looks for. Phones never get the
+     * window packageName rewrite: they have no Focus Pen to serve, and a window claiming another app's
+     * package is the likeliest cause of a launch crash reported on a POCO X8 Pro.
+     */
+    fun deviceSupportsHijack(
+        context: Context,
+        isXiaomi: Boolean = isXiaomi(),
+    ): Boolean = isXiaomi &&
+        context.resources.configuration.smallestScreenWidthDp >= TABLET_MIN_WIDTH_DP &&
+        notesInstalled(context.packageManager)
+
+    private fun notesInstalled(pm: PackageManager): Boolean = runCatching {
+        pm.getPackageInfo(NOTES_PACKAGE, PackageManager.PackageInfoFlags.of(0))
+        true
+    }.getOrDefault(false)
+
+    private const val TABLET_MIN_WIDTH_DP = 600
 
     fun applyBeforeAdd(
         attrs: WindowManager.LayoutParams,

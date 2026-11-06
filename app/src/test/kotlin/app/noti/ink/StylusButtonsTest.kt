@@ -1,5 +1,6 @@
 package app.noti.ink
 
+import android.content.pm.PackageInfo
 import android.view.InputDevice
 import android.view.KeyEvent
 import android.view.MotionEvent
@@ -8,6 +9,8 @@ import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.RuntimeEnvironment
+import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 
 @RunWith(RobolectricTestRunner::class)
@@ -229,6 +232,27 @@ class StylusButtonsTest {
         assertEquals(PenButton.Secondary, map(93, name = "Xiaomi Focus Pen", opts = options.copy(swapLegacyKeys = true)))
         assertNull(map(93, name = "Xiaomi Focus Pen", opts = options.copy(legacyKeys = false)))
         assertNull(map(308, opts = options.copy(enabled = false)))
+    }
+
+    private fun installNotes() {
+        val context = RuntimeEnvironment.getApplication()
+        shadowOf(context.packageManager).installPackage(PackageInfo().apply { packageName = XiaomiStylusWindow.NOTES_PACKAGE })
+    }
+
+    @Test @Config(qualifiers = "sw411dp-w411dp-h900dp")
+    fun xiaomiPhonesNeverRewriteTheirWindowPackage() {
+        installNotes()
+        val context = RuntimeEnvironment.getApplication()
+        assertFalse(XiaomiStylusWindow.deviceSupportsHijack(context, isXiaomi = true))
+    }
+
+    @Test @Config(qualifiers = "sw800dp-w1280dp-h800dp")
+    fun xiaomiTabletsRewriteOnlyWithTheNotesApp() {
+        val context = RuntimeEnvironment.getApplication()
+        assertFalse(XiaomiStylusWindow.deviceSupportsHijack(context, isXiaomi = true))
+        installNotes()
+        assertTrue(XiaomiStylusWindow.deviceSupportsHijack(context, isXiaomi = true))
+        assertFalse(XiaomiStylusWindow.deviceSupportsHijack(context, isXiaomi = false))
     }
 
     @Test fun xiaomiWindowAttributesLatchNotesPackageBeforeAddView() {

@@ -6,6 +6,12 @@
          user's own Mistral API key, to send a linked PDF or a looped answer to Mistral. -->
     <uses-permission android:name="android.permission.INTERNET" />
 
+    <!-- Only to check that HyperOS's Notes app exists before pretending to be it for the
+         Focus Pen hold shortcut (XiaomiStylusWindow). -->
+    <queries>
+        <package android:name="com.miui.notes" />
+    </queries>
+
     <application
         android:label="Noti"
         android:icon="@mipmap/ic_launcher"

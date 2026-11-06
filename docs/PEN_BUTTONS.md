@@ -9,6 +9,12 @@ disables the 380 ms OS Quick Note / Mi Canvas hold overlay and 400 ms dispatch d
 button (`KEYCODE_PAGE_DOWN`). Only the writing button supports holds in Noti; screenshot-button
 holds remain with HyperOS. Delivered screenshot short clicks still work.
 
+The rewrite only runs on Xiaomi **tablets** (smallest width ≥ 600 dp) that have `com.miui.notes`
+installed: the Focus Pen only pairs with Xiaomi Pads, and on a Xiaomi phone (a POCO X8 Pro report) Noti
+crashed on launch, with this rewrite the prime suspect. If a launch that used the rewrite
+dies before its window is attached, Noti stops using it on that device and build fingerprint, so a
+new HyperOS build can't leave the app crashing on every start; an app update tries again.
+
 ## Using the shortcuts
 
 In an editor, a short **writing button** click toggles the stroke eraser; a short **screenshot button**
