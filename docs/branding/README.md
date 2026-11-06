@@ -36,6 +36,7 @@ The design is a page on a desk at dusk. Navigation sits directly on the greige d
 - `app/src/main/res/drawable/ic_doti_monochrome.xml`: themed launcher mark.
 - `assets/noti-wordmark.svg`: portable outlined wordmark.
 - `assets/noti-app-icon.svg`: vector icon preview.
+- `badges/`: README badges and palette card, with text outlined from Nunito. Regenerate with `python3 docs/branding/badges/generate.py` (needs `fonttools`).
 - `app/src/main/kotlin/app/noti/ui/common/Controls.kt`: shared action, menu and dialog styles.
 - `app/src/main/kotlin/app/noti/ui/brand/Brand.kt`: shared brand components.
 - `app/src/main/kotlin/app/noti/ui/theme/Theme.kt`: colors, typography and shape roles.

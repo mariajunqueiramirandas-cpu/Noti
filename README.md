@@ -14,16 +14,17 @@
 
 <br>
 
-[![Download APK](https://img.shields.io/badge/Download-latest%20APK-5C4A87?style=for-the-badge&logo=android&logoColor=white)](https://github.com/mariajunqueiramirandas-cpu/Noti/releases/latest)
-[![Release APK](https://github.com/mariajunqueiramirandas-cpu/Noti/actions/workflows/release-apk.yml/badge.svg)](https://github.com/mariajunqueiramirandas-cpu/Noti/actions/workflows/release-apk.yml)
+<a href="https://github.com/mariajunqueiramirandas-cpu/Noti/releases/latest"><img src="docs/branding/badges/download.svg" alt="Download the latest APK" height="48"></a>
 
-![Android 13+](https://img.shields.io/badge/Android-13%2B-2A2830?style=flat-square&logo=android&logoColor=CDBFF2)
-![arm64](https://img.shields.io/badge/arm64-only-2A2830?style=flat-square)
-![Kotlin](https://img.shields.io/badge/Kotlin-Compose%20M3-5C4A87?style=flat-square&logo=kotlin&logoColor=white)
-![C++20](https://img.shields.io/badge/C%2B%2B20-ink%20engine-5C4A87?style=flat-square&logo=cplusplus&logoColor=white)
-![Font](https://img.shields.io/badge/font-Nunito-D9CFEE?style=flat-square)
-![Vibes](https://img.shields.io/badge/vibes-page%20on%20a%20desk%20at%20dusk-E3AE3F?style=flat-square)
-![Palms](https://img.shields.io/badge/palms-rejected-F2C6B8?style=flat-square)
+<a href="https://github.com/mariajunqueiramirandas-cpu/Noti/actions/workflows/release-apk.yml"><img src="https://github.com/mariajunqueiramirandas-cpu/Noti/actions/workflows/release-apk.yml/badge.svg" alt="Release APK workflow status"></a>
+
+<img src="docs/branding/badges/android.svg" alt="Android 13+" height="28">
+<img src="docs/branding/badges/arm64.svg" alt="arm64 only" height="28">
+<img src="docs/branding/badges/kotlin.svg" alt="Kotlin, Compose M3" height="28">
+<img src="docs/branding/badges/cpp.svg" alt="C++20 ink engine" height="28">
+<img src="docs/branding/badges/font.svg" alt="Font: Nunito" height="28">
+<img src="docs/branding/badges/vibes.svg" alt="Vibes: page on a desk at dusk" height="28">
+<img src="docs/branding/badges/palms.svg" alt="Palms: rejected" height="28">
 
 [**The ink engine**](engine/README.md) ·
 [**Palm rejection**](docs/PALM_REJECTION.md) ·
@@ -248,17 +249,7 @@ Doti does not have opinions about your handwriting. Doti thinks it's lovely.
 
 ### The palette
 
-![Desk](https://img.shields.io/badge/Desk-%23F3F1EE-F3F1EE?style=for-the-badge)
-![Sheet](https://img.shields.io/badge/Sheet-%23FBFAF8-FBFAF8?style=for-the-badge)
-![Ink](https://img.shields.io/badge/Ink-%232A2830-2A2830?style=for-the-badge)
-![Plum](https://img.shields.io/badge/Plum-%235C4A87-5C4A87?style=for-the-badge)
-![Honey](https://img.shields.io/badge/Honey-%23E3AE3F-E3AE3F?style=for-the-badge)
-
-![Lilac](https://img.shields.io/badge/Lilac-%23D9CFEE-D9CFEE?style=flat-square)
-![Butter](https://img.shields.io/badge/Butter-%23F1DFA6-F1DFA6?style=flat-square)
-![Mint](https://img.shields.io/badge/Mint-%23CFE1D3-CFE1D3?style=flat-square)
-![Peach](https://img.shields.io/badge/Peach-%23F2C6B8-F2C6B8?style=flat-square)
-![Sky](https://img.shields.io/badge/Sky-%23CBDCEB-CBDCEB?style=flat-square)
+<img src="docs/branding/badges/palette.svg" alt="The Noti palette: Desk #F3F1EE, Sheet #FBFAF8, Ink #2A2830, Plum #5C4A87, Honey #E3AE3F, and cover pastels Lilac #D9CFEE, Butter #F1DFA6, Mint #CFE1D3, Peach #F2C6B8, Sky #CBDCEB" width="760">
 
 Noti looks like **a page on a desk at dusk**: a soft greige desk, content resting on a lighter rounded sheet, aubergine-charcoal
 ink, one plum accent shared with Doti, and honey *only* for favorite bookmarks (honey is precious). Rounded **Nunito** in calm
