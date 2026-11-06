@@ -1,6 +1,7 @@
 package app.noti.data
 
 import android.content.Context
+import app.noti.ink.PenHold
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -98,7 +99,16 @@ class SettingsStore(context: Context) {
         }
 
     var penButtonsEnabled by pref(true, { prefs.getBoolean("penButtonsEnabled", it) }) { putBoolean("penButtonsEnabled", it) }
-    var penButtonHolds by pref(true, { prefs.getBoolean("penButtonHolds", it) }) { putBoolean("penButtonHolds", it) }
+    /** Earlier versions stored only "hold to erase" on or off; off stays off, on becomes the dial. */
+    var penButtonHold by pref(PenHold.Dial, {
+        enumOr(prefs.getString("penButtonHold", null), if (prefs.getBoolean("penButtonHolds", true)) it else PenHold.Off)
+    }) { putString("penButtonHold", it.name) }
+
+    /** Keep the tool dial on the page instead of opening it from the pen. */
+    var toolDialAlways by pref(false, { prefs.getBoolean("toolDialAlways", it) }) { putBoolean("toolDialAlways", it) }
+
+    /** The dial stays hidden until the pen summons it, or until Show tools opens it. */
+    val toolDialOnHold get() = !toolDialAlways && penButtonsEnabled && penButtonHold == PenHold.Dial
     var penLegacyKeys by pref(true, { prefs.getBoolean("penLegacyKeys", it) }) { putBoolean("penLegacyKeys", it) }
     var penSwapLegacyKeys by pref(false, { prefs.getBoolean("penSwapLegacyKeys", it) }) { putBoolean("penSwapLegacyKeys", it) }
     var primaryButtonAction by pref(PenButtonAction.ToggleEraser, { enumOr(prefs.getString("primaryButtonAction", null), it) }) {

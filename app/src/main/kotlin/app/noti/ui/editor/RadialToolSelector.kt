@@ -1,5 +1,7 @@
 package app.noti.ui.editor
 
+import android.view.HapticFeedbackConstants
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
@@ -12,6 +14,8 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ExpandLess
+import androidx.compose.material.icons.outlined.Lock
+import androidx.compose.material.icons.outlined.LockOpen
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.AbsoluteAlignment
@@ -19,8 +23,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
@@ -30,7 +37,9 @@ import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.*
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.*
@@ -40,6 +49,7 @@ import androidx.compose.ui.window.PopupProperties
 import app.noti.data.SettingsStore
 import app.noti.data.Tool
 import app.noti.data.ToolSlots
+import app.noti.data.applyDialSegment
 import app.noti.ui.theme.Noti
 import app.noti.ui.theme.NotiBrand
 import kotlin.math.PI
@@ -58,15 +68,17 @@ import kotlin.math.sin
  * Wider gaps separate the groups. The hub is a small page that previews the brush.
  */
 private val DialSize = 208.dp
-private const val DialCenter = 104f
-private const val RingInner = 52f
-private const val RingOuter = 100f
+internal const val DialCenter = 104f
+internal const val RingInner = 52f
+internal const val RingOuter = 100f
 private const val TargetRadius = 76f
 private const val TargetSize = 36f
 private const val HubSize = 84f
 private const val SegmentSweep = 36f
 private const val FirstSegment = -144f
 private const val CollapsedSize = 56f
+/** The collapse knob below the docked dial, and the lock pip below the summoned one. */
+internal const val LockSize = 44f
 /** Transparent room around floating chrome so its shadow isn't cut off by the popup window. */
 internal const val Halo = 10f
 
@@ -76,14 +88,32 @@ private fun segmentAngle(index: Number) = FirstSegment + index.toFloat() * Segme
 internal fun segmentAt(angle: Float): Int =
     Math.floorMod(floor((angle - FirstSegment + SegmentSweep / 2f) / SegmentSweep).toInt(), 10)
 
-/** A persistent ten-segment dial, in its own window above the native ink input panel. */
+/**
+ * The ten-segment dial, in its own window above the native ink input panel. [docked]
+ * keeps it on the page; the pen can also summon it under the nib ([dial]).
+ */
 @Composable
 internal fun BoxScope.RadialToolSelector(
     settings: SettingsStore, selectionCount: Int, width: Dp, height: Dp, floating: Boolean,
     expanded: Boolean, onExpandedChange: (Boolean) -> Unit,
+    dial: PenDialState = remember { PenDialState() }, docked: Boolean = true,
+) {
+    val density = LocalDensity.current
+    // The dial gets pen positions in window pixels; it places itself in this area.
+    Spacer(Modifier.matchParentSize().onGloballyPositioned { dial.origin = it.positionInWindow() })
+    SideEffect { dial.area = Size(width.value, height.value); dial.density = density.density }
+    // Kept here so the docked dial returns to where it was after the pen summons it.
+    val position = remember { mutableStateOf(Offset.Zero) }
+    if (dial.phase != PenDialState.Phase.Hidden) SummonedDial(settings, selectionCount, dial, floating)
+    else if (docked) DockedDial(settings, selectionCount, width, height, floating, expanded, onExpandedChange, position)
+}
+
+@Composable
+private fun BoxScope.DockedDial(
+    settings: SettingsStore, selectionCount: Int, width: Dp, height: Dp, floating: Boolean,
+    expanded: Boolean, onExpandedChange: (Boolean) -> Unit, position: MutableState<Offset>,
 ) {
     var options by remember { mutableStateOf(false) }
-    val position = remember { mutableStateOf(Offset.Zero) }
     val density = LocalDensity.current
     fun px(value: Dp) = with(density) { value.roundToPx() }
     val inset = IntOffset(px((12f - Halo).dp), px((84f - Halo).dp))
@@ -138,6 +168,7 @@ internal fun BoxScope.RadialToolSelector(
 @Composable
 private fun ToolDial(
     settings: SettingsStore, selectionCount: Int, drag: Modifier, onOptions: () -> Unit,
+    hovered: Int? = null, interactive: Boolean = true,
     options: @Composable () -> Unit,
 ) {
     val colors = MaterialTheme.colorScheme
@@ -146,7 +177,6 @@ private fun ToolDial(
         (settings.tool != Tool.Pen && settings.lastDrawingTool == Tool.Highlighter)
     val slots = if (highlighter) settings.highlighterSlots else settings.penSlots
     val drawing = settings.tool == Tool.Pen || settings.tool == Tool.Highlighter
-    val update: (ToolSlots) -> Unit = { if (highlighter) settings.highlighterSlots = it else settings.penSlots = it }
     val toolIndex = Tool.entries.indexOf(settings.tool)
     // The highlight glides between tools, so the change reads as one motion.
     val active by animateFloatAsState(toolIndex.toFloat(), tween(220), label = "active tool")
@@ -155,20 +185,15 @@ private fun ToolDial(
 
     Box(Modifier.size(DialSize).shadow(10.dp, CircleShape, ambientColor = extras.shadow, spotColor = extras.shadow)
         .clip(CircleShape).background(colors.surface)) {
-        Canvas(Modifier.fillMaxSize().pointerInput(settings.tool, slots, highlighter) {
+        Canvas(Modifier.fillMaxSize().then(if (!interactive) Modifier else Modifier.pointerInput(Unit) {
             detectTapGestures { point ->
                 val unit = size.width / (DialCenter * 2f)
                 val local = point - Offset(size.width / 2f, size.height / 2f)
                 val radius = hypot(local.x, local.y) / unit
                 if (radius !in (RingInner - 2f)..(RingOuter + 4f)) return@detectTapGestures
-                val angle = Math.toDegrees(atan2(local.y, local.x).toDouble()).toFloat()
-                when (val segment = segmentAt(angle)) {
-                    in 0..3 -> settings.tool = Tool.entries[segment]
-                    in 4..6 -> if (drawing) update(slots.copy(color = segment - 4))
-                    else -> if (drawing) update(slots.copy(width = segment - 7))
-                }
+                settings.applyDialSegment(segmentAt(Math.toDegrees(atan2(local.y, local.x).toDouble()).toFloat()))
             }
-        }) {
+        })) {
             val unit = size.width / (DialCenter * 2f)
             val c = Offset(size.width / 2f, size.height / 2f)
             val rest = if (dark) colors.surfaceContainerHigh else colors.surfaceContainer
@@ -181,19 +206,20 @@ private fun ToolDial(
                 }
                 drawSegment(c, unit, segmentAngle(i), if (i >= 4 && !drawing) fill.copy(alpha = 0.5f) else fill)
             }
+            if (hovered != null) drawSegment(c, unit, segmentAngle(hovered), colors.primary.copy(alpha = if (dark) 0.42f else 0.24f))
             drawSegment(c, unit, segmentAngle(active), colors.primary)
         }
 
         Tool.entries.forEachIndexed { index, tool ->
             val selected = settings.tool == tool
-            DialTarget(segmentAngle(index), tool.label, selected = selected, onClick = { settings.tool = tool }) {
+            DialTarget(segmentAngle(index), tool.label, selected = selected, enabled = interactive, onClick = { settings.tool = tool }) {
                 Icon(tool.icon(), null, Modifier.size(22.dp), tint = if (selected) colors.onPrimary else colors.onSurface)
             }
         }
         slots.colors.forEachIndexed { index, color ->
             val selected = drawing && slots.color == index
-            DialTarget(segmentAngle(4 + index), "Quick color ${index + 1}", selected = selected, enabled = drawing,
-                onClick = { update(slots.copy(color = index)) }) {
+            DialTarget(segmentAngle(4 + index), "Quick color ${index + 1}", selected = selected, enabled = interactive,
+                onClick = { settings.applyDialSegment(4 + index) }) {
                 Box(Modifier.size(if (selected) 24.dp else 18.dp)
                     .then(if (selected) Modifier.border(2.dp, colors.onSurface.copy(alpha = presetAlpha), CircleShape).padding(4.dp) else Modifier)
                     .clip(CircleShape).background(Color(color).copy(alpha = presetAlpha))
@@ -202,8 +228,8 @@ private fun ToolDial(
         }
         slots.widths.forEachIndexed { index, value ->
             val selected = drawing && slots.width == index
-            DialTarget(segmentAngle(7 + index), "Quick width $value", selected = selected, enabled = drawing,
-                onClick = { update(slots.copy(width = index)) }) {
+            DialTarget(segmentAngle(7 + index), "Quick width $value", selected = selected, enabled = interactive,
+                onClick = { settings.applyDialSegment(7 + index) }) {
                 val tint = if (selected) colors.onSurface else colors.onSurfaceVariant
                 Box(Modifier.width(18.dp).height((1.5f + index * 2f).dp)
                     .background(tint.copy(alpha = presetAlpha), CircleShape))
@@ -211,13 +237,24 @@ private fun ToolDial(
         }
 
         Box(Modifier.align(Alignment.Center).size(HubSize.dp).then(drag)
-            .clip(CircleShape).clickable(enabled = drawing, role = Role.Button, onClick = onOptions)
+            .clip(CircleShape).clickable(enabled = drawing && interactive, role = Role.Button, onClick = onOptions)
             .semantics {
                 contentDescription = "Brush options"
                 stateDescription = if (settings.tool == Tool.Lasso) "$selectionCount selected. Drag ink to move"
                     else "${settings.tool.label}. Drag to move tools"
             }, contentAlignment = Alignment.Center) {
-            BrushHub(settings.tool, slots, highlighter, drawing, selectionCount)
+            // The hub previews what lifting the nib would give.
+            when (hovered) {
+                in 0..3 -> {
+                    val tool = Tool.entries[hovered!!]
+                    val hubHighlighter = tool == Tool.Highlighter || (tool != Tool.Pen && highlighter)
+                    BrushHub(tool, if (hubHighlighter) settings.highlighterSlots else settings.penSlots, hubHighlighter,
+                        tool == Tool.Pen || tool == Tool.Highlighter, selectionCount)
+                }
+                in 4..6 -> BrushHub(settings.lastDrawingTool, slots.copy(color = hovered!! - 4), highlighter, true, selectionCount)
+                in 7..9 -> BrushHub(settings.lastDrawingTool, slots.copy(width = hovered!! - 7), highlighter, true, selectionCount)
+                else -> BrushHub(settings.tool, slots, highlighter, drawing, selectionCount)
+            }
             options()
         }
     }
@@ -348,5 +385,92 @@ private fun CollapsedTool(settings: SettingsStore, selectionCount: Int, drag: Mo
         Icon(settings.tool.icon(), null, Modifier.size(24.dp), tint = colors.onSurface)
         if (drawing) Box(Modifier.align(Alignment.BottomEnd).padding(end = 10.dp, bottom = 10.dp).size(12.dp)
             .background(colors.surface, CircleShape).padding(2.dp).background(Color(slots.currentColor), CircleShape))
+    }
+}
+
+/**
+ * The dial the pen summoned (see [PenDialState]): centred on the nib while picking, its
+ * label naming what lifting would choose. Locked, it takes taps like the docked dial.
+ */
+@Composable
+private fun BoxScope.SummonedDial(settings: SettingsStore, selectionCount: Int, dial: PenDialState, floating: Boolean) {
+    val locked = dial.phase == PenDialState.Phase.Locked
+    val hovered = dial.hovered
+    var options by remember { mutableStateOf(false) }
+    LaunchedEffect(locked) { if (!locked) options = false }
+    val view = LocalView.current
+    LaunchedEffect(hovered) { if (hovered != null) view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK) }
+    val density = LocalDensity.current
+    val center = dial.center
+    val topLeft = with(density) {
+        IntOffset((center.x - Halo - DialCenter).dp.roundToPx(), (center.y - Halo - LabelSlot - DialCenter).dp.roundToPx())
+    }
+    val appear = remember(center) { Animatable(0.85f) }
+    LaunchedEffect(appear) { appear.animateTo(1f, tween(120)) }
+    val height = Halo * 2 + LabelSlot + DialCenter * 2 + 4f + LockSize
+    val highlighter = settings.tool == Tool.Highlighter || (settings.tool != Tool.Pen && settings.lastDrawingTool == Tool.Highlighter)
+    val label = dialLabel(hovered, if (highlighter) settings.highlighterSlots else settings.penSlots)
+        ?: if (locked) "Tap outside to close" else null
+    val content: @Composable () -> Unit = {
+        Column(Modifier.graphicsLayer {
+            scaleX = appear.value; scaleY = appear.value; alpha = ((appear.value - 0.85f) / 0.15f).coerceIn(0f, 1f)
+            transformOrigin = TransformOrigin(0.5f, (Halo + LabelSlot + DialCenter) / height)
+        }.padding(Halo.dp).width(DialSize), horizontalAlignment = Alignment.CenterHorizontally) {
+            Box(Modifier.height((LabelSlot - 6f).dp), contentAlignment = Alignment.Center) { label?.let { DialLabel(it) } }
+            Spacer(Modifier.height(6.dp))
+            ToolDial(settings, selectionCount, Modifier, onOptions = { options = !options },
+                hovered = (hovered as? DialPick.Segment)?.index, interactive = locked) {
+                if (options) ToolOptionsPopup(settings) { options = false }
+            }
+            Spacer(Modifier.height(4.dp))
+            LockPip(locked, hovered == DialPick.Lock) { dial.dismiss() }
+        }
+    }
+    if (floating) {
+        val provider = remember(topLeft) {
+            object : PopupPositionProvider {
+                override fun calculatePosition(anchorBounds: IntRect, windowSize: IntSize,
+                    layoutDirection: LayoutDirection, popupContentSize: IntSize): IntOffset = anchorBounds.topLeft + topLeft
+            }
+        }
+        Popup(popupPositionProvider = provider, properties = PopupProperties(
+            focusable = false, dismissOnBackPress = false, dismissOnClickOutside = false), content = content)
+    } else Box(Modifier.align(AbsoluteAlignment.TopLeft).absoluteOffset { topLeft }) { content() }
+}
+
+/** What lifting the nib on [pick] would do, in a word or two. */
+internal fun dialLabel(pick: DialPick?, slots: ToolSlots): String? = when (pick) {
+    null -> null
+    DialPick.Lock -> "Keep open"
+    DialPick.Cancel -> "Cancel"
+    is DialPick.Segment -> when (val i = pick.index) {
+        in 0..3 -> Tool.entries[i].label
+        in 4..6 -> "Color ${i - 3}"
+        else -> slots.widths[i - 7].let { "Width ${if (it % 1f == 0f) it.toInt().toString() else it.toString()}" }
+    }
+}
+
+@Composable
+private fun DialLabel(text: String) {
+    val colors = MaterialTheme.colorScheme
+    val extras = Noti.extras
+    Text(text, Modifier.shadow(4.dp, CircleShape, ambientColor = extras.shadow, spotColor = extras.shadow)
+        .clip(CircleShape).background(colors.surface).padding(horizontal = 12.dp, vertical = 4.dp),
+        style = MaterialTheme.typography.labelLarge, color = colors.onSurface, maxLines = 1)
+}
+
+/** Lift the nib here to keep the dial open; tap it again to close. */
+@Composable
+private fun LockPip(locked: Boolean, hovered: Boolean, onClose: () -> Unit) {
+    val colors = MaterialTheme.colorScheme
+    val extras = Noti.extras
+    val lit = locked || hovered
+    Box(Modifier.size(LockSize.dp).padding(4.dp).shadow(4.dp, CircleShape, ambientColor = extras.shadow, spotColor = extras.shadow)
+        .clip(CircleShape).background(if (lit) colors.primary else colors.surface)
+        .clickable(enabled = locked, role = Role.Button, onClick = onClose)
+        .semantics { contentDescription = if (locked) "Close tools" else "Keep tools open"; selected = locked },
+        contentAlignment = Alignment.Center) {
+        Icon(if (locked) Icons.Outlined.Lock else Icons.Outlined.LockOpen, null, Modifier.size(18.dp),
+            tint = if (lit) colors.onPrimary else colors.onSurfaceVariant)
     }
 }

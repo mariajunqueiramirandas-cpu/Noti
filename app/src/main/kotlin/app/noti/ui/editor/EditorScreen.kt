@@ -37,6 +37,7 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import app.noti.data.*
 import app.noti.ink.InkLayer
+import app.noti.ink.PenHold
 import app.noti.pdf.DocumentExport
 import app.noti.pdf.PdfDocument
 import app.noti.ui.common.*
@@ -122,6 +123,9 @@ private fun EditorContent(notebook: Notebook, library: LibraryStore, settings: S
     val leave = { if (settings.confirmLeave) confirmingLeave = true else saveAndLeave() }
     BackHandler(enabled = !fullScreen) { leave() }
     BackHandler(enabled = fullScreen) { fullScreen = false }
+    // Registered last, so Back closes an open tool dial first.
+    val dial = remember { PenDialState() }
+    BackHandler(enabled = dial.phase != PenDialState.Phase.Hidden) { dial.dismiss() }
     SystemBarsHidden(fullScreen)
 
     val slots = if (settings.tool == Tool.Highlighter) settings.highlighterSlots else settings.penSlots
@@ -164,6 +168,18 @@ private fun EditorContent(notebook: Notebook, library: LibraryStore, settings: S
             }
         }
     }
+    val buttonsEnabled = !settingsOpen && !renaming && !choosingPaper && !confirmingLeave && !restoreError &&
+        deletingPage == null && !leaving && !exporting && !pageBusy && !pagesOpen
+    // Holding the writing button and touching the page summons the dial instead of drawing.
+    val dialGesture = buttonsEnabled && settings.penButtonsEnabled && settings.penButtonHold == PenHold.Dial
+    DisposableEffect(layer, dialGesture) {
+        val current = layer
+        if (!dialGesture) dial.dismiss()
+        current?.setPenDial(if (!dialGesture) null else { action, x, y -> dial.onPen(action, x, y)?.let(settings::applyDialSegment) })
+        onDispose { current?.setPenDial(null) }
+    }
+    val dialLocked = dial.phase == PenDialState.Phase.Locked
+    LaunchedEffect(layer, dialLocked) { layer?.setDialLocked(dialLocked) }
     Surface(color = MaterialTheme.colorScheme.background, modifier = Modifier.fillMaxSize()) {
         Box(Modifier.fillMaxSize().then(if (fullScreen) Modifier else Modifier.windowInsetsPadding(WindowInsets.safeDrawing))) {
             InkCanvas(
@@ -172,31 +188,29 @@ private fun EditorContent(notebook: Notebook, library: LibraryStore, settings: S
                 tapUndo = settings.tapUndo, onLayer = { layer = it }, onRestoreError = { restoreError = true },
                 onTwoFingerDoubleTap = { fullScreen = false },
                 topClearance = if (fullScreen) 16.dp else 72.dp, bottomClearance = if (fullScreen) 16.dp else 72.dp,
-                buttons = settings.penButtonOptions(enabled = !settingsOpen && !renaming && !choosingPaper &&
-                    !confirmingLeave && !restoreError && deletingPage == null && !leaving && !exporting && !pageBusy && !pagesOpen),
+                buttons = settings.penButtonOptions(enabled = buttonsEnabled),
                 onButtonClick = { button ->
                     settings.performButtonAction(settings.buttonAction(button)) { layer?.documentAction(it) }
                 },
             )
-            if (!fullScreen) {
-                EditorToolbar(
-                    title = notebook.name, settings = settings, pagesOpen = pagesOpen,
-                    onBack = leave, onRename = { renaming = true }, onTogglePages = { pagesOpen = !pagesOpen },
-                    onPagePaper = { choosingPaper = true },
-                    onFullScreen = {
-                        fullScreen = true
-                        Toast.makeText(context, "Two-finger double-tap or Back to exit full screen", Toast.LENGTH_SHORT).show()
-                    },
-                    onSettings = { settingsOpen = true }, pdfPage = currentPage to pageCount, onPage = pages::goTo,
-                    canUndo = pages.canUndo, canRedo = pages.canRedo,
-                    onUndo = { layer?.documentAction(0) }, onRedo = { layer?.documentAction(1) },
-                    onExport = { if (!exporting && layer != null) export.launch("${notebook.name.replace(Regex("[^a-zA-Z0-9 ._-]"), "_")}.pdf") },
-                    onAddPage = if (notebook.isPdf) null else { { changePages(0, notebook.pageCount) } },
-                    zoom = zoom, scrollFraction = { pages.placement?.scrollFraction ?: 0f },
-                    viewportFraction = viewportFraction, onResetZoom = pages::resetZoom, onScroll = pages::scrollTo,
-                    saveStatus = saveStatus, onSave = { layer?.saveNow() }, selectionCount = pages.documentState[3].toInt(), isPdf = notebook.isPdf,
-                )
-            }
+            EditorToolbar(
+                title = notebook.name, settings = settings, pagesOpen = pagesOpen,
+                onBack = leave, onRename = { renaming = true }, onTogglePages = { pagesOpen = !pagesOpen },
+                onPagePaper = { choosingPaper = true },
+                onFullScreen = {
+                    fullScreen = true
+                    Toast.makeText(context, "Two-finger double-tap or Back to exit full screen", Toast.LENGTH_SHORT).show()
+                },
+                onSettings = { settingsOpen = true }, pdfPage = currentPage to pageCount, onPage = pages::goTo,
+                canUndo = pages.canUndo, canRedo = pages.canRedo,
+                onUndo = { layer?.documentAction(0) }, onRedo = { layer?.documentAction(1) },
+                onExport = { if (!exporting && layer != null) export.launch("${notebook.name.replace(Regex("[^a-zA-Z0-9 ._-]"), "_")}.pdf") },
+                onAddPage = if (notebook.isPdf) null else { { changePages(0, notebook.pageCount) } },
+                zoom = zoom, scrollFraction = { pages.placement?.scrollFraction ?: 0f },
+                viewportFraction = viewportFraction, onResetZoom = pages::resetZoom, onScroll = pages::scrollTo,
+                saveStatus = saveStatus, onSave = { layer?.saveNow() }, selectionCount = pages.documentState[3].toInt(), isPdf = notebook.isPdf,
+                dial = dial, fullScreen = fullScreen,
+            )
             if (pagesOpen && !fullScreen) {
                 androidx.compose.ui.window.Popup(alignment = Alignment.TopStart,
                     offset = with(androidx.compose.ui.platform.LocalDensity.current) { androidx.compose.ui.unit.IntOffset(2.dp.roundToPx(), 62.dp.roundToPx()) },

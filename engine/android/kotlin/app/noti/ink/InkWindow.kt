@@ -59,6 +59,8 @@ internal class InkWindow(
     private val buttons: StylusButtons,
     /** After housekeeping (which may have run a deferred redraw). */
     private val onIdle: () -> Unit = {},
+    /** Pen streams that open the tool dial instead of drawing. */
+    private val dial: PenDialRelay? = null,
 ) : SurfaceView(context), SurfaceHolder.Callback {
 
     private val wm = context.getSystemService(WindowManager::class.java)
@@ -75,6 +77,9 @@ internal class InkWindow(
     // The pen pointer of the current stream (id + device), or -1.
     private var penId = -1
     private var penDevice = -1
+    // What the current pen stream does: draws, drives the tool dial, or is swallowed
+    // because it closed a locked dial.
+    private var penMode = PEN_INK
 
     // Housekeeping timer (GPU keep-alive, deferred power changes, palm filter timers).
     private var idleAtMs = 0L
@@ -179,15 +184,30 @@ internal class InkWindow(
             MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> {
                 if (e.actionMasked == MotionEvent.ACTION_DOWN) {
                     requestUnbufferedDispatch(e)
-                    penId = -1  // a new stream: forget a pen whose UP never came (the engine keeps its ink)
+                    // A new stream: forget a pen whose UP never came (the engine keeps its ink).
+                    if (penId >= 0 && penMode == PEN_DIAL) dial?.report(PenDialRelay.CANCEL, 0f, 0f)
+                    penId = -1
+                    penMode = PEN_INK
                 }
                 if (isPen(e, ai)) {
                     if (penId < 0) {
                         gestures?.onPenDown()
-                        onFrame() // apply the final viewport before accepting this stroke
                         penId = e.getPointerId(ai)
                         penDevice = e.deviceId
-                        put(e, ai, -1, NotiInk.ACTION_DOWN, penFlags(e, ai), recv)
+                        penMode = when {
+                            dial != null && dial.enabled && e.getToolType(ai) == MotionEvent.TOOL_TYPE_STYLUS &&
+                                buttons.summonsDial(e.deviceId, e.buttonState) -> {
+                                dial.report(PenDialRelay.DOWN, e.getX(ai), e.getY(ai)); PEN_DIAL
+                            }
+                            dial != null && dial.locked -> {
+                                dial.report(PenDialRelay.DISMISS, e.getX(ai), e.getY(ai)); PEN_SWALLOW
+                            }
+                            else -> PEN_INK
+                        }
+                        if (penMode == PEN_INK) {
+                            onFrame() // apply the final viewport before accepting this stroke
+                            put(e, ai, -1, NotiInk.ACTION_DOWN, penFlags(e, ai), recv)
+                        }
                     }
                 } else {
                     putTouch(e, ai, -1, NotiInk.TOUCH_DOWN, 0)
@@ -195,7 +215,9 @@ internal class InkWindow(
             }
             MotionEvent.ACTION_MOVE -> {
                 val pi = penIndex(e)
-                if (pi >= 0) {
+                if (pi >= 0 && penMode == PEN_DIAL) {
+                    dial?.report(PenDialRelay.MOVE, e.getX(pi), e.getY(pi))
+                } else if (pi >= 0 && penMode == PEN_INK) {
                     val flags = penFlags(e, pi)
                     for (h in 0 until e.historySize) {
                         put(e, pi, h, NotiInk.ACTION_MOVE, flags or NotiInk.FLAG_HISTORICAL, recv)
@@ -212,8 +234,12 @@ internal class InkWindow(
                 val canceled = (e.flags and MotionEvent.FLAG_CANCELED) != 0  // API 33
                 if (penIndex(e) == ai) {
                     if (canceled) buttons.reset()
-                    put(e, ai, -1, if (canceled) NotiInk.ACTION_CANCEL else NotiInk.ACTION_UP, penFlags(e, ai), recv)
+                    when (penMode) {
+                        PEN_INK -> put(e, ai, -1, if (canceled) NotiInk.ACTION_CANCEL else NotiInk.ACTION_UP, penFlags(e, ai), recv)
+                        PEN_DIAL -> dial?.report(if (canceled) PenDialRelay.CANCEL else PenDialRelay.UP, e.getX(ai), e.getY(ai))
+                    }
                     penId = -1
+                    penMode = PEN_INK
                 } else if (!isPen(e, ai)) {
                     putTouch(e, ai, -1, NotiInk.TOUCH_UP, if (canceled) NotiInk.TOUCH_FLAG_CANCELED else 0)
                 }
@@ -222,8 +248,12 @@ internal class InkWindow(
                 buttons.reset()
                 val pi = penIndex(e)
                 if (penId >= 0) {
-                    put(e, if (pi >= 0) pi else 0, -1, NotiInk.ACTION_CANCEL, 0, recv)
+                    when (penMode) {
+                        PEN_INK -> put(e, if (pi >= 0) pi else 0, -1, NotiInk.ACTION_CANCEL, 0, recv)
+                        PEN_DIAL -> dial?.report(PenDialRelay.CANCEL, 0f, 0f)
+                    }
                     penId = -1
+                    penMode = PEN_INK
                 }
                 for (i in 0 until e.pointerCount) {
                     if (i != pi && !isPen(e, i)) putTouch(e, i, -1, NotiInk.TOUCH_CANCEL, 0)
@@ -361,6 +391,12 @@ internal class InkWindow(
             g.onGesture(b.get(o + 20).toInt(), b.getInt(o + 16), b.getFloat(o + 8), b.getFloat(o + 12), b.getLong(o))
         }
         g.onGestureBatchEnd()
+    }
+
+    private companion object {
+        const val PEN_INK = 0
+        const val PEN_DIAL = 1
+        const val PEN_SWALLOW = 2
     }
 
     private fun fastestMode(d: Display?): Display.Mode? {

@@ -8,6 +8,7 @@ import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import app.noti.data.PenButtonAction
 import app.noti.data.SettingsStore
+import app.noti.ink.PenHold
 import app.noti.ui.theme.NotiTheme
 import org.junit.Assert.*
 import org.junit.Rule
@@ -38,8 +39,13 @@ class PenButtonsSettingsTest {
         compose.runOnIdle { assertEquals(PenButtonAction.NextColor, SettingsStore(compose.activity).focusButtonAction) }
         compose.onNodeWithText("Swap Xiaomi button order").performScrollTo().performClick()
         compose.runOnIdle { assertTrue(settings.penSwapLegacyKeys) }
-        compose.onNodeWithText("Hold writing button to erase").performScrollTo().performClick()
-        compose.runOnIdle { assertFalse(SettingsStore(compose.activity).penButtonHolds) }
+        compose.runOnIdle { assertEquals(PenHold.Dial, settings.penButtonHold); assertFalse(settings.toolDialAlways) }
+        compose.onNodeWithText("Always show the tool dial").performScrollTo().performClick()
+        compose.runOnIdle { assertTrue(SettingsStore(compose.activity).toolDialAlways) }
+        compose.onNodeWithText("Hold writing button").performScrollTo().performClick()
+        compose.onNodeWithText("Erase temporarily").performClick()
+        compose.runOnIdle { assertEquals(PenHold.Erase, SettingsStore(compose.activity).penButtonHold) }
+        compose.onNodeWithText("Always show the tool dial").assertDoesNotExist()
         compose.onNodeWithText("Test click and hold").performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("Waiting for pen button input…").performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("Scratch area").assertIsDisplayed()

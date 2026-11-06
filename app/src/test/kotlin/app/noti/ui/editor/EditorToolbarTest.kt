@@ -85,7 +85,9 @@ class EditorToolbarTest {
             }
         }
         compose.onNodeWithContentDescription("Brush options").assertIsNotEnabled()
-        compose.onNodeWithContentDescription("Quick width 28.0").assertIsNotEnabled()
+        // A preset brings back the last drawing tool rather than doing nothing.
+        compose.onNodeWithContentDescription("Quick width 40.0").performClick()
+        compose.runOnIdle { assertEquals(Tool.Highlighter, settings.tool); assertEquals(2, settings.highlighterSlots.width) }
     }
 
     @Test fun wholeAnnularSectorRespondsOutsideTheIconTarget() {
@@ -272,9 +274,11 @@ class EditorToolbarTest {
         compose.runOnIdle { assertEquals(1, undos); assertEquals(1, redos); assertEquals(1, exports); assertEquals(1, papers); assertEquals(1, precision) }
     }
 
-    private fun render(width: Int, theme: ThemeMode, fontScale: Float = 1f, floating: Boolean = false, saveStatus: String = "Autosave on", height: Int = 800) {
+    private fun render(width: Int, theme: ThemeMode, fontScale: Float = 1f, floating: Boolean = false, saveStatus: String = "Autosave on", height: Int = 800,
+        dial: PenDialState = PenDialState(), alwaysVisible: Boolean = true) {
         settings = SettingsStore(RuntimeEnvironment.getApplication()).also {
             it.tool = Tool.Pen; it.penSlots = SettingsStore.DEFAULT_PEN; it.highlighterSlots = SettingsStore.DEFAULT_HIGHLIGHTER
+            it.toolDialAlways = alwaysVisible
         }
         val page = PagePlacement(2, 16f, -160f, width - 32f, width * 1.4f, 1f, width, 600, true)
         compose.setContent {
@@ -295,13 +299,153 @@ class EditorToolbarTest {
                                 pdfPage = 2 to 30, onPage = { requestedPage = it }, canUndo = true, canRedo = true, zoom = 1.75f,
                                 saveStatus = saveStatus, onSave = { saves++ }, onExport = { exports++ },
                                 scrollFraction = { 0.3f }, viewportFraction = 0.15f, onResetZoom = { resets++ }, onScroll = { scrolled = it },
-                                onUndo = { undos++ }, onRedo = { redos++ }, floatingWindows = floating,
+                                onUndo = { undos++ }, onRedo = { redos++ }, floatingWindows = floating, dial = dial,
                             )
                         }
                     }
                 }
             }
         }
+    }
+
+    // ---- the dial the pen summons ----
+
+    /** dp from the dial's centre to the middle of segment [index]. */
+    private fun segment(index: Int): Offset {
+        val angle = Math.toRadians(-144.0 + 36.0 * index)
+        return Offset((76 * kotlin.math.cos(angle)).toFloat(), (76 * kotlin.math.sin(angle)).toFloat())
+    }
+
+    @Test fun everyPointOfTheSummonedDialPicksOneThing() {
+        (0..9).forEach { assertEquals(DialPick.Segment(it), pickAt(segment(it).x, segment(it).y)) }
+        assertEquals(DialPick.Cancel, pickAt(0f, 0f))
+        assertEquals(DialPick.Cancel, pickAt(30f, -30f))
+        // Selection goes by direction, so overshooting the ring still counts.
+        assertEquals(DialPick.Segment(0), pickAt(segment(0).x * 1.8f, segment(0).y * 1.8f))
+        assertEquals(DialPick.Cancel, pickAt(segment(0).x * 3f, segment(0).y * 3f))
+        assertEquals(DialPick.Lock, pickAt(0f, LockOffset))
+        assertEquals(DialPick.Lock, pickAt(12f, LockOffset + 12f))
+    }
+
+    @Test fun summonedDialFollowsTheNibAndLiftChoosesCancelsOrLocks() {
+        val dial = PenDialState().apply { area = androidx.compose.ui.geometry.Size(800f, 800f) }
+        val nib = Offset(400f, 400f)
+        dial.press(nib)
+        assertEquals(PenDialState.Phase.Picking, dial.phase)
+        assertEquals(nib, dial.center)
+        dial.drag(nib + segment(1))
+        assertEquals(DialPick.Segment(1), dial.hovered)
+        assertEquals(1, dial.release(nib + segment(1)))
+        assertEquals(PenDialState.Phase.Hidden, dial.phase)
+        // Back to the hub: cancel.
+        dial.press(nib); dial.drag(nib + segment(3))
+        assertNull(dial.release(nib))
+        assertEquals(PenDialState.Phase.Hidden, dial.phase)
+        // Far outside: cancel.
+        dial.press(nib)
+        assertNull(dial.release(nib + Offset(0f, -400f)))
+        assertEquals(PenDialState.Phase.Hidden, dial.phase)
+        // The lock pip keeps it open.
+        dial.press(nib)
+        assertNull(dial.release(nib + Offset(0f, LockOffset)))
+        assertEquals(PenDialState.Phase.Locked, dial.phase)
+        dial.dismiss()
+        // A press-tap opens it locked too.
+        dial.press(nib); dial.drag(nib + Offset(3f, 3f))
+        assertNull(dial.release(nib + Offset(4f, 4f)))
+        assertEquals(PenDialState.Phase.Locked, dial.phase)
+        // Re-summoning while locked moves it under the new nib.
+        dial.press(Offset(300f, 500f))
+        assertEquals(Offset(300f, 500f), dial.center)
+        dial.cancel()
+        assertEquals(PenDialState.Phase.Hidden, dial.phase)
+    }
+
+    @Test fun summonedDialStaysOnScreenAndAnEdgePressCannotPickByAccident() {
+        val dial = PenDialState().apply { area = androidx.compose.ui.geometry.Size(800f, 600f) }
+        dial.press(Offset(5f, 5f))
+        assertEquals(Offset(108f, 34f + 108f), dial.center)
+        dial.press(Offset(795f, 595f))
+        assertEquals(Offset(800f - 108f, 600f - LockOffset - 22f - 4f), dial.center)
+        // The nib now rests over a segment, but lifting without dragging locks instead of choosing it.
+        dial.drag(Offset(796f, 594f))
+        assertNull(dial.hovered)
+        assertNull(dial.release(Offset(796f, 594f)))
+        assertEquals(PenDialState.Phase.Locked, dial.phase)
+    }
+
+    @Test fun penEventsArriveInWindowPixels() {
+        val dial = PenDialState().apply { area = androidx.compose.ui.geometry.Size(800f, 800f); origin = Offset(100f, 50f); density = 2f }
+        dial.onPen(app.noti.ink.PenDialRelay.DOWN, 900f, 850f)
+        assertEquals(Offset(400f, 400f), dial.center)
+        val target = Offset(900f, 850f) + segment(7) * 2f
+        dial.onPen(app.noti.ink.PenDialRelay.MOVE, target.x, target.y)
+        assertEquals(7, dial.onPen(app.noti.ink.PenDialRelay.UP, target.x, target.y))
+        dial.open()
+        dial.onPen(app.noti.ink.PenDialRelay.DISMISS, 0f, 0f)
+        assertEquals(PenDialState.Phase.Hidden, dial.phase)
+    }
+
+    @Test fun onHoldTheDialStaysHiddenUntilThePenSummonsIt() {
+        val dial = PenDialState()
+        render(800, ThemeMode.Light, dial = dial, alwaysVisible = false)
+        tools.forEach { compose.onNodeWithContentDescription(it).assertDoesNotExist() }
+        compose.onNodeWithContentDescription("Expand tools").assertDoesNotExist()
+        val nib = Offset(400f, 400f)
+        compose.runOnIdle { dial.press(nib); dial.drag(nib + segment(1)) }
+        compose.onNodeWithText("Highlighter").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Keep tools open").assertIsDisplayed()
+        // Centred on the nib.
+        val brush = compose.onNodeWithContentDescription("Brush options").fetchSemanticsNode().boundsInRoot
+        assertEquals(nib.x, brush.center.x, 1f); assertEquals(nib.y, brush.center.y, 1f)
+        screenshot("summoned-picking-light")
+        compose.runOnIdle { settings.applyDialSegment(dial.release(nib + segment(1))!!) }
+        compose.onNodeWithContentDescription("Pen").assertDoesNotExist()
+        compose.runOnIdle { assertEquals(Tool.Highlighter, settings.tool) }
+    }
+
+    @Test fun lockedDialTakesTapsUntilItIsClosed() {
+        val dial = PenDialState()
+        render(800, ThemeMode.Dark, dial = dial, alwaysVisible = false)
+        compose.runOnIdle { dial.press(Offset(300f, 420f)); dial.release(Offset(301f, 421f)) }
+        compose.onNodeWithText("Tap outside to close").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Lasso").performClick()
+        compose.runOnIdle { assertEquals(Tool.Lasso, settings.tool); assertEquals(PenDialState.Phase.Locked, dial.phase) }
+        compose.onNodeWithContentDescription("Quick color 2").performClick()
+        compose.runOnIdle { assertEquals(Tool.Pen, settings.tool); assertEquals(1, settings.penSlots.color) }
+        compose.onNodeWithContentDescription("Brush options").performClick()
+        compose.onNodeWithText("Pressure sensitivity").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithContentDescription("Color 3").performClick()
+        compose.runOnIdle { assertEquals(2, settings.penSlots.color) }
+        screenshot("summoned-locked-dark")
+        compose.onNodeWithContentDescription("Close tools").performClick()
+        compose.onNodeWithContentDescription("Pen").assertDoesNotExist()
+    }
+
+    @Test fun showToolsOpensTheHiddenDialFromMore() {
+        val dial = PenDialState()
+        render(360, ThemeMode.Light, dial = dial, alwaysVisible = false)
+        compose.onNodeWithContentDescription("More").performClick()
+        compose.onNodeWithText("Collapse tools").assertDoesNotExist()
+        compose.onNodeWithText("Show tools").performClick()
+        compose.onNodeWithContentDescription("Close tools").assertIsDisplayed()
+        assertTargetsApart(tools + listOf("Close tools"))
+        compose.runOnIdle { dial.dismiss() }
+        compose.onNodeWithContentDescription("Pen").assertDoesNotExist()
+    }
+
+    @Test fun realPopupSummonsAboveTheDockedDialAndReturnsIt() {
+        val dial = PenDialState()
+        render(800, ThemeMode.Light, floating = true, dial = dial)
+        compose.onNodeWithContentDescription("Brush options").performTouchInput { swipe(center, center + Offset(120f, 80f), 600) }
+        val docked = compose.onNodeWithContentDescription("Brush options").fetchSemanticsNode().positionOnScreen
+        compose.runOnIdle { dial.press(Offset(500f, 500f)) }
+        compose.onAllNodesWithContentDescription("Pen").assertCountEquals(1)
+        compose.onNodeWithContentDescription("Keep tools open").assertIsDisplayed()
+        compose.runOnIdle { dial.release(Offset(500f, 500f) + segment(3)) }
+        compose.runOnIdle { settings.applyDialSegment(3) }
+        assertEquals(docked, compose.onNodeWithContentDescription("Brush options").fetchSemanticsNode().positionOnScreen)
+        compose.runOnIdle { assertEquals(Tool.Lasso, settings.tool) }
     }
 
     private fun assertControls() {

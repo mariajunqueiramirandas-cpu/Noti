@@ -9,7 +9,7 @@ enum class PenButtonAction(val label: String) {
 }
 
 fun SettingsStore.penButtonOptions(enabled: Boolean = true) = StylusButtonOptions(
-    enabled = enabled && penButtonsEnabled, holds = penButtonHolds, legacyKeys = penLegacyKeys,
+    enabled = enabled && penButtonsEnabled, hold = penButtonHold, legacyKeys = penLegacyKeys,
     swapLegacyKeys = penSwapLegacyKeys, captureFocus = focusButtonAction != PenButtonAction.None,
 )
 
@@ -17,6 +17,23 @@ fun SettingsStore.buttonAction(button: PenButton) = when (button) {
     PenButton.Primary -> primaryButtonAction
     PenButton.Secondary -> secondaryButtonAction
     PenButton.Focus -> focusButtonAction
+}
+
+/**
+ * One of the dial's ten segments (see RadialToolSelector): 0–3 tools, 4–6 quick colors,
+ * 7–9 quick widths. A color or width returns to the last pen or highlighter if the
+ * eraser or lasso is in hand, like [PenButtonAction.NextColor].
+ */
+fun SettingsStore.applyDialSegment(segment: Int) {
+    when (segment) {
+        in 0..3 -> tool = Tool.entries[segment]
+        in 4..9 -> {
+            tool = lastDrawingTool
+            val slots = if (tool == Tool.Highlighter) highlighterSlots else penSlots
+            val next = if (segment < 7) slots.copy(color = segment - 4) else slots.copy(width = segment - 7)
+            if (tool == Tool.Highlighter) highlighterSlots = next else penSlots = next
+        }
+    }
 }
 
 /** Use the same persistent tool state as the floating selector. */

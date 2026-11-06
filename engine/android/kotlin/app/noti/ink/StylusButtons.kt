@@ -17,9 +17,18 @@ enum class PenButton(val label: String, val flag: Int) {
     Focus("Focus", 0),
 }
 
+/** What holding the writing button does when the nib touches the page. */
+enum class PenHold(val label: String) {
+    /** The stroke opens the tool dial under the nib instead of drawing. */
+    Dial("Open the tool dial"),
+    /** The stroke erases; the selected tool returns on the next stroke. */
+    Erase("Erase temporarily"),
+    Off("Nothing"),
+}
+
 data class StylusButtonOptions(
     val enabled: Boolean = true,
-    val holds: Boolean = true,
+    val hold: PenHold = PenHold.Dial,
     val legacyKeys: Boolean = true,
     val swapLegacyKeys: Boolean = false,
     // The spotlight button belongs to HyperOS unless explicitly assigned in the app.
@@ -111,17 +120,24 @@ internal class StylusButtons(
     }
 
     /** Only writing can override ink while held. The native engine latches it at nib-down. */
-    fun flags(device: Int, buttons: Int, contact: Boolean): Int {
-        if (!options.enabled || !options.holds) return 0
-        var flags = 0
-        if (buttons and MotionEvent.BUTTON_STYLUS_PRIMARY != 0) flags = flags or NotiInk.FLAG_BUTTON_PRIMARY
+    fun flags(device: Int, buttons: Int, contact: Boolean): Int =
+        if (options.enabled && options.hold == PenHold.Erase && writingHeld(device, buttons, contact)) NotiInk.FLAG_BUTTON_PRIMARY else 0
+
+    /**
+     * Whether a nib touching down now opens the tool dial. Like a hold used for ink,
+     * a hold used for the dial suppresses the button's click.
+     */
+    fun summonsDial(device: Int, buttons: Int): Boolean =
+        options.enabled && options.hold == PenHold.Dial && writingHeld(device, buttons, contact = true)
+
+    private fun writingHeld(device: Int, buttons: Int, contact: Boolean): Boolean {
+        val motion = buttons and MotionEvent.BUTTON_STYLUS_PRIMARY != 0
         // Xiaomi can expose the Bluetooth keys and digitizer as separate devices.
         // Only pressed writing keys count toward association: a click-only
         // screenshot or Focus key on another device cannot block a writing hold.
-        val press = presses[device]?.get(PenButton.Primary.ordinal) ?: singleWritingPress() ?: return flags
-        flags = flags or NotiInk.FLAG_BUTTON_PRIMARY
+        val press = presses[device]?.get(PenButton.Primary.ordinal) ?: singleWritingPress() ?: return motion
         if (contact) press.usedForInk = true
-        return flags
+        return true
     }
 
     private fun singleWritingPress(): Press? {

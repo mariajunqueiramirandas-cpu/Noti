@@ -20,15 +20,61 @@ next quick color, undo or redo. Focus defaults to no action and is passed to the
 Assigning Focus only captures Android's tertiary stylus code if the OS actually delivers it.
 Unknown vendor key codes are not guessed or captured.
 
-With **Hold writing button to erase** enabled, a real held writing button temporarily erases.
+## Holding the writing button
+
+**Settings → Pen buttons → Hold writing button** chooses what a writing-button hold does when the
+nib touches the page: **Open the tool dial** (the default), **Erase temporarily**, or **Nothing**.
+Earlier versions had an on/off "Hold writing button to erase" switch; off stays off, on becomes the
+tool dial.
+
+### Tool dial
+
+Hold the writing button and touch the page: no ink is drawn and the tool dial opens centred under
+the nib. You can let go of the button now; only the nib matters. Drag to a segment (the label above
+the dial names it and the centre previews the stroke) and lift to choose it:
+
+| Lift the nib on… | Result |
+| --- | --- |
+| A tool, color or width segment | Applies it and closes the dial |
+| The centre (hub) | Cancels; nothing changes |
+| Far outside the ring | Cancels |
+| The lock below the dial | Keeps the dial open (locked) |
+| The spot it landed on, without dragging | Opens the dial locked |
+
+Selection follows direction, so overshooting the ring still picks the segment you point at. Near an
+edge the dial moves inward to stay on screen; lifting without dragging then locks it rather than
+picking whatever ended up under the nib. A color or width picked while the eraser or lasso is in hand
+returns to the last pen or highlighter, like **Next quick color**.
+
+A locked dial takes taps like the docked one: the centre opens the full brush options. The next pen
+touch or deliberate finger touch on the page closes it and never draws (finger drawing pauses while
+the dial is locked; palms are ignored as usual). Tapping the lock or pressing Back also closes it.
+Holding the button and touching the page elsewhere moves it there.
+
+By default the dial is hidden until the pen summons it; **More → Show tools** opens it locked without
+the pen, and the pen summons it in full screen too. **Always show the tool dial** keeps the docked dial
+on the page (holding the button still opens a dial under the nib, and the docked one returns
+afterwards). If pen shortcuts are off or the hold does something else, the docked dial always shows.
+
+How it works: the ink window diverts a pen stream that starts with the writing button held to the UI
+thread instead of the engine. The stream stays with the ink window, so the dial window opening under
+the nib cannot take it over. While locked, the ink window swallows the next pen stream and reports it
+as a dismissal. Settings scratch canvases have no dial; there a held stroke draws normally.
+
+### Erase temporarily
+
+With **Erase temporarily** selected, a real held writing button temporarily erases.
 A held writing key or primary stylus motion-button flag applies to strokes
 started while pressed. The native engine latches the tool at nib-down, so release never turns half
 an eraser gesture into ink: the selected tool returns on the next stroke. The screenshot button never
-sets a temporary tool override, including when both buttons are pressed. Using a held writing button
-for ink suppresses its click, even if released quickly.
+sets a temporary tool override, including when both buttons are pressed.
+
+### Both
+
+Using a held writing button for ink or the dial suppresses its click, even if released quickly.
 Long presses without ink also suppress clicks, using Android's configured long-press timeout.
 
-Turn holds off to keep only key click shortcuts. Turn **Pen shortcuts** off to pass keys through
+Set the hold to **Nothing** to keep only key click shortcuts. Turn **Pen shortcuts** off to pass keys through
 and disable button-based tool overrides; the physical eraser tip remains available.
 
 ## What a tablet exposes
@@ -45,7 +91,7 @@ Supported inputs:
 | Android key codes 308 / 309 | Primary (writing) / secondary (screenshot) |
 | Android key code 310 | Focus, only when assigned |
 | Page Down / Page Up (93 / 92) from a stylus source or a pen-named device | Xiaomi writing / screenshot compatibility mapping |
-| `BUTTON_STYLUS_PRIMARY` in pen motion events | Temporary erase; no additional click |
+| `BUTTON_STYLUS_PRIMARY` in pen motion events | Tool dial or temporary erase, per the hold setting; no additional click |
 | `BUTTON_STYLUS_SECONDARY` in pen motion events | Diagnostic state only; no temporary tool override |
 
 The Xiaomi mapping is a compatibility default, not a guarantee for every firmware. **Swap Xiaomi
@@ -85,10 +131,16 @@ not the tablet's firmware. On the target tablet:
 2. Hold only the writing button for two seconds. Mi Canvas should stay closed. A down report that remains until physical release followed
    by a long-press report demonstrates key hold timing. An immediate click while still holding
    means that key stream exposes clicks only. Motion state reports may independently expose holds.
-3. Draw a line in the scratch area. Hold writing before touching it to erase. Check away/near-screen
-   transitions while keeping the writing button pressed, including the editor's settings dialog.
+3. With the hold set to **Erase temporarily**, draw a line in the scratch area. Hold writing before
+   touching it to erase. Check away/near-screen transitions while keeping the writing button pressed,
+   including the editor's settings dialog.
+   With the default **Open the tool dial**, in a notebook: hold writing and touch the page. The dial
+   should open under the nib with no ink and no Mi Canvas. Release the button mid-drag and confirm the
+   pick still completes on lift; lift on the hub (no change), on the lock and with a press-tap (both
+   lock), then touch the page outside with the pen and with a finger (closes, draws nothing). Rest a
+   palm on the screen while the dial is locked: it should stay open.
 4. In a notebook, verify click toggles, persistent return to pen/highlighter, undo/redo assignments,
-   and that a real hold used for ink does not also toggle on release. Check both drawing tools.
+   and that a real hold used for ink or the dial does not also toggle on release. Check both drawing tools.
 5. While holding the writing button, open settings, leave/reopen the editor, switch apps, rotate, disconnect
    the pen, and turn shortcuts off/on. No tool should remain temporarily held after canceled input.
 6. Verify ordinary Bluetooth keyboard Page Up/Down, and Xiaomi's unassigned Focus button. OS-reserved

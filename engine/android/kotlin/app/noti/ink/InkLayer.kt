@@ -89,6 +89,16 @@ class InkLayer(
         reset = ::resetButtons,
     )
     private var fingerDrawing = fingerDrawing
+    private val dial = PenDialRelay(main, anchor) { released }
+    // A deliberate finger touch also closes a locked dial (palms never reach gestures).
+    private val windowGestures = object : GestureListener {
+        override fun onGesture(action: Int, id: Int, x: Float, y: Float, timeNanos: Long) {
+            if (action == NotiInk.GESTURE_DOWN && dial.locked) dial.report(PenDialRelay.DISMISS, x, y)
+            gestures?.onGesture(action, id, x, y, timeNanos)
+        }
+        override fun onPenDown() { gestures?.onPenDown() }
+        override fun onGestureBatchEnd() { gestures?.onGestureBatchEnd() }
+    }
     private val initialModel = palmModel?.copyOf()
     private val initialInk = initialInk
     private var persistenceEnabled = true
@@ -150,7 +160,7 @@ class InkLayer(
             ink.post(documentPoll)
             initialModel?.let { NotiInk.nativeSetPalmModel(handle, it) }
             NotiInk.nativeSetFingerInk(handle, fingerDrawing)
-            window = InkWindow(context, handle, ink, gestures, ::flushPage, buttons, onIdle = ::requestHostFrame)
+            window = InkWindow(context, handle, ink, windowGestures, ::flushPage, buttons, onIdle = ::requestHostFrame, dial = dial)
                 .also { it.add(token, bounds) }
         }
         anchor.viewTreeObserver.addOnPreDrawListener(preDraw)
@@ -243,10 +253,37 @@ class InkLayer(
     fun setFingerDrawing(on: Boolean) {
         if (on == fingerDrawing) return
         fingerDrawing = on
+        applyFingerInk()
+    }
+
+    private fun applyFingerInk() {
+        // A finger that closes a locked dial must not also draw.
+        val on = fingerDrawing && !dial.locked
         ink.post {
+            if (released) return@post
             NotiInk.nativeSetFingerInk(handle, on)
             window?.drainGestures()
         }
+    }
+
+    // ---- tool dial ----
+
+    /**
+     * [listener] receives pen streams started with the writing button held (with
+     * [StylusButtonOptions.hold] = [PenHold.Dial]) instead of the engine drawing them:
+     * PenDialRelay.DOWN / MOVE / UP / CANCEL, and DISMISS for a touch outside a locked
+     * dial. Main thread, window coordinates in pixels. Null turns the dial gesture off.
+     */
+    fun setPenDial(listener: ((action: Int, x: Float, y: Float) -> Unit)?) {
+        dial.listener = listener
+        if (listener == null) setDialLocked(false)
+    }
+
+    /** While locked, the next pen or deliberate finger touch on the canvas closes the dial; it never draws. */
+    fun setDialLocked(locked: Boolean) {
+        if (dial.locked == locked) return
+        dial.locked = locked
+        applyFingerInk()
     }
 
     /**
