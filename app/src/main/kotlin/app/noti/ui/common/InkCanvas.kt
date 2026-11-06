@@ -39,6 +39,7 @@ import androidx.compose.ui.platform.LocalInspectionMode
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.viewinterop.AndroidView
+import app.noti.data.EndlessCanvas
 import app.noti.data.InkFile
 import app.noti.data.Tool
 import app.noti.data.Paper
@@ -110,6 +111,8 @@ class PageController {
  * zoom or turn PDF pages (or draw, with [PalmSpec.fingerDrawing]).
  *
  * Pages scroll continuously; ink stays in page coordinates through zoom, pan and rotation.
+ * With a [sheetAspect] there are no pages: the Endless paper's free canvas, one sheet
+ * that starts this tall (height / width) and grows as you go (see [EndlessCanvas]).
  *
  * The native input window follows the anchor's global position as well as its size.
  * Document scrolling stays inside this fixed, clipped viewport.
@@ -126,6 +129,7 @@ fun InkCanvas(
     onTwoFingerDoubleTap: (() -> Unit)? = null,
     onLayer: ((InkLayer?) -> Unit)? = null,
     pageCount: Int = 1,
+    sheetAspect: Float? = null,
     inkFile: InkFile? = null,
     tapUndo: Boolean = false,
     onDocumentState: ((DoubleArray) -> Unit)? = null,
@@ -143,6 +147,8 @@ fun InkCanvas(
     }
     val context = LocalContext.current
     val marginPx = with(LocalDensity.current) { 16.dp.toPx() }
+    val screenPx = with(LocalDensity.current) { EndlessCanvas.BASE_DP.dp.toPx() }
+    val sheet = sheetAspect != null && pdf == null
     val anchor = remember { View(context) }
     val doubleTap = rememberUpdatedState(onTwoFingerDoubleTap)
     val onModel = rememberUpdatedState(palm.onModel)
@@ -170,6 +176,8 @@ fun InkCanvas(
                 }
             }
         }
+        // Not drawn yet (no canvas size or document), so safe before the ink thread owns it.
+        if (sheet) viewport.setSheet(screenPx, EndlessCanvas.SPAN, EndlessCanvas.HOME_Y, EndlessCanvas.GROW)
         val gestures = CanvasGestures(
             ViewConfiguration.get(context).scaledTouchSlop.toFloat(), viewport,
             onTwoFingerTap = { if (undoTap.value) created.documentAction(0) },
@@ -221,8 +229,9 @@ fun InkCanvas(
     }
 
     val sizes = pdf?.pageSizes
-    val aspects = remember(sizes, pageCount, paper.size) {
-        sizes?.map { it.height / it.width }
+    val aspects = remember(sizes, pageCount, paper.size, sheet, sheetAspect) {
+        if (sheet) listOf(sheetAspect!!)
+        else sizes?.map { it.height / it.width }
             ?: List(pageCount) { if (paper.size == app.noti.data.PaperSize.Letter) 11f / 8.5f else 1.4142f }
     }
     LaunchedEffect(aspects, controller.requestedPage) {
@@ -265,7 +274,7 @@ fun InkCanvas(
 
     DocumentViewport(modifier.onSizeChanged { size -> layer.runOnInkThread { rig.viewport.setCanvas(size.width, size.height) } }) {
         // Read in the draw phase only: scrolling and zooming redraw, never recompose.
-        DocumentBackground(paper, pdf, { controller.placement }, Modifier.fillMaxSize())
+        DocumentBackground(paper, pdf, { controller.placement }, Modifier.fillMaxSize(), sheet = sheet)
         if (pdf != null) {
             pdf.error?.let { Text(it, modifier = Modifier.align(Alignment.Center), color = MaterialTheme.colorScheme.error) }
         }
@@ -308,13 +317,21 @@ internal fun PagePlacement.pageArray(): FloatArray {
  * Renders only pages intersecting the viewport; paper, PDF and ink share the same transform.
  * [placement] is read while drawing, so a moving document redraws without recomposing.
  * Positions are not rounded: the page sits exactly where the ink engine puts its ink.
+ * A [sheet] (the Endless canvas) is paper edge to edge: no page shadow or border.
  */
 @Composable
-internal fun DocumentBackground(paper: Paper, images: PageImages?, placement: () -> PagePlacement?, modifier: Modifier) {
+internal fun DocumentBackground(paper: Paper, images: PageImages?, placement: () -> PagePlacement?, modifier: Modifier,
+    sheet: Boolean = false) {
     val backdrop = MaterialTheme.colorScheme.surfaceContainerLow
     Canvas(modifier) {
         drawRect(backdrop)
         val current = placement() ?: return@Canvas
+        if (sheet) {
+            current.visiblePages.forEach { p ->
+                drawPaperSheet(paper, p.left, p.top, p.width, p.height, p.width / (1000f * EndlessCanvas.SPAN))
+            }
+            return@Canvas
+        }
         current.visiblePages.forEach { p ->
             drawRect(Color(0x12000000), Offset(p.left + 2f, p.top + 4f), Size(p.width, p.height))
             if (images == null) {

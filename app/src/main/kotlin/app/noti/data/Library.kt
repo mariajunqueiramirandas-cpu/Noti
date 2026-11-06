@@ -17,7 +17,7 @@ enum class PaperColor(val label: String, val argb: Long, val isDark: Boolean) {
     Dark("Dark", 0xFF24272C, true),
 }
 
-/** Notebook paper proportions; Endless pages use the A4 writing proportion. */
+/** Notebook paper proportions. Endless is a free canvas with no pages (see [EndlessCanvas]). */
 enum class PaperSize(val label: String) {
     A4("A4"), Letter("Letter"), Endless("Endless"),
 }
@@ -41,8 +41,12 @@ data class Notebook(
     /** An annotated PDF: its file name in [LibraryStore.pdfDir]. Null for a plain notebook. */
     val pdf: String? = null,
     val pageCount: Int = 1,
+    /** Its ink is laid out on the Endless canvas (older Endless notebooks used A4 pages). */
+    val canvasInk: Boolean = false,
 ) {
     val isPdf get() = pdf != null
+    /** A free canvas: one endless sheet instead of pages. */
+    val isCanvas get() = pdf == null && paper.size == PaperSize.Endless
 }
 
 data class Folder(val id: String, val name: String)
@@ -84,6 +88,7 @@ class LibraryStore(context: Context) {
             folderId = folderId,
             createdAt = now,
             openedAt = now,
+            canvasInk = paper.size == PaperSize.Endless,
         )
         notebooks = notebooks + nb
         save()
@@ -114,6 +119,8 @@ class LibraryStore(context: Context) {
     fun rename(id: String, name: String) = update(id) { it.copy(name = name.ifBlank { it.name }) }
     fun setPaper(id: String, paper: Paper) = update(id) { it.copy(paper = paper) }
     fun setPageCount(id: String, count: Int) = update(id) { it.copy(pageCount = count.coerceAtLeast(1)) }
+    /** The notebook's saved ink has been moved onto the Endless canvas. */
+    fun setCanvasInk(id: String) = update(id) { it.copy(canvasInk = true, pageCount = 1) }
     fun markOpened(id: String) = update(id) { it.copy(openedAt = System.currentTimeMillis()) }
 
     fun setFavorite(ids: Set<String>, favorite: Boolean) = updateAll(ids) { it.copy(favorite = favorite) }
@@ -198,6 +205,7 @@ class LibraryStore(context: Context) {
                     trashedAt = if (o.has("trashedAt")) o.getLong("trashedAt") else null,
                     pdf = o.optString("pdf").ifEmpty { null },
                     pageCount = o.optInt("pageCount", 1).coerceAtLeast(1),
+                    canvasInk = o.optBoolean("canvasInk"),
                 )
             }
         }
@@ -219,6 +227,7 @@ class LibraryStore(context: Context) {
                 .put("openedAt", nb.openedAt)
                 .apply { nb.trashedAt?.let { put("trashedAt", it) } }
                 .put("pageCount", nb.pageCount)
+                .put("canvasInk", nb.canvasInk)
                 .apply { nb.pdf?.let { put("pdf", it) } }
         }))
         // Write-then-rename so a crash mid-write never leaves a truncated library.

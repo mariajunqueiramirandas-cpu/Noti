@@ -47,10 +47,26 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
+/** Saved ink, and for the Endless canvas the height its sheet starts at. */
+private class OpenedInk(val file: InkFile, val sheetAspect: Float?)
+
+/** IO. Ink from the A4-shaped pages Endless notebooks used to have is moved onto the canvas first. */
+private fun openInk(notebook: Notebook, library: LibraryStore): OpenedInk {
+    val file = library.inkFile(notebook)
+    var ink = InkFile.open(file)
+    if (!notebook.isCanvas) return OpenedInk(ink, null)
+    if (!notebook.canvasInk) EndlessCanvas.fromPages(ink.initial)?.let { ink = InkFile.replace(file, it) }
+    // Unreadable ink is the engine's to report (it keeps the file untouched).
+    val aspect = runCatching { EndlessCanvas.aspect(InkArchive.decode(ink.initial)) }.getOrDefault(EndlessCanvas.MIN_ASPECT)
+    return OpenedInk(ink, aspect)
+}
+
 @Composable
 fun EditorScreen(notebook: Notebook, library: LibraryStore, settings: SettingsStore, onBack: () -> Unit) {
-    val opened by produceState<Result<InkFile>?>(null, notebook.id) {
-        value = withContext(Dispatchers.IO) { runCatching { InkFile.open(library.inkFile(notebook)) } }
+    val opened by produceState<Result<OpenedInk>?>(null, notebook.id) {
+        val result = withContext(Dispatchers.IO) { runCatching { openInk(notebook, library) } }
+        if (result.isSuccess && notebook.isCanvas && !notebook.canvasInk) library.setCanvasInk(notebook.id)
+        value = result
     }
     val result = opened
     if (result == null) {
@@ -68,12 +84,14 @@ fun EditorScreen(notebook: Notebook, library: LibraryStore, settings: SettingsSt
             text = { Text("The saved file has been kept. Return to the library and try again.") },
             confirmButton = { app.noti.ui.common.NotiButton(onClick = onBack) { Text("Back to library") } })
     } else {
-        key(notebook.id) { EditorContent(notebook, library, settings, result.getOrThrow(), onBack) }
+        val ink = result.getOrThrow()
+        key(notebook.id) { EditorContent(notebook, library, settings, ink.file, ink.sheetAspect, onBack) }
     }
 }
 
 @Composable
-private fun EditorContent(notebook: Notebook, library: LibraryStore, settings: SettingsStore, inkFile: InkFile, onBack: () -> Unit) {
+private fun EditorContent(notebook: Notebook, library: LibraryStore, settings: SettingsStore, inkFile: InkFile,
+    sheetAspect: Float?, onBack: () -> Unit) {
     var pagesOpen by remember { mutableStateOf(false) }
     var fullScreen by remember { mutableStateOf(false) }
     var renaming by remember { mutableStateOf(false) }
@@ -143,7 +161,7 @@ private fun EditorContent(notebook: Notebook, library: LibraryStore, settings: S
     val viewportFraction by remember { derivedStateOf { ((pages.placement?.viewportFraction ?: 1f) * 1000).roundToInt() / 1000f } }
 
     fun changePages(operation: Int, index: Int) {
-        if (pageBusy || notebook.isPdf || layer == null) return
+        if (pageBusy || notebook.isPdf || notebook.isCanvas || layer == null) return
         if (operation == 2 && notebook.pageCount <= 1) return
         pageBusy = true
         layer?.documentAction(operation + 2, index) { ok ->
@@ -184,7 +202,7 @@ private fun EditorContent(notebook: Notebook, library: LibraryStore, settings: S
         Box(Modifier.fillMaxSize().then(if (fullScreen) Modifier else Modifier.windowInsetsPadding(WindowInsets.safeDrawing))) {
             InkCanvas(
                 paper = notebook.paper, brush = brush, engine = engine, modifier = Modifier.fillMaxSize(),
-                palm = palm, pdf = pdf, pages = pages, pageCount = notebook.pageCount, inkFile = inkFile,
+                palm = palm, pdf = pdf, pages = pages, pageCount = notebook.pageCount, sheetAspect = sheetAspect, inkFile = inkFile,
                 tapUndo = settings.tapUndo, onLayer = { layer = it }, onRestoreError = { restoreError = true },
                 onTwoFingerDoubleTap = { fullScreen = false },
                 topClearance = if (fullScreen) 16.dp else 72.dp, bottomClearance = if (fullScreen) 16.dp else 72.dp,
@@ -201,17 +219,18 @@ private fun EditorContent(notebook: Notebook, library: LibraryStore, settings: S
                     fullScreen = true
                     Toast.makeText(context, "Two-finger double-tap or Back to exit full screen", Toast.LENGTH_SHORT).show()
                 },
-                onSettings = { settingsOpen = true }, pdfPage = currentPage to pageCount, onPage = pages::goTo,
+                // The Endless canvas has no pages to count, add or turn.
+                onSettings = { settingsOpen = true }, pdfPage = if (notebook.isCanvas) null else currentPage to pageCount, onPage = pages::goTo,
                 canUndo = pages.canUndo, canRedo = pages.canRedo,
                 onUndo = { layer?.documentAction(0) }, onRedo = { layer?.documentAction(1) },
                 onExport = { if (!exporting && layer != null) export.launch("${notebook.name.replace(Regex("[^a-zA-Z0-9 ._-]"), "_")}.pdf") },
-                onAddPage = if (notebook.isPdf) null else { { changePages(0, notebook.pageCount) } },
+                onAddPage = if (notebook.isPdf || notebook.isCanvas) null else { { changePages(0, notebook.pageCount) } },
                 zoom = zoom, scrollFraction = { pages.placement?.scrollFraction ?: 0f },
                 viewportFraction = viewportFraction, onResetZoom = pages::resetZoom, onScroll = pages::scrollTo,
                 saveStatus = saveStatus, onSave = { layer?.saveNow() }, selectionCount = pages.documentState[3].toInt(), isPdf = notebook.isPdf,
                 dial = dial, fullScreen = fullScreen,
             )
-            if (pagesOpen && !fullScreen) {
+            if (pagesOpen && !fullScreen && !notebook.isCanvas) {
                 androidx.compose.ui.window.Popup(alignment = Alignment.TopStart,
                     offset = with(androidx.compose.ui.platform.LocalDensity.current) { androidx.compose.ui.unit.IntOffset(2.dp.roundToPx(), 62.dp.roundToPx()) },
                     properties = androidx.compose.ui.window.PopupProperties(focusable = true),
@@ -229,7 +248,7 @@ private fun EditorContent(notebook: Notebook, library: LibraryStore, settings: S
             }
         }
     }
-    TranscribeTool(layer, pages.documentState, settings.handwritingLanguage)
+    TranscribeTool(layer, pages.documentState, settings.handwritingLanguage, canvas = notebook.isCanvas)
     if (restoreError) AlertDialog(onDismissRequest = {}, title = { Text("Couldn't read saved ink") },
         text = { Text("The saved file has been kept without changes. Return to the library to keep your original ink safe.") },
         confirmButton = { app.noti.ui.common.NotiButton(onClick = onBack) { Text("Back to library") } })
