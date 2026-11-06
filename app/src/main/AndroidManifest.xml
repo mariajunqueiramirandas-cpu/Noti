@@ -1,8 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- Only to download a handwriting language for the Transcribe tool (ML Kit), once per
-         language. Recognition itself runs on the device and notes never leave it. -->
+    <!-- To download a handwriting language for the Transcribe tool (ML Kit), once per language;
+         recognition itself runs on the device. And, only on Study boards and only with the
+         user's own Mistral API key, to send a linked PDF or a looped answer to Mistral. -->
     <uses-permission android:name="android.permission.INTERNET" />
 
     <application
@@ -10,6 +11,8 @@
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher"
         android:hardwareAccelerated="true"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="@xml/backup_rules"
         android:theme="@android:style/Theme.DeviceDefault.Light.NoActionBar">
 
         <activity

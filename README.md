@@ -28,6 +28,7 @@
 [**The ink engine**](engine/README.md) ·
 [**Palm rejection**](docs/PALM_REJECTION.md) ·
 [**Pen buttons**](docs/PEN_BUTTONS.md) ·
+[**Study boards**](docs/STUDY_BOARD.md) ·
 [**Latency plan**](docs/LOW_LATENCY_PLAN.md) ·
 [**Brand guide**](docs/branding/README.md)
 
@@ -56,7 +57,8 @@ actual statistics in it, and a cheerful lavender mascot. Priorities.
 <td align="center">💾<br><b>Saves on its own</b><br><sub>Atomic, versioned, autosaved between strokes. Your notes are safe.</sub></td>
 </tr>
 <tr>
-<td colspan="3" align="center">🔤<br><b>Handwriting to text</b><br><sub>Loop it, read it, copy it or swap it for neat typed ink. On the tablet, offline, no account.</sub></td>
+<td align="center">🔤<br><b>Handwriting to text</b><br><sub>Loop it, read it, copy it or swap it for neat typed ink. On the tablet, offline, no account.</sub></td>
+<td colspan="2" align="center">🎓<br><b>Study boards</b><br><sub>Link a PDF, get math and physics questions on a floating sheet, work them on the board, loop to check, print the keepers.</sub></td>
 </tr>
 </table>
 
@@ -153,6 +155,26 @@ Reading happens on the tablet with Google's ML Kit digital ink recognizer. The f
 (about 20 MB); after that it works offline and your notes never leave the device. It follows the device language; pick another
 in **Settings → Writing → Handwriting language**. Highlighter strokes in the loop are left out, and the lines are worked out from
 the ink itself, so dots, accents and descenders stay on the line they belong to.
+
+### 🎓 Study boards
+
+**New → Study board** makes an endless canvas that studies a PDF with you. Link one from the library, and Mistral
+Large 4 turns it (or a page range, or notes you loop on the board) into **math and physics** questions, multiple
+choice, problems and flash cards. They stream onto a **floating sheet** over the board:
+
+- **Work it on the board**, then **Check**: loop your work and get a red-pen verdict, feedback and a ✓ or ✗ per step.
+- **Multiple choice** is checked on the tablet. **Flash cards** flip and get rated.
+- **Hints** come one at a time. **Answer** shows the worked solution. **Source** shows the cited page and can lay
+  it on the board.
+- **Print** pins the item to the board exactly where, and as big as, the sheet showed it. The sheet steps aside
+  until **Study** in the top bar brings it back on what's due.
+
+Reviews are spaced with FSRS. There are timed exams with a printable score card, and a button that arranges
+printed cards in columns by topic. Export PDF includes the cards.
+
+It uses **your own Mistral API key** (Settings → Study), encrypted on the tablet. Nothing leaves the tablet unless
+you ask, and uploaded PDFs are deleted from Mistral once the questions are made. Details are in
+[docs/STUDY_BOARD.md](docs/STUDY_BOARD.md).
 
 <details>
 <summary><b>🔧 How the floating bits stay out of the ink's way</b></summary>

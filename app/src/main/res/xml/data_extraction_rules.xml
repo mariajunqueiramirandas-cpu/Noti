@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The Mistral API key is encrypted with a device-bound Keystore key: it can't be restored
+     elsewhere, so it is never backed up or transferred. -->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="sharedpref" path="study_keys.xml" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="sharedpref" path="study_keys.xml" />
+    </device-transfer>
+</data-extraction-rules>

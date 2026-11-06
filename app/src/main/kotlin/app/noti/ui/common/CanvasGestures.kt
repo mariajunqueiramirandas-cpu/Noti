@@ -12,7 +12,8 @@ import kotlin.math.max
  * Turns the palm filter's stream of deliberate touches into canvas gestures:
  *  - one finger scrolls continuously with momentum,
  *  - two fingers pinch-zoom and pan,
- *  - a two-finger double tap calls [onTwoFingerDoubleTap].
+ *  - a two-finger double tap calls [onTwoFingerDoubleTap],
+ *  - a one-finger tap calls [onTap] (on the main thread) with where it was.
  *
  * Palms never get here: the native filter only passes on contacts it has confirmed,
  * replaying the samples it held back meanwhile, and cancels a contact it later finds
@@ -23,7 +24,7 @@ internal class CanvasGestures(
     private val viewport: PageViewport?,
     private val onTwoFingerTap: () -> Unit = {},
     private val onTwoFingerDoubleTap: () -> Unit,
-
+    private val onTap: ((Float, Float) -> Unit)? = null,
 ) : GestureListener {
     private val main = android.os.Handler(android.os.Looper.getMainLooper())
     private val tapAction = Runnable { onTwoFingerTap() }
@@ -71,6 +72,8 @@ internal class CanvasGestures(
     private var cancelled = false
     private var engaged = false
     private var lastTapEnd = 0L
+    private var upX = 0f
+    private var upY = 0f
     // Transform tracking between batches.
     private var lastCount = 0
     private var lastCx = 0f
@@ -100,7 +103,8 @@ internal class CanvasGestures(
                 if (hypot(x - p.x0, y - p.y0) > slopPx) moved = true
             }
             NotiInk.GESTURE_UP, NotiInk.GESTURE_CANCEL -> {
-                if (pointers.remove(id) == null) return
+                val gone = pointers.remove(id) ?: return
+                upX = gone.x; upY = gone.y
                 if (action == NotiInk.GESTURE_CANCEL) cancelled = true
                 if (pointers.isEmpty()) endSession(timeNanos)
             }
@@ -152,6 +156,10 @@ internal class CanvasGestures(
             startFling()
         } else viewport?.end()
         lastCount = 0
+        if (!cancelled && maxPointers == 1 && !moved && t - sessionStart < TAP_NS && onTap != null) {
+            val x = upX; val y = upY
+            main.post { onTap.invoke(x, y) }
+        }
         val tap = !cancelled && maxPointers == 2 && !moved && t - sessionStart < TAP_NS
         if (!tap) { lastTapEnd = 0L; return }
         if (lastTapEnd != 0L && t - lastTapEnd < DOUBLE_TAP_NS) {

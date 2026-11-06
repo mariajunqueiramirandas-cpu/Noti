@@ -113,7 +113,10 @@ internal class TranscribeSession(
  * the panel with the text.
  */
 @Composable
-internal fun TranscribeTool(layer: InkLayer?, documentState: DoubleArray, languageTag: String, canvas: Boolean = false) {
+internal fun TranscribeTool(layer: InkLayer?, documentState: DoubleArray, languageTag: String, canvas: Boolean = false,
+    /** Off while a Study board borrows the loop (to check an answer); its loops are skipped, not saved for later. */
+    enabled: Boolean = true) {
+    val active by rememberUpdatedState(enabled)
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val serial = documentState.getOrNull(9)?.toLong() ?: 0L
@@ -130,6 +133,7 @@ internal fun TranscribeTool(layer: InkLayer?, documentState: DoubleArray, langua
         val current = layer ?: return@LaunchedEffect
         if (serial <= handled) return@LaunchedEffect
         handled = serial
+        if (!active) return@LaunchedEffect
         current.selectionInk { data ->
             val next = TranscribeSession.from(data, canvas)
             if (next == null) {

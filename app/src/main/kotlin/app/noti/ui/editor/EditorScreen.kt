@@ -27,6 +27,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
@@ -196,12 +197,16 @@ private fun EditorContent(notebook: Notebook, library: LibraryStore, settings: S
         current?.setPenDial(if (!dialGesture) null else { action, x, y -> dial.onPen(action, x, y)?.let(settings::applyDialSegment) })
         onDispose { current?.setPenDial(null) }
     }
+    // A Study board: its sheet, printed cards and the loops the sheet asks for.
+    val study = app.noti.ui.study.rememberStudyBoard(notebook, library, settings)
+    val loopSerial = pages.documentState.getOrNull(9)?.toLong() ?: 0L
     val dialLocked = dial.phase == PenDialState.Phase.Locked
     LaunchedEffect(layer, dialLocked) { layer?.setDialLocked(dialLocked) }
     Surface(color = MaterialTheme.colorScheme.background, modifier = Modifier.fillMaxSize()) {
         Box(Modifier.fillMaxSize().then(if (fullScreen) Modifier else Modifier.windowInsetsPadding(WindowInsets.safeDrawing))) {
             InkCanvas(
-                paper = notebook.paper, brush = brush, engine = engine, modifier = Modifier.fillMaxSize(),
+                paper = notebook.paper, brush = brush, engine = engine,
+                modifier = Modifier.fillMaxSize().then(if (study != null) Modifier.onGloballyPositioned { study.geometry.editor = it } else Modifier),
                 palm = palm, pdf = pdf, pages = pages, pageCount = notebook.pageCount, sheetAspect = sheetAspect, inkFile = inkFile,
                 tapUndo = settings.tapUndo, onLayer = { layer = it }, onRestoreError = { restoreError = true },
                 onTwoFingerDoubleTap = { fullScreen = false },
@@ -210,6 +215,8 @@ private fun EditorContent(notebook: Notebook, library: LibraryStore, settings: S
                 onButtonClick = { button ->
                     settings.performButtonAction(settings.buttonAction(button)) { layer?.documentAction(it) }
                 },
+                board = study?.layer,
+                onTap = study?.let { b -> { x, y -> b.tap(x, y, pages.placement) } },
             )
             EditorToolbar(
                 title = notebook.name, settings = settings, pagesOpen = pagesOpen,
@@ -229,7 +236,12 @@ private fun EditorContent(notebook: Notebook, library: LibraryStore, settings: S
                 viewportFraction = viewportFraction, onResetZoom = pages::resetZoom, onScroll = pages::scrollTo,
                 saveStatus = saveStatus, onSave = { layer?.saveNow() }, selectionCount = pages.documentState[3].toInt(), isPdf = notebook.isPdf,
                 dial = dial, fullScreen = fullScreen,
+                studyButton = study?.let { b -> { app.noti.ui.study.StudyButton(b.controller) } },
             )
+            if (study != null) BoxWithConstraints(Modifier.fillMaxSize()) {
+                app.noti.ui.study.StudyOverlay(study, layer, { pages.placement }, loopSerial, maxWidth, maxHeight,
+                    hidden = settingsOpen, onSettings = { settingsOpen = true })
+            }
             if (pagesOpen && !fullScreen && !notebook.isCanvas) {
                 androidx.compose.ui.window.Popup(alignment = Alignment.TopStart,
                     offset = with(androidx.compose.ui.platform.LocalDensity.current) { androidx.compose.ui.unit.IntOffset(2.dp.roundToPx(), 62.dp.roundToPx()) },
@@ -248,7 +260,8 @@ private fun EditorContent(notebook: Notebook, library: LibraryStore, settings: S
             }
         }
     }
-    TranscribeTool(layer, pages.documentState, settings.handwritingLanguage, canvas = notebook.isCanvas)
+    TranscribeTool(layer, pages.documentState, settings.handwritingLanguage, canvas = notebook.isCanvas,
+        enabled = study?.controller?.loop == null)
     if (restoreError) AlertDialog(onDismissRequest = {}, title = { Text("Couldn't read saved ink") },
         text = { Text("The saved file has been kept without changes. Return to the library to keep your original ink safe.") },
         confirmButton = { app.noti.ui.common.NotiButton(onClick = onBack) { Text("Back to library") } })
