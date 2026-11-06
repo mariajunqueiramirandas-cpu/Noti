@@ -40,6 +40,7 @@ namespace {
 
 using noti::Command;
 using noti::CommandType;
+using noti::Capsule;
 
 constexpr uint32_t kStagingSamples = 512;  // > max historical samples in one MotionEvent
 constexpr uint32_t kTouchStaging = 512;
@@ -244,6 +245,7 @@ jboolean nativeDocumentAction(JNIEnv*, jclass, jlong h, jint action, jint page) 
   if (action == 0) e.undo();
   else if (action == 1) e.redo();
   else if (action == 5) e.finish_input();
+  else if (action == 6) e.clear_selection();
   else return e.edit_page(action - 2, uint32_t(page));
   return JNI_TRUE;
 }
@@ -251,8 +253,27 @@ jdoubleArray nativeDocumentState(JNIEnv* env, jclass, jlong h) {
   const auto& e = inst(h)->engine;
   const auto b = e.selection_bounds();
   const jdouble values[] = {double(e.revision()), double(e.can_undo()), double(e.can_redo()), double(e.selection_count()),
-    b.empty() ? 0.0 : b.x0, b.empty() ? 0.0 : b.y0, b.empty() ? 0.0 : b.x1, b.empty() ? 0.0 : b.y1, double(e.document_busy())};
-  auto out = env->NewDoubleArray(9); env->SetDoubleArrayRegion(out, 0, 9, values); return out;
+    b.empty() ? 0.0 : b.x0, b.empty() ? 0.0 : b.y0, b.empty() ? 0.0 : b.x1, b.empty() ? 0.0 : b.y1, double(e.document_busy()),
+    double(e.transcribe_serial())};
+  auto out = env->NewDoubleArray(10); env->SetDoubleArrayRegion(out, 0, 10, values); return out;
+}
+jfloatArray nativeSelectionInk(JNIEnv* env, jclass, jlong h) {
+  const auto data = inst(h)->engine.selection_ink();
+  auto out = env->NewFloatArray(jsize(data.size()));
+  if (out) env->SetFloatArrayRegion(out, 0, jsize(data.size()), data.data());
+  return out;
+}
+jboolean nativeReplaceStrokes(JNIEnv* env, jclass, jlong h, jintArray ids, jint page, jfloatArray color,
+                              jfloatArray capsules, jintArray sizes) {
+  if (page < 0 || env->GetArrayLength(color) != 4 || env->GetArrayLength(capsules) % 6 != 0) return JNI_FALSE;
+  std::vector<uint32_t> idv(env->GetArrayLength(ids)), sizev(env->GetArrayLength(sizes));
+  if (!idv.empty()) env->GetIntArrayRegion(ids, 0, jsize(idv.size()), reinterpret_cast<jint*>(idv.data()));
+  if (!sizev.empty()) env->GetIntArrayRegion(sizes, 0, jsize(sizev.size()), reinterpret_cast<jint*>(sizev.data()));
+  float rgba[4]; env->GetFloatArrayRegion(color, 0, 4, rgba);
+  std::vector<Capsule> caps(size_t(env->GetArrayLength(capsules)) / 6);
+  static_assert(sizeof(Capsule) == 6 * sizeof(float));
+  if (!caps.empty()) env->GetFloatArrayRegion(capsules, 0, jsize(caps.size() * 6), reinterpret_cast<float*>(caps.data()));
+  return inst(h)->engine.replace_strokes(idv, uint32_t(page), rgba, caps, sizev) ? JNI_TRUE : JNI_FALSE;
 }
 
 void nativeSurfaceChanged(JNIEnv* env, jclass, jlong h, jobject surface, jint w, jint hh) {
@@ -413,6 +434,8 @@ const JNINativeMethod kMethods[] = {
     M(nativeRestore, "(J[B)Z"),
     M(nativeDocumentAction, "(JII)Z"),
     M(nativeDocumentState, "(J)[D"),
+    M(nativeSelectionInk, "(J)[F"),
+    M(nativeReplaceStrokes, "(J[II[F[F[I)Z"),
     M(nativeTouch, "(JI)J"),
     M(nativeProcess, "(JI)J"),
     M(nativeIdle, "(J)J"),

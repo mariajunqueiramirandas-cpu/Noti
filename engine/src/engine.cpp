@@ -451,7 +451,7 @@ void InkEngine::finish_stroke(int64_t t_end) noexcept {
   const uint32_t id = store_.close(stroke_bounds_, stroke_color_, stroke_t0_, t_end, page_, page_map_);
   if (NOTI_LIKELY(id != UINT32_MAX)) {
     renderer_.commit(store_, id, pixel_bounds(stroke_bounds_, surface_w_, surface_h_));
-    remember_edit(EditAction{0, {id}});
+    remember_edit(EditAction{0, {id}, {}});
   }
   else {
     store_.abort();

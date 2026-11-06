@@ -779,6 +779,81 @@ TEST(document_lasso_moves_and_undoes_canonical_ink) {
   e.redo(); CHECK_NEAR(e.store().canonical(0)[0].x0, 80, 1e-5);
 }
 
+TEST(document_transcribe_loop_selects_and_counts_without_moving_ink) {
+  EngineFixture fx; auto& e = *fx.engine;
+  draw_line(e, 50, 50, 80, 50);
+  draw_line(e, 200, 200, 220, 200);
+  e.set_tool(4);
+  InkSample loop[] = {sample(Action::kDown, 0, 35, 35), sample(Action::kMove, 4000, 100, 35), sample(Action::kMove, 8000, 100, 80), sample(Action::kMove, 12000, 35, 80), sample(Action::kUp, 16000, 35, 35)};
+  e.process(loop, 5);
+  CHECK(e.selection_count() == 1); CHECK(e.transcribe_serial() == 1);
+  CHECK(e.store().stroke_count() == 2);  // the loop is not ink
+  // A second loop starting inside the selection selects again; it never drags ink.
+  InkSample again[] = {sample(Action::kDown, 20000, 60, 50), sample(Action::kMove, 24000, 120, 120), sample(Action::kUp, 28000, 120, 120)};
+  e.process(again, 3);
+  CHECK(e.transcribe_serial() == 2); CHECK(e.selection_count() == 0);
+  CHECK_NEAR(e.store().canonical(0)[0].x0, 50, 1e-5);
+  // A cancelled loop is not a request.
+  loop[4].action = Action::kCancel; e.process(loop, 5);
+  CHECK(e.transcribe_serial() == 2);
+  // The lasso tool never asks for a transcription.
+  e.set_tool(3); loop[4].action = Action::kUp; e.process(loop, 5);
+  CHECK(e.selection_count() == 1); CHECK(e.transcribe_serial() == 2);
+}
+
+TEST(document_selection_ink_is_canonical) {
+  EngineFixture fx; auto& e = *fx.engine;
+  draw_line(e, 50, 50, 80, 50);
+  e.set_tool(4);
+  InkSample loop[] = {sample(Action::kDown, 0, 35, 35), sample(Action::kMove, 4000, 100, 35), sample(Action::kMove, 8000, 100, 80), sample(Action::kMove, 12000, 35, 80), sample(Action::kUp, 16000, 35, 35)};
+  e.process(loop, 5);
+  const auto ink = e.selection_ink();
+  const auto& r = e.store().stroke(0);
+  CHECK(ink[0] == 1); CHECK(ink[1] == 0); CHECK(ink[2] == float(r.page));
+  for (int i = 0; i < 4; ++i) CHECK(ink[3 + i] == r.color[i]);
+  CHECK(ink[7] == float(r.capsule_count));
+  CHECK(ink.size() == 8 + 6 * r.capsule_count);
+  CHECK(ink[8] == e.store().canonical(0)[0].x0); CHECK(ink[9] == e.store().canonical(0)[0].y0);
+}
+
+TEST(document_replace_strokes_is_one_undoable_edit) {
+  EngineFixture fx; auto& e = *fx.engine;
+  draw_line(e, 50, 50, 80, 50);
+  draw_line(e, 50, 90, 80, 90);
+  const float color[4] = {0.2f, 0.1f, 0.3f, 1.f};
+  std::vector<Capsule> caps = {{10, 10, 2, 20, 10, 2}, {30, 10, 2, 40, 10, 2}, {50, 10, 2, 60, 10, 2}};
+  // Invalid input changes nothing: unknown stroke, sizes that don't cover the capsules, bad numbers.
+  CHECK(!e.replace_strokes({7}, 0, color, caps, {3}));
+  CHECK(!e.replace_strokes({0}, 0, color, caps, {2}));
+  CHECK(!e.replace_strokes({0}, 0, color, caps, {3, 0}));
+  CHECK(!e.replace_strokes({0}, 1, color, caps, {3}));  // stroke 0 is on page 0
+  auto bad = caps; bad[1].r1 = -1; CHECK(!e.replace_strokes({0}, 0, color, bad, {3}));
+  const float wrong[4] = {0.2f, 0.1f, 2.f, 1.f}; CHECK(!e.replace_strokes({0}, 0, wrong, caps, {3}));
+  CHECK(e.store().stroke_count() == 2); CHECK(!e.store().stroke(0).hidden);
+
+  CHECK(e.replace_strokes({0, 1}, 0, color, caps, {1, 2}));
+  CHECK(e.store().stroke_count() == 4);
+  CHECK(e.store().stroke(0).hidden); CHECK(e.store().stroke(1).hidden);
+  CHECK(e.store().stroke(2).capsule_count == 1); CHECK(e.store().stroke(3).capsule_count == 2);
+  CHECK_NEAR(e.store().canonical(3)[1].x1, 60, 0);  // canonical copy is exact
+  CHECK(e.store().stroke(3).color[0] == 0.2f);
+  CHECK(!e.store().stroke(3).bounds.empty());
+  // Hidden strokes can't be replaced twice.
+  CHECK(!e.replace_strokes({0}, 0, color, caps, {3}));
+
+  e.undo();
+  CHECK(!e.store().stroke(0).hidden); CHECK(!e.store().stroke(1).hidden);
+  CHECK(e.store().stroke(2).hidden); CHECK(e.store().stroke(3).hidden);
+  e.redo();
+  CHECK(e.store().stroke(0).hidden); CHECK(!e.store().stroke(3).hidden);
+
+  // The archive keeps the typed strokes and drops the handwriting.
+  const auto bytes = e.snapshot();
+  EngineFixture other; CHECK(other.engine->restore(bytes.data(), bytes.size()));
+  CHECK(other.engine->store().stroke_count() == 2);
+  CHECK(other.engine->store().stroke(1).capsule_count == 2);
+}
+
 TEST(stylus_primary_override_is_latched_for_one_stroke_then_returns_to_drawing) {
   EngineFixture fx; auto& e = *fx.engine;
   draw_line(e, 20, 80, 200, 80);

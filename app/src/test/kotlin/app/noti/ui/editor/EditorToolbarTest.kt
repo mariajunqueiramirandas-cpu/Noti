@@ -49,7 +49,7 @@ class EditorToolbarTest {
     private var exports = 0
     private var papers = 0
     private var precision = 0
-    private val tools = listOf("Pen", "Highlighter", "Eraser", "Lasso")
+    private val tools = listOf("Pen", "Highlighter", "Eraser", "Lasso", "Transcribe")
     private val controls = listOf("Undo", "Redo", "Back to library", "Pages", "More",
         "Document scroll", "Zoom 175 percent. Reset to fit width")
     private val quickSlots = listOf("Brush options", "Collapse tools") + (1..3).map { "Quick color $it" } +
@@ -117,10 +117,18 @@ class EditorToolbarTest {
     }
 
     @Test fun everySegmentMapsToItsOwnSlot() {
-        assertEquals(0, segmentAt(-144f)); assertEquals(3, segmentAt(-36f))
-        assertEquals(4, segmentAt(0f)); assertEquals(6, segmentAt(72f))
-        assertEquals(7, segmentAt(108f)); assertEquals(9, segmentAt(180f)); assertEquals(9, segmentAt(-179f))
-        assertEquals(0, segmentAt(-161f)); assertEquals(3, segmentAt(-19f)); assertEquals(4, segmentAt(-17f))
+        assertEquals(11, DialSegments); assertEquals(5, DialColors); assertEquals(8, DialWidths)
+        val sweep = 360f / 11
+        // Five tools across the top, the middle one (lasso's neighbour, eraser) straight up.
+        assertEquals(2, segmentAt(-90f)); assertEquals(0, segmentAt(-90f - 2 * sweep)); assertEquals(4, segmentAt(-90f + 2 * sweep))
+        assertEquals(5, segmentAt(-90f + 3 * sweep)); assertEquals(7, segmentAt(-90f + 5 * sweep))
+        assertEquals(8, segmentAt(-90f + 6 * sweep)); assertEquals(10, segmentAt(-90f + 8 * sweep))
+        // Each segment owns half a sweep either side of its centre, wrapping at ±180°.
+        (0 until DialSegments).forEach { i ->
+            val centre = -90f + (i - 2) * sweep
+            assertEquals(i, segmentAt(centre - sweep / 2 + 0.5f)); assertEquals(i, segmentAt(centre + sweep / 2 - 0.5f))
+            assertEquals(i, segmentAt(centre + 360f)); assertEquals(i, segmentAt(centre - 360f))
+        }
     }
 
     @Test fun centerSwatchOpensFullBrushOptions() {
@@ -312,12 +320,12 @@ class EditorToolbarTest {
 
     /** dp from the dial's centre to the middle of segment [index]. */
     private fun segment(index: Int): Offset {
-        val angle = Math.toRadians(-144.0 + 36.0 * index)
+        val angle = Math.toRadians(-90.0 + 360.0 / DialSegments * (index - 2))
         return Offset((76 * kotlin.math.cos(angle)).toFloat(), (76 * kotlin.math.sin(angle)).toFloat())
     }
 
     @Test fun everyPointOfTheSummonedDialPicksOneThing() {
-        (0..9).forEach { assertEquals(DialPick.Segment(it), pickAt(segment(it).x, segment(it).y)) }
+        (0 until DialSegments).forEach { assertEquals(DialPick.Segment(it), pickAt(segment(it).x, segment(it).y)) }
         assertEquals(DialPick.Cancel, pickAt(0f, 0f))
         assertEquals(DialPick.Cancel, pickAt(30f, -30f))
         // Selection goes by direction, so overshooting the ring still counts.
@@ -378,9 +386,9 @@ class EditorToolbarTest {
         val dial = PenDialState().apply { area = androidx.compose.ui.geometry.Size(800f, 800f); origin = Offset(100f, 50f); density = 2f }
         dial.onPen(app.noti.ink.PenDialRelay.DOWN, 900f, 850f)
         assertEquals(Offset(400f, 400f), dial.center)
-        val target = Offset(900f, 850f) + segment(7) * 2f
+        val target = Offset(900f, 850f) + segment(DialWidths) * 2f
         dial.onPen(app.noti.ink.PenDialRelay.MOVE, target.x, target.y)
-        assertEquals(7, dial.onPen(app.noti.ink.PenDialRelay.UP, target.x, target.y))
+        assertEquals(DialWidths, dial.onPen(app.noti.ink.PenDialRelay.UP, target.x, target.y))
         dial.open()
         dial.onPen(app.noti.ink.PenDialRelay.DISMISS, 0f, 0f)
         assertEquals(PenDialState.Phase.Hidden, dial.phase)

@@ -230,6 +230,7 @@ internal fun Tool.icon(): ImageVector = when (this) {
     Tool.Highlighter -> Icons.Outlined.BorderColor
     Tool.Eraser -> EraserIcon
     Tool.Lasso -> Icons.Outlined.Gesture
+    Tool.Transcribe -> Icons.Outlined.TextFields
 }
 
 /** Material Icons has no eraser; a simple outlined one in the same 24 dp grid. */

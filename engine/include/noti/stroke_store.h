@@ -70,6 +70,14 @@ class StrokeStore {
   const Capsule* canonical(uint32_t id) const noexcept { return &canon_[strokes_[id].first_capsule]; }
   bool can_copy_page(uint32_t page) const noexcept;
   uint32_t copy_stroke(uint32_t id, uint32_t page) noexcept;
+  // Room for `strokes` more strokes holding `capsules` capsules in total?
+  bool can_append(uint64_t strokes, uint64_t capsules) const noexcept {
+    return strokes <= max_strokes_ - stroke_count_ && capsules <= max_capsules_ - capsule_count_;
+  }
+  // Appends a sealed stroke given in page units (canonical, copied exactly), placed on
+  // the surface by `map`. No stroke may be open. Returns its id, or UINT32_MAX if full.
+  uint32_t append(uint32_t page, const float color[4], const Capsule* canon, uint32_t n, const PageMap& map,
+                  bool on_screen) noexcept;
   void insert_page(uint32_t page) noexcept;
   void delete_page(uint32_t page) noexcept;
   std::vector<uint8_t> encode() const;

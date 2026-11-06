@@ -49,6 +49,9 @@ import androidx.compose.ui.window.PopupProperties
 import app.noti.data.SettingsStore
 import app.noti.data.Tool
 import app.noti.data.ToolSlots
+import app.noti.data.DialColors
+import app.noti.data.DialSegments
+import app.noti.data.DialWidths
 import app.noti.data.applyDialSegment
 import app.noti.ui.theme.Noti
 import app.noti.ui.theme.NotiBrand
@@ -61,21 +64,24 @@ import kotlin.math.roundToInt
 import kotlin.math.sin
 
 /*
- * Geometry, in dp. Ten 36° segments in three groups, read clockwise from the upper left:
- *   tools   (pen, highlighter, eraser, lasso) across the top,   centred at -144…-36°
- *   colors  (the three quick color slots) down the right,       centred at 0…72°
- *   widths  (the three quick widths) back up the left,          centred at 108…180°
+ * Geometry, in dp. Eleven equal segments (DialSegments) in three groups, read clockwise
+ * from the upper left:
+ *   tools   (pen, highlighter, eraser, lasso, transcribe) across the top, centred on -90°
+ *   colors  (the three quick color slots) down the right
+ *   widths  (the three quick widths) back up the left
  * Wider gaps separate the groups. The hub is a small page that previews the brush.
  */
 private val DialSize = 208.dp
 internal const val DialCenter = 104f
 internal const val RingInner = 52f
 internal const val RingOuter = 100f
-private const val TargetRadius = 76f
-private const val TargetSize = 36f
+private const val TargetRadius = 78f
+/** Eleven segments leave room for 30 dp targets; the ring itself takes taps anywhere by angle. */
+private const val TargetSize = 30f
 private const val HubSize = 84f
-private const val SegmentSweep = 36f
-private const val FirstSegment = -144f
+private val SegmentSweep = 360f / DialSegments
+/** The tools are centred on the top of the dial. */
+private val FirstSegment = -90f - (DialColors - 1) * SegmentSweep / 2f
 private const val CollapsedSize = 56f
 /** The collapse knob below the docked dial, and the lock pip below the summoned one. */
 internal const val LockSize = 44f
@@ -86,10 +92,10 @@ private fun segmentAngle(index: Number) = FirstSegment + index.toFloat() * Segme
 
 /** Segment under an angle in degrees (screen coordinates, 0° east, clockwise). */
 internal fun segmentAt(angle: Float): Int =
-    Math.floorMod(floor((angle - FirstSegment + SegmentSweep / 2f) / SegmentSweep).toInt(), 10)
+    Math.floorMod(floor((angle - FirstSegment + SegmentSweep / 2f) / SegmentSweep).toInt(), DialSegments)
 
 /**
- * The ten-segment dial, in its own window above the native ink input panel. [docked]
+ * The segmented dial, in its own window above the native ink input panel. [docked]
  * keeps it on the page; the pen can also summon it under the nib ([dial]).
  */
 @Composable
@@ -198,13 +204,13 @@ private fun ToolDial(
             val c = Offset(size.width / 2f, size.height / 2f)
             val rest = if (dark) colors.surfaceContainerHigh else colors.surfaceContainer
             val chosen = if (dark) Color(0xFF45424C) else colors.surfaceContainerHighest
-            repeat(10) { i ->
+            repeat(DialSegments) { i ->
                 val fill = when (i) {
-                    in 4..6 -> if (drawing && slots.color == i - 4) chosen else rest
-                    in 7..9 -> if (drawing && slots.width == i - 7) chosen else rest
+                    in DialColors until DialWidths -> if (drawing && slots.color == i - DialColors) chosen else rest
+                    in DialWidths until DialSegments -> if (drawing && slots.width == i - DialWidths) chosen else rest
                     else -> rest
                 }
-                drawSegment(c, unit, segmentAngle(i), if (i >= 4 && !drawing) fill.copy(alpha = 0.5f) else fill)
+                drawSegment(c, unit, segmentAngle(i), if (i >= DialColors && !drawing) fill.copy(alpha = 0.5f) else fill)
             }
             if (hovered != null) drawSegment(c, unit, segmentAngle(hovered), colors.primary.copy(alpha = if (dark) 0.42f else 0.24f))
             drawSegment(c, unit, segmentAngle(active), colors.primary)
@@ -218,8 +224,8 @@ private fun ToolDial(
         }
         slots.colors.forEachIndexed { index, color ->
             val selected = drawing && slots.color == index
-            DialTarget(segmentAngle(4 + index), "Quick color ${index + 1}", selected = selected, enabled = interactive,
-                onClick = { settings.applyDialSegment(4 + index) }) {
+            DialTarget(segmentAngle(DialColors + index), "Quick color ${index + 1}", selected = selected, enabled = interactive,
+                onClick = { settings.applyDialSegment(DialColors + index) }) {
                 Box(Modifier.size(if (selected) 24.dp else 18.dp)
                     .then(if (selected) Modifier.border(2.dp, colors.onSurface.copy(alpha = presetAlpha), CircleShape).padding(4.dp) else Modifier)
                     .clip(CircleShape).background(Color(color).copy(alpha = presetAlpha))
@@ -228,8 +234,8 @@ private fun ToolDial(
         }
         slots.widths.forEachIndexed { index, value ->
             val selected = drawing && slots.width == index
-            DialTarget(segmentAngle(7 + index), "Quick width $value", selected = selected, enabled = interactive,
-                onClick = { settings.applyDialSegment(7 + index) }) {
+            DialTarget(segmentAngle(DialWidths + index), "Quick width $value", selected = selected, enabled = interactive,
+                onClick = { settings.applyDialSegment(DialWidths + index) }) {
                 val tint = if (selected) colors.onSurface else colors.onSurfaceVariant
                 Box(Modifier.width(18.dp).height((1.5f + index * 2f).dp)
                     .background(tint.copy(alpha = presetAlpha), CircleShape))
@@ -240,19 +246,22 @@ private fun ToolDial(
             .clip(CircleShape).clickable(enabled = drawing && interactive, role = Role.Button, onClick = onOptions)
             .semantics {
                 contentDescription = "Brush options"
-                stateDescription = if (settings.tool == Tool.Lasso) "$selectionCount selected. Drag ink to move"
-                    else "${settings.tool.label}. Drag to move tools"
+                stateDescription = when (settings.tool) {
+                    Tool.Lasso -> "$selectionCount selected. Drag ink to move"
+                    Tool.Transcribe -> "Transcribe. Draw a loop around handwriting to turn it into text"
+                    else -> "${settings.tool.label}. Drag to move tools"
+                }
             }, contentAlignment = Alignment.Center) {
             // The hub previews what lifting the nib would give.
             when (hovered) {
-                in 0..3 -> {
+                in 0 until DialColors -> {
                     val tool = Tool.entries[hovered!!]
                     val hubHighlighter = tool == Tool.Highlighter || (tool != Tool.Pen && highlighter)
                     BrushHub(tool, if (hubHighlighter) settings.highlighterSlots else settings.penSlots, hubHighlighter,
                         tool == Tool.Pen || tool == Tool.Highlighter, selectionCount)
                 }
-                in 4..6 -> BrushHub(settings.lastDrawingTool, slots.copy(color = hovered!! - 4), highlighter, true, selectionCount)
-                in 7..9 -> BrushHub(settings.lastDrawingTool, slots.copy(width = hovered!! - 7), highlighter, true, selectionCount)
+                in DialColors until DialWidths -> BrushHub(settings.lastDrawingTool, slots.copy(color = hovered!! - DialColors), highlighter, true, selectionCount)
+                in DialWidths until DialSegments -> BrushHub(settings.lastDrawingTool, slots.copy(width = hovered!! - DialWidths), highlighter, true, selectionCount)
                 else -> BrushHub(settings.tool, slots, highlighter, drawing, selectionCount)
             }
             options()
@@ -298,9 +307,9 @@ private fun BrushHub(tool: Tool, slots: ToolSlots, highlighter: Boolean, drawing
  * wider where one group meets the next.
  */
 private fun DrawScope.drawSegment(center: Offset, unit: Float, centerAngle: Float, color: Color, groupGaps: Boolean = true) {
-    val index = Math.floorMod(((centerAngle - FirstSegment) / SegmentSweep).roundToInt(), 10)
-    fun gapBefore(i: Int) = if (groupGaps && (i == 0 || i == 4 || i == 7)) 8f else 3f
-    drawPath(segmentPath(center, unit, centerAngle, gapBefore(index) * unit, gapBefore((index + 1) % 10) * unit), color)
+    val index = Math.floorMod(((centerAngle - FirstSegment) / SegmentSweep).roundToInt(), DialSegments)
+    fun gapBefore(i: Int) = if (groupGaps && (i == 0 || i == DialColors || i == DialWidths)) 8f else 3f
+    drawPath(segmentPath(center, unit, centerAngle, gapBefore(index) * unit, gapBefore((index + 1) % DialSegments) * unit), color)
 }
 
 private fun segmentPath(center: Offset, unit: Float, centerAngle: Float, startGap: Float, endGap: Float): Path {
@@ -444,9 +453,9 @@ internal fun dialLabel(pick: DialPick?, slots: ToolSlots): String? = when (pick)
     DialPick.Lock -> "Keep open"
     DialPick.Cancel -> "Cancel"
     is DialPick.Segment -> when (val i = pick.index) {
-        in 0..3 -> Tool.entries[i].label
-        in 4..6 -> "Color ${i - 3}"
-        else -> slots.widths[i - 7].let { "Width ${if (it % 1f == 0f) it.toInt().toString() else it.toString()}" }
+        in 0 until DialColors -> Tool.entries[i].label
+        in DialColors until DialWidths -> "Color ${i - DialColors + 1}"
+        else -> slots.widths[i - DialWidths].let { "Width ${if (it % 1f == 0f) it.toInt().toString() else it.toString()}" }
     }
 }
 

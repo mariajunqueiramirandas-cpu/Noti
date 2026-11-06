@@ -359,6 +359,29 @@ class InkLayer(
         }
     }
 
+    /** The selected strokes (see [NotiInk.nativeSelectionInk]), delivered on the main thread. */
+    fun selectionInk(onResult: (FloatArray) -> Unit) {
+        ink.post {
+            if (released) return@post
+            val data = NotiInk.nativeSelectionInk(handle)
+            main.post { if (!released) onResult(data) }
+        }
+    }
+
+    /**
+     * Swaps strokes [ids] of [page] for new ones: [capsules] (x0 y0 r0 x1 y1 r1 in page units)
+     * cut into strokes by [sizes], all in [color] (premultiplied RGBA). One undo step; saved at once.
+     */
+    fun replaceStrokes(ids: IntArray, page: Int, color: FloatArray, capsules: FloatArray, sizes: IntArray,
+        onDone: (Boolean) -> Unit) {
+        ink.post {
+            if (released) return@post
+            val ok = NotiInk.nativeReplaceStrokes(handle, ids, page, color, capsules, sizes)
+            if (ok && persistenceEnabled) onSnapshot?.invoke(NotiInk.nativeSnapshot(handle))
+            main.post { onDone(ok) }
+        }
+    }
+
     fun snapshot(onDone: (ByteArray) -> Unit) {
         ink.post {
             if (released) return@post

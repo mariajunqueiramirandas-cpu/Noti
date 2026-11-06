@@ -1,6 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!-- Only to download a handwriting language for the Transcribe tool (ML Kit), once per
+         language. Recognition itself runs on the device and notes never leave it. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
     <application
         android:label="Noti"
         android:icon="@mipmap/ic_launcher"
