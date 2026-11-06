@@ -16,6 +16,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import org.robolectric.shadows.ShadowBuild
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [35], qualifiers = "w1280dp-h1000dp-mdpi")
@@ -49,5 +50,28 @@ class PenButtonsSettingsTest {
         compose.onNodeWithText("Test click and hold").performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("Waiting for pen button input…").performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("Scratch area").assertIsDisplayed()
+        compose.onNodeWithText("S Pen button clicks").performScrollTo().performClick()
+        compose.runOnIdle { assertFalse(SettingsStore(compose.activity).penMotionClicks) }
+    }
+
+    @Test fun samsungTabletsShowTheSPenButtonAndHideXiaomiOnlyRows() {
+        ShadowBuild.setManufacturer("samsung")
+        ShadowBuild.setBrand("samsung")
+        compose.activity.getSharedPreferences("settings", Context.MODE_PRIVATE).edit().clear().commit()
+        val settings = SettingsStore(compose.activity)
+        compose.setContent {
+            CompositionLocalProvider(LocalInspectionMode provides true) {
+                NotiTheme(settings.theme) { SettingsScreen(settings, onBack = {}) }
+            }
+        }
+        compose.onNodeWithText("Pen buttons").performClick()
+        compose.onNodeWithText("S Pen button click").performClick()
+        compose.onNodeWithText("Toggle lasso").performClick()
+        compose.runOnIdle { assertEquals(PenButtonAction.ToggleLasso, settings.primaryButtonAction) }
+        compose.onNodeWithText("Hold S Pen button").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("S Pen button clicks").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Screenshot button click").assertDoesNotExist()
+        compose.onNodeWithText("Focus button click").assertDoesNotExist()
+        compose.onNodeWithText("Swap Xiaomi button order").assertDoesNotExist()
     }
 }

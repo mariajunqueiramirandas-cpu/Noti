@@ -29,6 +29,10 @@ class PenButtonsTest {
         assertTrue(settings.penButtonOptions().enabled)
         assertFalse(settings.penButtonOptions().captureFocus)
         assertFalse(settings.penButtonOptions(enabled = false).enabled)
+        // The S Pen reports its button only in motion events.
+        assertTrue(settings.penButtonOptions().motionClicks)
+        settings.penMotionClicks = false
+        assertFalse(SettingsStore(context).penButtonOptions().motionClicks)
     }
 
     @Test fun toggleToolsReturnToTheUsersLastDrawingToolAcrossReopening() {

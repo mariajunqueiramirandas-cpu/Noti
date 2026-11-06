@@ -11,6 +11,7 @@ enum class PenButtonAction(val label: String) {
 fun SettingsStore.penButtonOptions(enabled: Boolean = true) = StylusButtonOptions(
     enabled = enabled && penButtonsEnabled, hold = penButtonHold, legacyKeys = penLegacyKeys,
     swapLegacyKeys = penSwapLegacyKeys, captureFocus = focusButtonAction != PenButtonAction.None,
+    motionClicks = penMotionClicks,
 )
 
 fun SettingsStore.buttonAction(button: PenButton) = when (button) {

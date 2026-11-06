@@ -126,6 +126,8 @@ class SettingsStore(context: Context) {
     val toolDialOnHold get() = !toolDialAlways && penButtonsEnabled && penButtonHold == PenHold.Dial
     var penLegacyKeys by pref(true, { prefs.getBoolean("penLegacyKeys", it) }) { putBoolean("penLegacyKeys", it) }
     var penSwapLegacyKeys by pref(false, { prefs.getBoolean("penSwapLegacyKeys", it) }) { putBoolean("penSwapLegacyKeys", it) }
+    /** Clicks from the pen's own button flags: the Samsung S Pen path (see StylusButtonOptions.motionClicks). */
+    var penMotionClicks by pref(true, { prefs.getBoolean("penMotionClicks", it) }) { putBoolean("penMotionClicks", it) }
     var primaryButtonAction by pref(PenButtonAction.ToggleEraser, { enumOr(prefs.getString("primaryButtonAction", null), it) }) {
         putString("primaryButtonAction", it.name)
     }

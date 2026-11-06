@@ -39,8 +39,9 @@
 ## ✏️ What is this?
 
 Noti is a handwriting, note-taking and PDF-annotating app built for the **Xiaomi Pad 7 + Xiaomi Focus Pen**,
-with one unreasonable goal: **it should feel like writing on paper.** Not "paper-like". Not "inspired by paper".
-Paper. The kind your ink lands on *right now*, not two frames from now after the UI thread finishes its coffee.
+and at home on **Samsung Galaxy Tab S tablets with the S Pen**, with one unreasonable goal: **it should feel like
+writing on paper.** Not "paper-like". Not "inspired by paper". Paper. The kind your ink lands on *right now*, not two
+frames from now after the UI thread finishes its coffee.
 
 To get there we wrote a native C++ ink engine, a pen-motion predictor, a palm-rejection system with
 actual statistics in it, and a cheerful lavender mascot. Priorities.
@@ -53,7 +54,7 @@ actual statistics in it, and a cheerful lavender mascot. Priorities.
 </tr>
 <tr>
 <td align="center">📄<br><b>PDFs that keep up</b><br><sub>Tiled rendering, pinch from 25% to 600%, ink that stays glued to the page.</sub></td>
-<td align="center">🖊️<br><b>Pen buttons, reclaimed</b><br><sub>The Focus Pen's buttons do Noti things now (on Pad 7, Android 16, after a polite word with HyperOS).</sub></td>
+<td align="center">🖊️<br><b>Pen buttons, reclaimed</b><br><sub>The Focus Pen's buttons do Noti things now (on Pad 7, Android 16, after a polite word with HyperOS). So does the S Pen's.</sub></td>
 <td align="center">💾<br><b>Saves on its own</b><br><sub>Atomic, versioned, autosaved between strokes. Your notes are safe.</sub></td>
 </tr>
 <tr>
@@ -204,6 +205,10 @@ The Focus Pen has buttons. Noti uses them.
 | Use an **eraser tip** | Erase. Obviously. |
 | **Two-finger tap** | Undo (configurable). |
 | **Two-finger double-tap** | Exit full screen. |
+
+On a **Samsung Galaxy Tab with the S Pen**, the S Pen's side button is the writing button: click it while hovering to
+toggle the eraser, hold it and touch the page for the dial. One UI only tells apps about it through the pen's own
+events, so Noti reads it there; Air actions (presses with the pen away from the screen) stay with One UI.
 
 Holding can erase temporarily instead, if that's more your style. The dial stays hidden otherwise (More → Show tools,
 or keep it on the page in settings).
@@ -391,13 +396,15 @@ screenshots.
 </details>
 
 > [!NOTE]
-> Host tests do not replace a real device. Validate Focus Pen button mappings, front-buffer rendering, SurfaceFlinger behaviour
+> Host tests do not replace a real device. Validate Focus Pen and S Pen button mappings, front-buffer rendering, SurfaceFlinger behaviour
 > and visual appearance on an arm64 Android 13+ tablet. Robolectric cannot feel your handwriting.
 
 ## 🙋 FAQ
 
 **Will it work on my device?**
-If it's arm64 and Android 13+, it'll run. If it's a Xiaomi Pad 7 with a Focus Pen, it'll *sing*. Everything else is a
+If it's arm64 and Android 13+, it'll run. If it's a Xiaomi Pad 7 with a Focus Pen, it'll *sing*. A Samsung Galaxy Tab S
+with its S Pen hums along too: its side button clicks and holds, and hover, pressure and palm rejection use standard
+Android events (see [the S Pen notes](docs/PEN_BUTTONS.md#samsung-galaxy-tab-and-the-s-pen)). Everything else is a
 supporting role, which we love you for anyway.
 
 **Why does my tablet get warm while I write?**

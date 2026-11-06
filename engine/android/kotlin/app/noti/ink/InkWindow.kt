@@ -176,13 +176,16 @@ internal class InkWindow(
 
     override fun dispatchTouchEvent(e: MotionEvent): Boolean {
         val recv = System.nanoTime()
+        // Samsung S Pen: a stroke drawn with the side button held may arrive as actions 211–214.
+        val action = SamsungPenActions.action(e.actionMasked)
+        val buttonState = SamsungPenActions.buttons(e.actionMasked, e.buttonState)
         for (i in 0 until e.pointerCount) {
-            if (isPen(e, i)) { buttons.motion(e.deviceId, e.buttonState); break }
+            if (isPen(e, i)) { buttons.motion(e.deviceId, buttonState, e.eventTime, contact = true); break }
         }
         val ai = e.actionIndex
-        when (e.actionMasked) {
+        when (action) {
             MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> {
-                if (e.actionMasked == MotionEvent.ACTION_DOWN) {
+                if (action == MotionEvent.ACTION_DOWN) {
                     requestUnbufferedDispatch(e)
                     // A new stream: forget a pen whose UP never came (the engine keeps its ink).
                     if (penId >= 0 && penMode == PEN_DIAL) dial?.report(PenDialRelay.CANCEL, 0f, 0f)
@@ -196,7 +199,7 @@ internal class InkWindow(
                         penDevice = e.deviceId
                         penMode = when {
                             dial != null && dial.enabled && e.getToolType(ai) == MotionEvent.TOOL_TYPE_STYLUS &&
-                                buttons.summonsDial(e.deviceId, e.buttonState) -> {
+                                buttons.summonsDial(e.deviceId, buttonState) -> {
                                 dial.report(PenDialRelay.DOWN, e.getX(ai), e.getY(ai)); PEN_DIAL
                             }
                             dial != null && dial.locked -> {
@@ -206,7 +209,7 @@ internal class InkWindow(
                         }
                         if (penMode == PEN_INK) {
                             onFrame() // apply the final viewport before accepting this stroke
-                            put(e, ai, -1, NotiInk.ACTION_DOWN, penFlags(e, ai), recv)
+                            put(e, ai, -1, NotiInk.ACTION_DOWN, penFlags(e, ai, buttonState), recv)
                         }
                     }
                 } else {
@@ -218,7 +221,7 @@ internal class InkWindow(
                 if (pi >= 0 && penMode == PEN_DIAL) {
                     dial?.report(PenDialRelay.MOVE, e.getX(pi), e.getY(pi))
                 } else if (pi >= 0 && penMode == PEN_INK) {
-                    val flags = penFlags(e, pi)
+                    val flags = penFlags(e, pi, buttonState)
                     for (h in 0 until e.historySize) {
                         put(e, pi, h, NotiInk.ACTION_MOVE, flags or NotiInk.FLAG_HISTORICAL, recv)
                     }
@@ -235,7 +238,7 @@ internal class InkWindow(
                 if (penIndex(e) == ai) {
                     if (canceled) buttons.reset()
                     when (penMode) {
-                        PEN_INK -> put(e, ai, -1, if (canceled) NotiInk.ACTION_CANCEL else NotiInk.ACTION_UP, penFlags(e, ai), recv)
+                        PEN_INK -> put(e, ai, -1, if (canceled) NotiInk.ACTION_CANCEL else NotiInk.ACTION_UP, penFlags(e, ai, buttonState), recv)
                         PEN_DIAL -> dial?.report(if (canceled) PenDialRelay.CANCEL else PenDialRelay.UP, e.getX(ai), e.getY(ai))
                     }
                     penId = -1
@@ -268,7 +271,9 @@ internal class InkWindow(
 
     override fun dispatchGenericMotionEvent(e: MotionEvent): Boolean {
         if (!isPen(e, 0)) return false
-        buttons.motion(e.deviceId, e.buttonState)
+        // A hover exit also comes just before the nib touches down; either way, a button held
+        // across it is not a click (S Pen clicks come from these flags, see StylusButtons).
+        buttons.motion(e.deviceId, e.buttonState, e.eventTime, leaving = e.actionMasked == MotionEvent.ACTION_HOVER_EXIT)
         val action = when (e.actionMasked) {
             MotionEvent.ACTION_HOVER_ENTER -> NotiInk.ACTION_HOVER_ENTER
             MotionEvent.ACTION_HOVER_EXIT -> NotiInk.ACTION_HOVER_EXIT
@@ -295,10 +300,10 @@ internal class InkWindow(
     private fun penIndex(e: MotionEvent): Int =
         if (penId < 0 || e.deviceId != penDevice) -1 else e.findPointerIndex(penId)
 
-    private fun penFlags(e: MotionEvent, i: Int): Int {
+    private fun penFlags(e: MotionEvent, i: Int, buttonState: Int): Int {
         var f = 0
         if (e.getToolType(i) == MotionEvent.TOOL_TYPE_ERASER) f = f or NotiInk.FLAG_ERASER
-        f = f or buttons.flags(e.deviceId, e.buttonState, contact = true)
+        f = f or buttons.flags(e.deviceId, buttonState, contact = true)
         return f
     }
 
