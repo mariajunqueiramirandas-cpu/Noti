@@ -129,4 +129,8 @@ dependencies {
     implementation("androidx.activity:activity-compose:1.13.0")
     // On-device handwriting recognition for the Transcribe tool; language models download on first use.
     implementation("com.google.mlkit:digital-ink-recognition:19.0.0")
+    // ML Kit pulls in an old work-runtime whose Room ProGuard rules let R8 full mode strip
+    // WorkDatabase_Impl's constructor, crashing every release launch in InitializationProvider.
+    // The latest work-runtime ships Room rules that keep it. Noti itself never uses WorkManager.
+    implementation("androidx.work:work-runtime:2.12.0")
 }
