@@ -7,7 +7,11 @@ import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.Rect
 import android.graphics.RectF
+import android.graphics.Point
 import android.graphics.pdf.PdfRenderer
+import android.graphics.pdf.models.FormWidgetInfo
+import android.graphics.pdf.models.selection.SelectionBoundary
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.os.ParcelFileDescriptor
@@ -104,6 +108,8 @@ class PdfDocument(file: File) : PageImages {
     private val claimed = HashSet<Key>()       // being rendered, or rendered and on its way
     private val failed = HashSet<Key>()
     private var stop = false
+    /** One-off work for the worker's open renderer (Type on lines), ahead of any tile. */
+    private val jobs = ArrayDeque<(Pages) -> Unit>()
 
     init {
         Thread({ work(file) }, "noti-pdf").start()
@@ -211,11 +217,117 @@ class PdfDocument(file: File) : PageImages {
         return null
     }
 
+    // ---------------------------------------------------------------------------------
+    // Type on lines: looking inside a page
+    // ---------------------------------------------------------------------------------
+
+    /** Millimetres of paper per page unit (a page is 1000 units wide). */
+    fun mmPerUnit(page: Int): Float = (pageSizes.getOrNull(page)?.width ?: 595f) * 25.4f / 72f / 1000f
+
+    private fun enqueue(job: (Pages) -> Unit): Boolean = synchronized(lock) {
+        if (stop) return false
+        jobs.addLast(job)
+        lock.notifyAll()
+        true
+    }
+
+    /**
+     * Renders [left], [top], [right], [bottom] (page units) of page [page] in grey at about
+     * [pxPerMm], for finding lines in. Runs ahead of tiles on the worker; [onResult] gets
+     * null if the page can't be rendered. Main thread.
+     */
+    fun renderRegion(page: Int, left: Float, top: Float, right: Float, bottom: Float, pxPerMm: Float,
+        onResult: (RegionImage?) -> Unit) {
+        val queued = enqueue { pages ->
+            val image = runCatching { region(pages, page, left, top, right, bottom, pxPerMm) }.getOrNull()
+            main.post { if (!closed) onResult(image) }
+        }
+        if (!queued) onResult(null)
+    }
+
+    private fun region(pages: Pages, index: Int, left: Float, top: Float, right: Float, bottom: Float, pxPerMm: Float): RegionImage? {
+        if (right <= left || bottom <= top) return null
+        val page = pages.page(index)
+        val pw = page.width.toFloat().coerceAtLeast(1f)
+        val ptPerUnit = pw / 1000f
+        var pxPerPt = pxPerMm * 25.4f / 72f
+        val wPt = (right - left) * ptPerUnit; val hPt = (bottom - top) * ptPerUnit
+        // Big regions are rendered coarser rather than huge.
+        val maxSide = 2600f
+        if (wPt * pxPerPt > maxSide) pxPerPt = maxSide / wPt
+        if (hPt * pxPerPt > maxSide * 1.6f) pxPerPt = maxSide * 1.6f / hPt
+        val w = ceil(wPt * pxPerPt).toInt().coerceAtLeast(1); val h = ceil(hPt * pxPerPt).toInt().coerceAtLeast(1)
+        val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        try {
+            bmp.eraseColor(Color.WHITE)
+            val m = Matrix()
+            m.setScale(pxPerPt, pxPerPt)
+            m.postTranslate(-left * ptPerUnit * pxPerPt, -top * ptPerUnit * pxPerPt)
+            page.render(bmp, null, m, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+            val px = IntArray(w * h)
+            bmp.getPixels(px, 0, w, 0, 0, w, h)
+            return RegionImage(app.noti.lines.Raster.fromArgb(w, h, px), left, top, 1f / (ptPerUnit * pxPerPt), pxPerPt * 72f / 25.4f)
+        } finally {
+            bmp.recycle()
+        }
+    }
+
+    /**
+     * The fillable text fields of page [page] (a real PDF form), in page units; empty for a
+     * plain PDF or before Android 15. Main thread.
+     */
+    fun formFields(page: Int, onResult: (List<FormField>) -> Unit) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.VANILLA_ICE_CREAM) { onResult(emptyList()); return }
+        val queued = enqueue { pages ->
+            val fields = runCatching { fields35(pages, page) }.getOrDefault(emptyList())
+            main.post { if (!closed) onResult(fields) }
+        }
+        if (!queued) onResult(emptyList())
+    }
+
+    @androidx.annotation.RequiresApi(Build.VERSION_CODES.VANILLA_ICE_CREAM)
+    private fun fields35(pages: Pages, index: Int): List<FormField> {
+        val page = pages.page(index)
+        val k = 1000f / page.width.toFloat().coerceAtLeast(1f)
+        return page.getFormWidgetInfos(intArrayOf(FormWidgetInfo.WIDGET_TYPE_TEXTFIELD))
+            .filter { it.isEditableText && !it.isReadOnly }
+            .map { f ->
+                val r = f.widgetRect
+                FormField(r.left * k, r.top * k, r.right * k, r.bottom * k, f.isMultiLineText,
+                    f.accessibilityLabel?.takeIf { it.isNotBlank() }, f.maxLength)
+            }
+    }
+
+    /** The PDF's own text inside each of [boxes] (left, top, right, bottom in page units); null where none or before Android 15. */
+    fun textIn(page: Int, boxes: List<FloatArray>, onResult: (List<String?>) -> Unit) {
+        if (boxes.isEmpty() || Build.VERSION.SDK_INT < Build.VERSION_CODES.VANILLA_ICE_CREAM) { onResult(boxes.map { null }); return }
+        val queued = enqueue { pages ->
+            val out = runCatching { text35(pages, page, boxes) }.getOrDefault(boxes.map { null })
+            main.post { if (!closed) onResult(out) }
+        }
+        if (!queued) onResult(boxes.map { null })
+    }
+
+    @androidx.annotation.RequiresApi(Build.VERSION_CODES.VANILLA_ICE_CREAM)
+    private fun text35(pages: Pages, index: Int, boxes: List<FloatArray>): List<String?> {
+        val page = pages.page(index)
+        val k = page.width.toFloat().coerceAtLeast(1f) / 1000f
+        return boxes.map { b ->
+            runCatching {
+                val y = ((b[1] + b[3]) / 2f * k).toInt()
+                val sel = page.selectContent(SelectionBoundary(Point((b[0] * k).toInt() + 1, y)),
+                    SelectionBoundary(Point((b[2] * k).toInt() - 1, y)))
+                sel?.selectedTextContents?.joinToString(" ") { it.text }?.trim()?.takeIf { it.isNotEmpty() }
+            }.getOrNull()
+        }
+    }
+
     fun close() {
         if (closed) return
         closed = true
         synchronized(lock) {
             stop = true
+            jobs.clear()
             wanted = LinkedHashSet()
             extra.clear()
             lock.notifyAll()
@@ -329,11 +441,20 @@ class PdfDocument(file: File) : PageImages {
             var sinceScan = 0
             while (true) {
                 var job: Key? = null
+                var task: ((Pages) -> Unit)? = null
                 synchronized(lock) {
-                    while (!stop && nextLocked() == null && doc.measured >= count) lock.wait()
-                    if (!stop) job = nextLocked()?.also { claimed += it }
+                    while (!stop && jobs.isEmpty() && nextLocked() == null && doc.measured >= count) lock.wait()
+                    if (!stop) {
+                        task = jobs.removeFirstOrNull()
+                        if (task == null) job = nextLocked()?.also { claimed += it }
+                    }
                 }
                 if (stop) break
+                val t = task
+                if (t != null) {
+                    try { t(doc) } catch (e: Exception) { /* each job reports its own failure */ }
+                    continue
+                }
                 if (doc.measured < count && (job == null || sinceScan >= SCAN_EVERY)) {
                     if (doc.measureNext()) doc.learned = true
                     sinceScan = 0
@@ -469,3 +590,10 @@ class PdfDocument(file: File) : PageImages {
         fun needsTiles(widthPx: Float) = widthPx > PREVIEW_WIDTH * 1.15f
     }
 }
+
+/** Part of a page rendered for line finding: pixel (x, y) is page units ([left] + x · [unitsPerPx], [top] + y · [unitsPerPx]). */
+class RegionImage(val raster: app.noti.lines.Raster, val left: Float, val top: Float, val unitsPerPx: Float, val pxPerMm: Float)
+
+/** A fillable text field of a PDF form, in page units. */
+class FormField(val left: Float, val top: Float, val right: Float, val bottom: Float, val multiLine: Boolean,
+    val label: String?, val maxLength: Int)

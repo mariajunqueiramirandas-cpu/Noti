@@ -155,6 +155,14 @@ private fun EditorContent(notebook: Notebook, library: LibraryStore, settings: S
     val pdf = remember(notebook.pdf) { library.pdfFile(notebook)?.let { PdfDocument(it) } }
     DisposableEffect(pdf) { onDispose { pdf?.close() } }
     val pages = remember { PageController() }
+    // Type on lines: text typed on lines (kept to edit later), where lines come from, and the open session.
+    val typeBlocks by produceState<app.noti.lines.TextBlockStore?>(null, notebook.id) {
+        value = withContext(Dispatchers.IO) { app.noti.lines.TextBlockStore.load(library.typeFile(notebook)) }
+    }
+    val lineSource = remember(pdf, notebook.paper, notebook.isCanvas) {
+        if (pdf != null) app.noti.lines.PdfLines(pdf) else app.noti.lines.PaperLines(notebook.paper, notebook.isCanvas)
+    }
+    val typeState = remember { TypeState() }
     val pageCount = if (pdf != null) pdf.pageCount.takeIf { it > 0 } ?: notebook.pageCount else notebook.pageCount
     // The placement changes every frame while scrolling; the chrome only needs these.
     val currentPage by remember { derivedStateOf { pages.page } }
@@ -217,6 +225,7 @@ private fun EditorContent(notebook: Notebook, library: LibraryStore, settings: S
                 },
                 board = study?.layer,
                 onTap = study?.let { b -> { x, y -> b.tap(x, y, pages.placement) } },
+                overlay = { p -> typeState.draw(this, p) },
             )
             EditorToolbar(
                 title = notebook.name, settings = settings, pagesOpen = pagesOpen,
@@ -237,6 +246,7 @@ private fun EditorContent(notebook: Notebook, library: LibraryStore, settings: S
                 saveStatus = saveStatus, onSave = { layer?.saveNow() }, selectionCount = pages.documentState[3].toInt(), isPdf = notebook.isPdf,
                 dial = dial, fullScreen = fullScreen,
                 studyButton = study?.let { b -> { app.noti.ui.study.StudyButton(b.controller) } },
+                onFillPage = if (pdf == null) null else { { settings.tool = Tool.Type; typeState.requestFill(currentPage) } },
             )
             if (study != null) BoxWithConstraints(Modifier.fillMaxSize()) {
                 app.noti.ui.study.StudyOverlay(study, layer, { pages.placement }, loopSerial, maxWidth, maxHeight,
@@ -262,6 +272,7 @@ private fun EditorContent(notebook: Notebook, library: LibraryStore, settings: S
     }
     TranscribeTool(layer, pages.documentState, settings.handwritingLanguage, canvas = notebook.isCanvas,
         enabled = study?.controller?.loop == null)
+    TypeTool(typeState, layer, pages.documentState, lineSource, typeBlocks, settings)
     if (restoreError) AlertDialog(onDismissRequest = {}, title = { Text("Couldn't read saved ink") },
         text = { Text("The saved file has been kept without changes. Return to the library to keep your original ink safe.") },
         confirmButton = { app.noti.ui.common.NotiButton(onClick = onBack) { Text("Back to library") } })

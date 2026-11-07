@@ -64,9 +64,9 @@ import kotlin.math.roundToInt
 import kotlin.math.sin
 
 /*
- * Geometry, in dp. Eleven equal segments (DialSegments) in three groups, read clockwise
+ * Geometry, in dp. Twelve equal segments (DialSegments) in three groups, read clockwise
  * from the upper left:
- *   tools   (pen, highlighter, eraser, lasso, transcribe) across the top, centred on -90°
+ *   tools   (pen, highlighter, eraser, lasso, transcribe, type) across the top, centred on -90°
  *   colors  (the three quick color slots) down the right
  *   widths  (the three quick widths) back up the left
  * Wider gaps separate the groups. The hub is a small page that previews the brush.
@@ -75,8 +75,12 @@ private val DialSize = 208.dp
 internal const val DialCenter = 104f
 internal const val RingInner = 52f
 internal const val RingOuter = 100f
-private const val TargetRadius = 78f
-/** Eleven segments leave room for 30 dp targets; the ring itself takes taps anywhere by angle. */
+/**
+ * Far enough out that a target on a diagonal (twelve segments put four there) stays clear of
+ * the hub's square: 82 · cos 45° − 15 > 42.
+ */
+private const val TargetRadius = 82f
+/** Twelve segments leave room for 30 dp targets; the ring itself takes taps anywhere by angle. */
 private const val TargetSize = 30f
 private const val HubSize = 84f
 private val SegmentSweep = 360f / DialSegments
@@ -249,6 +253,7 @@ private fun ToolDial(
                 stateDescription = when (settings.tool) {
                     Tool.Lasso -> "$selectionCount selected. Drag ink to move"
                     Tool.Transcribe -> "Transcribe. Draw a loop around handwriting to turn it into text"
+                    Tool.Type -> "Type. Loop lines on the page, or tap one, then type onto them"
                     else -> "${settings.tool.label}. Drag to move tools"
                 }
             }, contentAlignment = Alignment.Center) {

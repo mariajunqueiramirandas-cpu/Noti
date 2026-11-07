@@ -29,6 +29,7 @@
 [**Palm rejection**](docs/PALM_REJECTION.md) ·
 [**Pen buttons**](docs/PEN_BUTTONS.md) ·
 [**Study boards**](docs/STUDY_BOARD.md) ·
+[**Type on lines**](docs/TYPE_ON_LINES.md) ·
 [**Latency plan**](docs/LOW_LATENCY_PLAN.md) ·
 [**Brand guide**](docs/branding/README.md)
 
@@ -49,7 +50,7 @@ actual statistics in it, and a cheerful lavender mascot. Priorities.
 <tr>
 <td width="33%" align="center">⚡<br><b>Fast ink</b><br><sub>Front-buffer rendering, a tuned predictor, and a UI thread that is politely not invited.</sub></td>
 <td width="33%" align="center">✋<br><b>Your palm is not a pen</b><br><sub>A sequential probability test decides that, usually before you've noticed you put it down.</sub></td>
-<td width="33%" align="center">🍩<br><b>One dial to rule the tools</b><br><sub>Eleven segments. Every preset is one tap. The plum one is the boss.</sub></td>
+<td width="33%" align="center">🍩<br><b>One dial to rule the tools</b><br><sub>Twelve segments. Every preset is one tap. The plum one is the boss.</sub></td>
 </tr>
 <tr>
 <td align="center">📄<br><b>PDFs that keep up</b><br><sub>Tiled rendering, pinch from 25% to 600%, ink that stays glued to the page.</sub></td>
@@ -58,7 +59,8 @@ actual statistics in it, and a cheerful lavender mascot. Priorities.
 </tr>
 <tr>
 <td align="center">🔤<br><b>Handwriting to text</b><br><sub>Loop it, read it, copy it or swap it for neat typed ink. On the tablet, offline, no account.</sub></td>
-<td colspan="2" align="center">🎓<br><b>Study boards</b><br><sub>Link a PDF, get math and physics questions on a floating sheet, work them on the board, loop to check, print the keepers.</sub></td>
+<td align="center">⌨️<br><b>Type on lines</b><br><sub>Loop the lines on a PDF and type. The text sits on them, sized to fit, even on a crooked scan.</sub></td>
+<td align="center">🎓<br><b>Study boards</b><br><sub>Link a PDF, get math and physics questions on a floating sheet, work them on the board, loop to check, print the keepers.</sub></td>
 </tr>
 </table>
 
@@ -126,9 +128,9 @@ naps either. Your tablet may get warm. That's the ink being enthusiastic. Detail
 <img align="right" src="docs/screenshots/radial-editor/highlighter-light.png" alt="The radial dial with the highlighter selected" width="260">
 
 The editor is a full canvas with a small pill header and a persistent **radial tool dial** at the upper left.
-Eleven rounded segments, three groups, read clockwise:
+Twelve rounded segments, three groups, read clockwise:
 
-- **Top:** pen, highlighter, stroke eraser, lasso, transcribe
+- **Top:** pen, highlighter, stroke eraser, lasso, transcribe, type
 - **Right:** your three saved colors
 - **Left:** three width presets
 
@@ -155,6 +157,22 @@ Reading happens on the tablet with Google's ML Kit digital ink recognizer. The f
 (about 20 MB); after that it works offline and your notes never leave the device. It follows the device language; pick another
 in **Settings → Writing → Handwriting language**. Highlighter strokes in the loop are left out, and the lines are worked out from
 the ink itself, so dots, accents and descenders stay on the line they belong to.
+
+### ⌨️ Type on lines
+
+Got a PDF with lines on it? A worksheet, a form, an exam with answer lines, a crooked phone scan? Pick **Type** (the
+keyboard segment), **loop the lines** or **tap one**, and type. Noti finds the lines in the page's pixels, numbers
+them, and your text lands **on** them: sized to the spacing, starting after `Name:`, wrapping by words, never past a
+line's end, and tilted along with a tilted scan.
+
+- **Tap a line** to leave it out or bring it back. Too much text? **Shrink to fit** or **Keep going** below.
+- **More → Fill this page** turns every blank into a field; **Tab** through them like a web form.
+- **Quick fills** (Settings → Writing) put your name, student number or today's date on the line in one tap.
+- **Write** with the pen in the panel instead, and it's read on the tablet and lands as tidy text.
+- **Tap typed text** to edit it later, even after you've moved it. With any other tool it's just ink.
+
+Table cells, boxes, combs (one character per box), dotted leaders and Noti's own lined paper work too. Exported PDFs
+keep the words searchable. All on the tablet, offline. Details in [docs/TYPE_ON_LINES.md](docs/TYPE_ON_LINES.md).
 
 ### 🎓 Study boards
 
