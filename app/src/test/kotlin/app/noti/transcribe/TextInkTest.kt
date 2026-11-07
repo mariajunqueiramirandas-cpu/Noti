@@ -112,6 +112,22 @@ class TextInkTest {
     }
 
     /** [x0, y0, x1, y1] of each stroke's capsule centres. */
+    @Test fun placedWordsSitOnTheirBaselinesAndFollowATiltedLine() {
+        val em = 20f
+        val words = listOf(app.noti.lines.PlacedWord("xxx", 100f, 300f, 0f, 0), app.noti.lines.PlacedWord(" ", 200f, 300f, 0f, 0),
+            app.noti.lines.PlacedWord("mmm", 100f, 400f, 0.05f, 1))
+        val strokes = ink.place(words, em)
+        assertEquals("one stroke per non-blank word", 2, strokes.sizes.size)
+        val (flat, tilted) = boxes(strokes)
+        // x-height letters: bottom on the baseline, left at the word's point, width as measured.
+        assertEquals(300f, flat[3], 1f)
+        assertEquals(100f, flat[0], 2f)
+        val width = ink.measure().width("xxx") * em
+        assertTrue("ends within its measured width", flat[2] <= 100f + width + 0.5f)
+        // Turned with the line: the right end sits lower (y grows down) by about slope · width.
+        assertTrue("tilted word's bottom-right is lower than a flat one would be", tilted[3] > 400f + 0.03f * (tilted[2] - tilted[0]))
+    }
+
     private fun boxes(strokes: TextInk.Strokes): List<FloatArray> {
         var at = 0
         return strokes.sizes.map { n ->

@@ -117,15 +117,16 @@ class EditorToolbarTest {
     }
 
     @Test fun everySegmentMapsToItsOwnSlot() {
-        assertEquals(11, DialSegments); assertEquals(5, DialColors); assertEquals(8, DialWidths)
-        val sweep = 360f / 11
-        // Five tools across the top, the middle one (lasso's neighbour, eraser) straight up.
-        assertEquals(2, segmentAt(-90f)); assertEquals(0, segmentAt(-90f - 2 * sweep)); assertEquals(4, segmentAt(-90f + 2 * sweep))
-        assertEquals(5, segmentAt(-90f + 3 * sweep)); assertEquals(7, segmentAt(-90f + 5 * sweep))
-        assertEquals(8, segmentAt(-90f + 6 * sweep)); assertEquals(10, segmentAt(-90f + 8 * sweep))
+        assertEquals(12, DialSegments); assertEquals(6, DialColors); assertEquals(9, DialWidths)
+        val sweep = 360f / 12
+        // Six tools across the top, centred on straight up: the eraser and lasso either side of it.
+        assertEquals(2, segmentAt(-90f - sweep / 2)); assertEquals(3, segmentAt(-90f + sweep / 2))
+        assertEquals(0, segmentAt(-90f - 2.5f * sweep)); assertEquals(5, segmentAt(-90f + 2.5f * sweep))
+        assertEquals(6, segmentAt(-90f + 3.5f * sweep)); assertEquals(8, segmentAt(-90f + 5.5f * sweep))
+        assertEquals(9, segmentAt(-90f + 6.5f * sweep)); assertEquals(11, segmentAt(-90f + 8.5f * sweep))
         // Each segment owns half a sweep either side of its centre, wrapping at ±180°.
         (0 until DialSegments).forEach { i ->
-            val centre = -90f + (i - 2) * sweep
+            val centre = -90f + (i - 2.5f) * sweep
             assertEquals(i, segmentAt(centre - sweep / 2 + 0.5f)); assertEquals(i, segmentAt(centre + sweep / 2 - 0.5f))
             assertEquals(i, segmentAt(centre + 360f)); assertEquals(i, segmentAt(centre - 360f))
         }
@@ -320,7 +321,8 @@ class EditorToolbarTest {
 
     /** dp from the dial's centre to the middle of segment [index]. */
     private fun segment(index: Int): Offset {
-        val angle = Math.toRadians(-90.0 + 360.0 / DialSegments * (index - 2))
+        // The tools are centred on straight up.
+        val angle = Math.toRadians(-90.0 + 360.0 / DialSegments * (index - (DialColors - 1) / 2.0))
         return Offset((76 * kotlin.math.cos(angle)).toFloat(), (76 * kotlin.math.sin(angle)).toFloat())
     }
 

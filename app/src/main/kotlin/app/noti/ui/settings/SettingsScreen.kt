@@ -37,6 +37,7 @@ import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Create
 import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.Info
@@ -479,6 +480,50 @@ private fun WritingSection(settings: SettingsStore) {
         checked = settings.confirmLeave,
     ) { settings.confirmLeave = it }
     HandwritingLanguageRow(settings)
+    QuickFillsRow(settings)
+}
+
+/** Type on lines: things typed into forms often, offered as chips in the Type panel. */
+@Composable
+private fun QuickFillsRow(settings: SettingsStore) {
+    var editing by remember { mutableStateOf(false) }
+    val fills = settings.quickFills
+    Column {
+        ValueRow("Quick fills", if (fills.isEmpty()) "None yet" else "${fills.size} saved") { editing = true }
+        Text("Your name, student number, class… One tap in the Type panel puts them on the line. Today's date is always there.",
+            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+    if (editing) {
+        var label by remember { mutableStateOf("") }
+        var value by remember { mutableStateOf("") }
+        AlertDialog(onDismissRequest = { editing = false }, title = { Text("Quick fills") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    for (f in fills) Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text(f.label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(f.value, style = MaterialTheme.typography.bodyLarge)
+                        }
+                        IconButton(onClick = { settings.quickFills = fills - f }) {
+                            Icon(Icons.Outlined.Close, "Remove ${f.label}")
+                        }
+                    }
+                    androidx.compose.material3.OutlinedTextField(label, { label = it }, Modifier.fillMaxWidth(),
+                        label = { Text("Label, like Name") }, singleLine = true)
+                    androidx.compose.material3.OutlinedTextField(value, { value = it }, Modifier.fillMaxWidth(),
+                        label = { Text("What to fill in") }, singleLine = true)
+                    Text("A field whose printed label matches puts its fill first.", style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            },
+            confirmButton = {
+                Button(onClick = {
+                    settings.quickFills = fills + app.noti.data.QuickFill(label.trim().ifEmpty { "Fill" }, value.trim())
+                    label = ""; value = ""
+                }, enabled = value.isNotBlank()) { Text("Add") }
+            },
+            dismissButton = { TextButton(onClick = { editing = false }) { Text("Done") } })
+    }
 }
 
 /** The language the Transcribe tool reads. Its model downloads the first time it's used. */

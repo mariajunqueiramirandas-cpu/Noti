@@ -1,5 +1,6 @@
 package app.noti.transcribe
 
+import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.Rect
@@ -7,6 +8,9 @@ import android.graphics.RectF
 import android.graphics.Region
 import android.graphics.RegionIterator
 import android.graphics.Typeface
+import app.noti.lines.Measure
+import app.noti.lines.PlacedWord
+import kotlin.math.atan
 import kotlin.math.ceil
 import kotlin.math.floor
 import kotlin.math.max
@@ -66,6 +70,34 @@ class TextInk(typeface: Typeface) {
             }
         }
         return out.build()
+    }
+
+    /**
+     * Strokes for [words] already placed (Type on lines, [app.noti.lines.LineLayout]): each
+     * word at [em], its baseline starting at its point, turned to its line's slope. One
+     * stroke per word, in order; blank words make none.
+     */
+    fun place(words: List<PlacedWord>, em: Float): Strokes {
+        val out = Builder()
+        paint.textSize = em * Scale
+        val turn = Matrix()
+        for (w in words) {
+            if (w.text.isBlank()) continue
+            val path = Path()
+            paint.getTextPath(w.text, 0, w.text.length, 0f, 0f, path)
+            if (w.slope != 0f) {
+                turn.setRotate(Math.toDegrees(atan(w.slope.toDouble())).toFloat())
+                path.transform(turn)
+            }
+            out.stroke { addPath(path, w.x, w.y) }
+        }
+        return out.build()
+    }
+
+    /** Text widths in this font at an em of 1, for laying out before placing. Its own paint: any thread. */
+    fun measure(): Measure {
+        val m = Paint(paint).apply { textSize = 100f }
+        return Measure { text -> synchronized(m) { m.measureText(text) } / 100f }
     }
 
     /** Words of [paragraph] in rows no wider than [width] (a longer word gets a row to itself). */

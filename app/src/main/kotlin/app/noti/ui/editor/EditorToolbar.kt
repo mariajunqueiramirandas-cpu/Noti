@@ -55,6 +55,8 @@ internal fun EditorToolbar(
     fullScreen: Boolean = false,
     /** A Study board's Study button, shown in the header. */
     studyButton: (@Composable () -> Unit)? = null,
+    /** Type on every blank of the current page, as a form (PDFs). */
+    onFillPage: (() -> Unit)? = null,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
     var toolsExpanded by rememberSaveable { mutableStateOf(true) }
@@ -93,6 +95,8 @@ internal fun EditorToolbar(
                             onClick = { menuOpen = false; add() }) }
                         if (!isPdf) DropdownMenuItem(text = { Text("Page paper") }, leadingIcon = { Icon(Icons.Outlined.Description, null) },
                             onClick = { menuOpen = false; onPagePaper() })
+                        onFillPage?.let { fill -> DropdownMenuItem(text = { Text("Fill this page") },
+                            leadingIcon = { Icon(Icons.Outlined.Keyboard, null) }, onClick = { menuOpen = false; fill() }) }
                         DropdownMenuItem(text = { Text("Export PDF") }, leadingIcon = { Icon(Icons.Outlined.IosShare, null) },
                             onClick = { menuOpen = false; onExport() })
                         HorizontalDivider(Modifier.padding(vertical = 4.dp), color = colors.outlineVariant)
@@ -234,6 +238,7 @@ internal fun Tool.icon(): ImageVector = when (this) {
     Tool.Eraser -> EraserIcon
     Tool.Lasso -> Icons.Outlined.Gesture
     Tool.Transcribe -> Icons.Outlined.TextFields
+    Tool.Type -> Icons.Outlined.Keyboard
 }
 
 /** Material Icons has no eraser; a simple outlined one in the same 24 dp grid. */

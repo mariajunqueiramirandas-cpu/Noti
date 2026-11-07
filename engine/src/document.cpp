@@ -138,9 +138,9 @@ bool InkEngine::edit_sample(const InkSample& s) {
   } else {
     Capsule c{edit_x_, edit_y_, 1.5f, x, y, 1.5f};
     edit_bounds_.add(c);
-    // Lasso loops are blue; transcribe loops are Noti's plum.
+    // Lasso loops are blue; transcribe and type loops are Noti's plum.
     static constexpr float kBlue[4] = {0.15f, 0.35f, 0.9f, 1.f}, kPlum[4] = {0.36f, 0.29f, 0.53f, 1.f};
-    FrameUpdate f; f.ink = &c; f.ink_count = 1; f.color = gesture_tool_ == 4 ? kPlum : kBlue; RectF b; b.add(c);
+    FrameUpdate f; f.ink = &c; f.ink_count = 1; f.color = gesture_tool_ >= 4 ? kPlum : kBlue; RectF b; b.add(c);
     f.ink_rect = pixel_bounds(b, surface_w_, surface_h_); renderer_.render(f);
     polygon_.push_back({x, y});
   }
@@ -151,7 +151,16 @@ bool InkEngine::edit_sample(const InkSample& s) {
 
 void InkEngine::end_edit(bool cancel) {
   editing_ = false;
-  if ((gesture_tool_ == 3 || gesture_tool_ == 4) && !moving_selection_) {
+  if (gesture_tool_ == 5) {
+    // Type: the loop (or tap) is a place on the page, not a selection of ink. It is kept in
+    // page units for the app, which finds the lines there.
+    renderer_.cancel(pixel_bounds(edit_bounds_, surface_w_, surface_h_));
+    if (!cancel && !polygon_.empty() && page_map_.s > 0) {
+      type_loop_.assign({float(page_)});
+      for (const auto& p : polygon_) type_loop_.insert(type_loop_.end(), {(p.x - page_map_.ox) / page_map_.s, (p.y - page_map_.oy) / page_map_.s});
+      ++type_serial_;
+    }
+  } else if ((gesture_tool_ == 3 || gesture_tool_ == 4) && !moving_selection_) {
     renderer_.cancel(pixel_bounds(edit_bounds_, surface_w_, surface_h_));
     if (!cancel && polygon_.size() >= 3) {
       auto inside = [&](float x, float y) {
@@ -205,6 +214,21 @@ std::vector<float> InkEngine::selection_ink() const {
   for (auto id : selected_) {
     const auto& r = store_.stroke(id);
     if (r.hidden) continue;
+    ++count;
+    out.insert(out.end(), {float(id), float(r.page), r.color[0], r.color[1], r.color[2], r.color[3], float(r.capsule_count)});
+    const Capsule* c = store_.canonical(id);
+    for (uint32_t j = 0; j < r.capsule_count; ++j) out.insert(out.end(), {c[j].x0, c[j].y0, c[j].r0, c[j].x1, c[j].y1, c[j].r1});
+  }
+  out[0] = float(count);
+  return out;
+}
+
+std::vector<float> InkEngine::page_ink(uint32_t page) const {
+  std::vector<float> out{0.f};
+  uint32_t count = 0;
+  for (uint32_t id = 0; id < store_.stroke_count(); ++id) {
+    const auto& r = store_.stroke(id);
+    if (r.hidden || r.page != page) continue;
     ++count;
     out.insert(out.end(), {float(id), float(r.page), r.color[0], r.color[1], r.color[2], r.color[3], float(r.capsule_count)});
     const Capsule* c = store_.canonical(id);

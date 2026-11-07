@@ -94,6 +94,10 @@ internal object NotiInk {
     @JvmStatic external fun nativeDocumentState(handle: Long): DoubleArray
     /** The selected strokes in page units (see InkEngine::selection_ink). */
     @JvmStatic external fun nativeSelectionInk(handle: Long): FloatArray
+    /** The Type tool's last loop or tap: [page, then x y per point] in page units (InkEngine::type_loop). */
+    @JvmStatic external fun nativeTypeLoop(handle: Long): FloatArray
+    /** Every visible stroke of a page, in the selection-ink format (InkEngine::page_ink). */
+    @JvmStatic external fun nativePageInk(handle: Long, page: Int): FloatArray
     /** Hides [ids] and adds strokes on [page], as one undoable edit (InkEngine::replace_strokes). */
     @JvmStatic external fun nativeReplaceStrokes(handle: Long, ids: IntArray, page: Int, color: FloatArray,
         capsules: FloatArray, sizes: IntArray): Boolean

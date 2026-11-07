@@ -72,6 +72,9 @@ class LibraryStore(context: Context) {
     /** A Study board's study material (app.noti.study.StudyStore). */
     val studyDir = File(context.filesDir, "study").apply { mkdirs() }
     fun studyFile(nb: Notebook) = File(studyDir, "${nb.id}.json")
+    /** Text typed on lines in a notebook (Type tool), next to its ink. */
+    val typeDir = File(context.filesDir, "type").apply { mkdirs() }
+    fun typeFile(nb: Notebook) = File(typeDir, "${nb.id}.json")
 
     fun pdfFile(nb: Notebook): File? = nb.pdf?.let { File(pdfDir, it) }
     fun thumbnailFile(nb: Notebook): File? = nb.pdf?.let { File(pdfDir, it.removeSuffix(".pdf") + ".png") }
@@ -143,6 +146,7 @@ class LibraryStore(context: Context) {
         notebooks.filter { it.id in ids }.forEach { nb ->
             InkFile.delete(inkFile(nb))
             if (nb.board) app.noti.study.StudyStore.delete(studyFile(nb))
+            app.noti.lines.TextBlockStore.delete(typeFile(nb))
             pdfFile(nb)?.delete()
             thumbnailFile(nb)?.delete()
         }
@@ -163,6 +167,7 @@ class LibraryStore(context: Context) {
             runCatching { InkFile.open(inkFile(nb)).initial?.let { File(inkDir, "$id.noti").writeBytes(it) } }
                 .getOrElse { return@mapNotNull null }
             if (nb.board) runCatching { app.noti.study.StudyStore.copy(studyFile(nb), File(studyDir, "$id.json")) }
+            runCatching { app.noti.lines.TextBlockStore.copy(typeFile(nb), File(typeDir, "$id.json")) }
             nb.copy(id = id, name = "${nb.name} (copy)", createdAt = now, openedAt = now, pdf = pdf)
         }
         notebooks = notebooks + copies
