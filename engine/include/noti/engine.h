@@ -168,6 +168,12 @@ class InkEngine {
   // Tool 4 (transcribe) is a lasso whose loop asks the app to read the ink it selects.
   // Counts the loops finished, so the app notices each one.
   uint64_t transcribe_serial() const noexcept { return transcribe_serial_; }
+  // Tool 5 (type) is a loop, or a tap, that marks a place to type on: counted like
+  // transcribe loops, and kept as [page, then x y per point] in page units.
+  uint64_t type_serial() const noexcept { return type_serial_; }
+  const std::vector<float>& type_loop() const noexcept { return type_loop_; }
+  // Every visible stroke of `page`, in the selection_ink format.
+  std::vector<float> page_ink(uint32_t page) const;
   // The selected strokes, canonical: [count, then per stroke: id, page, r, g, b, a
   // (premultiplied), n, then n capsules of x0 y0 r0 x1 y1 r1 in page units].
   std::vector<float> selection_ink() const;
@@ -223,7 +229,8 @@ class InkEngine {
   bool editing_ = false, moving_selection_ = false, document_mode_ = false, layout_dirty_ = false;
   float edit_x_ = 0, edit_y_ = 0;
   RectF edit_bounds_;
-  uint64_t revision_ = 0, transcribe_serial_ = 0;
+  uint64_t revision_ = 0, transcribe_serial_ = 0, type_serial_ = 0;
+  std::vector<float> type_loop_;
 
   EngineConfig cfg_;
   InkRenderer& renderer_;

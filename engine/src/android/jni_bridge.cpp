@@ -254,8 +254,18 @@ jdoubleArray nativeDocumentState(JNIEnv* env, jclass, jlong h) {
   const auto b = e.selection_bounds();
   const jdouble values[] = {double(e.revision()), double(e.can_undo()), double(e.can_redo()), double(e.selection_count()),
     b.empty() ? 0.0 : b.x0, b.empty() ? 0.0 : b.y0, b.empty() ? 0.0 : b.x1, b.empty() ? 0.0 : b.y1, double(e.document_busy()),
-    double(e.transcribe_serial())};
-  auto out = env->NewDoubleArray(10); env->SetDoubleArrayRegion(out, 0, 10, values); return out;
+    double(e.transcribe_serial()), double(e.type_serial())};
+  auto out = env->NewDoubleArray(11); env->SetDoubleArrayRegion(out, 0, 11, values); return out;
+}
+jfloatArray floats(JNIEnv* env, const std::vector<float>& data) {
+  auto out = env->NewFloatArray(jsize(data.size()));
+  if (out) env->SetFloatArrayRegion(out, 0, jsize(data.size()), data.data());
+  return out;
+}
+jfloatArray nativeTypeLoop(JNIEnv* env, jclass, jlong h) { return floats(env, inst(h)->engine.type_loop()); }
+jfloatArray nativePageInk(JNIEnv* env, jclass, jlong h, jint page) {
+  if (page < 0) return floats(env, {0.f});
+  return floats(env, inst(h)->engine.page_ink(uint32_t(page)));
 }
 jfloatArray nativeSelectionInk(JNIEnv* env, jclass, jlong h) {
   const auto data = inst(h)->engine.selection_ink();
@@ -435,6 +445,8 @@ const JNINativeMethod kMethods[] = {
     M(nativeDocumentAction, "(JII)Z"),
     M(nativeDocumentState, "(J)[D"),
     M(nativeSelectionInk, "(J)[F"),
+    M(nativeTypeLoop, "(J)[F"),
+    M(nativePageInk, "(JI)[F"),
     M(nativeReplaceStrokes, "(J[II[F[F[I)Z"),
     M(nativeTouch, "(JI)J"),
     M(nativeProcess, "(JI)J"),

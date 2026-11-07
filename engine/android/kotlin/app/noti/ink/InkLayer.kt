@@ -359,6 +359,24 @@ class InkLayer(
         }
     }
 
+    /** The Type tool's last loop or tap (see [NotiInk.nativeTypeLoop]), delivered on the main thread. */
+    fun typeLoop(onResult: (FloatArray) -> Unit) {
+        ink.post {
+            if (released) return@post
+            val data = NotiInk.nativeTypeLoop(handle)
+            main.post { if (!released) onResult(data) }
+        }
+    }
+
+    /** Every visible stroke of [page] (see [NotiInk.nativePageInk]), delivered on the main thread. */
+    fun pageInk(page: Int, onResult: (FloatArray) -> Unit) {
+        ink.post {
+            if (released) return@post
+            val data = NotiInk.nativePageInk(handle, page)
+            main.post { if (!released) onResult(data) }
+        }
+    }
+
     /** The selected strokes (see [NotiInk.nativeSelectionInk]), delivered on the main thread. */
     fun selectionInk(onResult: (FloatArray) -> Unit) {
         ink.post {

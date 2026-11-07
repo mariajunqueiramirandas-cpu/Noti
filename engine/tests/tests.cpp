@@ -801,6 +801,49 @@ TEST(document_transcribe_loop_selects_and_counts_without_moving_ink) {
   CHECK(e.selection_count() == 1); CHECK(e.transcribe_serial() == 2);
 }
 
+TEST(document_type_loop_reports_the_place_in_page_units) {
+  EngineFixture fx; auto& e = *fx.engine;
+  draw_line(e, 50, 50, 80, 50);
+  e.set_tool(5);
+  InkSample loop[] = {sample(Action::kDown, 0, 35, 35), sample(Action::kMove, 4000, 100, 35), sample(Action::kMove, 8000, 100, 80), sample(Action::kMove, 12000, 35, 80), sample(Action::kUp, 16000, 35, 35)};
+  e.process(loop, 5);
+  CHECK(e.type_serial() == 1); CHECK(e.transcribe_serial() == 0);
+  CHECK(e.selection_count() == 0);              // it selects nothing
+  CHECK(e.store().stroke_count() == 1);         // and draws nothing
+  const auto& l = e.type_loop();
+  CHECK(l[0] == float(e.page()));
+  CHECK(l.size() == 1 + 2 * 6);                 // down, four moves/up, as the loop went
+  const auto m = e.page_map();
+  CHECK_NEAR(l[1], (35 * 1.f - m.ox) / m.s, 1e-3); CHECK_NEAR(l[2], (35 * 1.f - m.oy) / m.s, 1e-3);
+  // A tap is a place too (all its points in one spot), and a cancelled loop is not.
+  InkSample tap[] = {sample(Action::kDown, 20000, 60, 60), sample(Action::kUp, 21000, 60, 60)};
+  e.process(tap, 2);
+  CHECK(e.type_serial() == 2);
+  {
+    const auto& t = e.type_loop();
+    CHECK(t.size() >= 3);
+    for (size_t i = 1; i + 1 < t.size(); i += 2) { CHECK_NEAR(t[i], t[1], 1e-4); CHECK_NEAR(t[i + 1], t[2], 1e-4); }
+  }
+  loop[4].action = Action::kCancel; e.process(loop, 5);
+  CHECK(e.type_serial() == 2);
+}
+
+TEST(document_page_ink_lists_visible_strokes_of_one_page) {
+  EngineFixture fx; auto& e = *fx.engine;
+  draw_line(e, 50, 50, 80, 50);
+  draw_line(e, 50, 90, 80, 90);
+  auto ink = e.page_ink(e.page());
+  CHECK(ink[0] == 2);
+  CHECK(ink[1] == 0); CHECK(ink[8] == e.store().canonical(0)[0].x0);
+  const float color[4] = {0.2f, 0.1f, 0.3f, 1.f};
+  std::vector<Capsule> caps = {{10, 10, 2, 20, 10, 2}};
+  CHECK(e.replace_strokes({0}, e.page(), color, caps, {1}));
+  ink = e.page_ink(e.page());
+  CHECK(ink[0] == 2);                        // stroke 0 is hidden, the new one listed
+  CHECK(ink[1] == 1);
+  CHECK(e.page_ink(e.page() + 7)[0] == 0);
+}
+
 TEST(document_selection_ink_is_canonical) {
   EngineFixture fx; auto& e = *fx.engine;
   draw_line(e, 50, 50, 80, 50);
