@@ -1,10 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- To download a handwriting language for the Transcribe tool (ML Kit), once per language;
-         recognition itself runs on the device. And, only on Study boards and only with the
-         user's own Mistral API key, to send a linked PDF or a looped answer to Mistral.
-         Paired Assaad sessions use TLS to noti.vendua.com.br; question images load anonymously. -->
+    <!-- Download handwriting language models for on-device Transcribe, and connect paired
+         Assaad sessions to noti.vendua.com.br. No cloud generation or grading provider. -->
     <uses-permission android:name="android.permission.INTERNET" />
 
     <!-- Only to check that HyperOS's Notes app exists before pretending to be it for the

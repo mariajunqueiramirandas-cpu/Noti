@@ -261,8 +261,7 @@ private fun EditorContent(notebook: Notebook, library: LibraryStore, settings: S
             }
         }
     }
-    TranscribeTool(layer, pages.documentState, settings.handwritingLanguage, canvas = notebook.isCanvas,
-        enabled = study?.controller?.loop == null)
+    TranscribeTool(layer, pages.documentState, settings.handwritingLanguage, canvas = notebook.isCanvas)
     if (restoreError) AlertDialog(onDismissRequest = {}, title = { Text("Couldn't read saved ink") },
         text = { Text("The saved file has been kept without changes. Return to the library to keep your original ink safe.") },
         confirmButton = { app.noti.ui.common.NotiButton(onClick = onBack) { Text("Back to library") } })

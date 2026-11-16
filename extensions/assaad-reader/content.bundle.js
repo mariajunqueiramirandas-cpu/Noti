@@ -112,7 +112,7 @@ ${text}
   }
   const pageUrl = new URL(location.origin + location.pathname);
   const query = new URLSearchParams(location.search);
-  for (const key of ["category_id", "subcategory_id", "tag_ids", "page"]) {
+  for (const key of ["category_id", "subcategory_id", "institution_id", "tag_ids", "page", "page_size", "search", "personal_filters", "difficulties", "years", "folder_id"]) {
     for (const value of query.getAll(key))
       pageUrl.searchParams.append(key, value);
   }
@@ -206,7 +206,7 @@ function refresh() {
       const batch = { batchId: crypto.randomUUID(), source: snapshot.source, capturedAt: snapshot.capturedAt, questions: snapshot.questions };
       const result = await send({ type: "NOTI_SEND_QUESTIONS", batch });
       if (result.error)
-        throw new Error(result.error === "not_connected" ? "Reconecte o Noti antes de enviar." : "Não foi possível enviar. Confira a conexão.");
+        throw new Error({ not_connected: "Reconecte o Noti antes de enviar.", login_required: "Entre na Assaad e tente novamente.", question_not_found: "Atualize a busca da Assaad antes de enviar.", question_changed: "A questão mudou. Atualize a página antes de enviar.", rate_limited: "Aguarde um pouco antes de tentar novamente." }[result.error] || "Não foi possível enviar. Confira a conexão.");
       notice = `${result.count} questões enviadas ao Noti`;
     } catch (error) {
       notice = error.message || "Não foi possível enviar.";

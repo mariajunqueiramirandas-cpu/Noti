@@ -11,9 +11,18 @@ data class AssaadImage(val alt: String, val url: String?)
 data class AssaadAlternative(val id: String, val label: String, val text: String, val images: List<AssaadImage>)
 data class AssaadQuestion(val id: String, val prompt: String, val source: String, val tags: List<String>, val difficulty: String?,
     val images: List<AssaadImage>, val alternatives: List<AssaadAlternative>) {
+    val contentRef: String by lazy {
+        val value = buildString {
+            fun field(value: String) { append(value.length).append(':').append(value) }
+            field(prompt); field(images.size.toString()); images.forEach { field(it.alt); field(it.url ?: "") }
+            field(alternatives.size.toString())
+            alternatives.sortedBy { it.id }.forEach { a -> field(a.id); field(a.text); field(a.images.size.toString()); a.images.forEach { field(it.alt); field(it.url ?: "") } }
+        }
+        java.security.MessageDigest.getInstance("SHA-256").digest(value.toByteArray()).joinToString("") { "%02x".format(it) }
+    }
     val printable: String get() = prompt + "\n\n" + alternatives.joinToString("\n\n") { "${it.label}) ${it.text}" }
 }
-data class AssaadBatch(val id: String, val url: String, val page: String?, val questions: List<AssaadQuestion>, val json: String) {
+data class AssaadBatch(val id: String, val url: String, val page: String?, val questions: List<AssaadQuestion>, val json: String, val accountRef: String? = null, val transport: String? = null) {
     companion object {
         fun parse(o: JSONObject): AssaadBatch {
             val id = o.getString("batchId").also { java.util.UUID.fromString(it) }
@@ -39,7 +48,12 @@ data class AssaadBatch(val id: String, val url: String, val page: String?, val q
                     q.optString("difficulty").takeIf { it != "null" && it.isNotBlank() }, images(q), alternatives)
             }
             require(questions.map { it.id }.distinct().size == questions.size)
-            return AssaadBatch(id, url, source.optString("page").takeIf { it != "null" && it.isNotBlank() }, questions, o.toString())
+            val accountRef = o.optString("accountRef").takeIf { it.isNotBlank() && it != "null" }
+            require(accountRef == null || Regex("[a-f0-9]{64}").matches(accountRef))
+            val transport = o.optString("transport").takeIf { it.isNotBlank() && it != "null" }
+            require(transport == null || transport == "api-v1")
+            require(transport != "api-v1" || accountRef != null)
+            return AssaadBatch(id, url, source.optString("page").takeIf { it != "null" && it.isNotBlank() }, questions, o.toString(), accountRef, transport)
         }
         private fun JSONObject.id(): String = getString("id").also { require(safeId.matches(it)) }
         private fun images(o: JSONObject): List<AssaadImage> {
@@ -62,11 +76,13 @@ fun safeImageUrl(value: String): Boolean = runCatching {
 }.getOrDefault(false)
 
 data class AssaadAnswer(val commandId: String, val alternativeId: String, val status: String = "pending", val feedback: String = "Waiting for Assaad…",
-    val correct: Boolean? = null, val correctAlternativeId: String? = null) {
+    val correct: Boolean? = null, val correctAlternativeId: String? = null, val batchId: String? = null, val reason: String? = null) {
     fun json(): JSONObject = JSONObject().put("commandId", commandId).put("alternativeId", alternativeId).put("status", status)
-        .put("feedback", feedback).put("correct", correct ?: JSONObject.NULL).put("correctAlternativeId", correctAlternativeId ?: JSONObject.NULL)
+        .put("feedback", feedback).put("correct", correct ?: JSONObject.NULL).put("correctAlternativeId", correctAlternativeId ?: JSONObject.NULL).put("batchId", batchId ?: JSONObject.NULL).put("reason", reason ?: JSONObject.NULL)
     companion object {
         fun parse(o: JSONObject) = AssaadAnswer(o.getString("commandId"), o.getString("alternativeId"), o.getString("status"), o.optString("feedback"),
-            if (o.isNull("correct")) null else o.optBoolean("correct"), o.optString("correctAlternativeId").takeIf { it != "null" && it.isNotBlank() })
+            if (o.isNull("correct")) null else o.optBoolean("correct"), o.optString("correctAlternativeId").takeIf { it != "null" && it.isNotBlank() }, o.optString("batchId").takeIf { it != "null" && it.isNotBlank() }, o.optString("reason").takeIf { it != "null" && it.isNotBlank() })
     }
 }
+
+internal fun AssaadBatch.recordKey(questionId: String) = (accountRef ?: "legacy") + ":" + questionId + ":" + (questions.find { it.id == questionId }?.contentRef ?: "missing")

@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "build": "bun build ../assaad-reader/content.js --outfile ../assaad-reader/content.bundle.js --target browser",
-    "test": "bun run build && node --test reader.test.mjs popup.test.mjs answer.test.mjs background.test.mjs content.test.mjs",
+    "test": "bun run build && node --test reader.test.mjs popup.test.mjs answer.test.mjs background.test.mjs content.test.mjs platform-api.test.mjs",
     "integration": "bun test integration.test.mjs"
   },
   "devDependencies": {

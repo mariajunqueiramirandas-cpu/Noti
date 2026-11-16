@@ -35,7 +35,6 @@ import app.noti.ui.study.StudyController
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
-import okhttp3.Request
 
 val LocalAssaadSession = staticCompositionLocalOf<AssaadSession?> { null }
 
@@ -47,9 +46,9 @@ fun AssaadLibraryEntry() {
             Icon(Icons.Outlined.Devices, null, Modifier.size(22.dp)); Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
                 Text("Plataforma Assaad", style = MaterialTheme.typography.titleSmall)
-                Text(if (session.platformActive) "Active in this session" else if (session.paired) "Paired · ${session.batch?.questions?.size ?: 0} questions" else "Connect your browser to your canvas", style = MaterialTheme.typography.bodySmall)
+                Text(if (session.useTabletBrowser) if (session.tabletVerified) "Connected on this tablet" else "Open Assaad on this tablet" else if (session.platformActive) "Active in this session" else if (session.paired) "Paired · ${session.savedQuestionCount} saved questions" else "Connect your browser to your canvas", style = MaterialTheme.typography.bodySmall)
             }
-            Text(if (session.paired) "Open" else "Connect", color = MaterialTheme.colorScheme.primary)
+            Text(if (session.useTabletBrowser || session.paired) "Open" else "Connect", color = MaterialTheme.colorScheme.primary)
         }
     }
 }
@@ -62,10 +61,17 @@ fun AssaadPairingDialog(session: AssaadSession, onOpenBoard: (String) -> Unit) {
     AlertDialog(onDismissRequest = { session.dialogOpen = false },
         title = { Text("Plataforma Assaad") },
         text = { Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text("Pair the extension in your Edge or Chrome browser, then send questions from Assaad to study on your canvas.")
-            if (session.paired) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilterChip(selected = session.useTabletBrowser, onClick = { session.useTablet(true) }, enabled = !session.hasPendingAnswer, label = { Text("This tablet") })
+                FilterChip(selected = !session.useTabletBrowser, onClick = { session.useTablet(false) }, enabled = !session.hasPendingAnswer, label = { Text("Edge / Chrome") })
+            }
+            if (session.useTabletBrowser) {
+                Text("Sign into Assaad here. Its browser can stay minimized while you work on the canvas.")
+                Text(session.tabletStatus)
+                Button(onClick = { session.dialogOpen = false; session.browserOpen = true }) { Text("Open Assaad") }
+            } else if (session.paired) {
                 Text(if (session.platformActive) "Assaad is active in your browser." else if (session.browserOnline) "Browser connected. Open Assaad to continue." else "Waiting for the paired browser.")
-                Text("${session.batch?.questions?.size ?: 0} questions received. Your drawings stay on this device.")
+                Text("${session.savedQuestionCount} saved questions. Your drafts and drawings stay on this device.")
             } else {
                 val code = session.code?.takeIf { session.codeExpiresAt > now }
                 if (code != null) {
@@ -76,6 +82,10 @@ fun AssaadPairingDialog(session: AssaadSession, onOpenBoard: (String) -> Unit) {
                 if (code == null) Button(onClick = session::createCode, enabled = !session.busy) { Text(if (session.busy) "Connecting…" else "Generate pairing code") }
                 Text("Server: noti.vendua.com.br", style = MaterialTheme.typography.bodySmall)
             }
+            if (session.batches.isNotEmpty()) {
+                Text("Saved question sets", style = MaterialTheme.typography.titleSmall)
+                SavedAssaadSets(session); AssaadQueueControls(session)
+            }
             session.problem?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             if (session.hasSession) TextButton(onClick = session::disconnect, enabled = !session.busy) { Text("Disconnect devices") }
         } },
@@ -83,15 +93,52 @@ fun AssaadPairingDialog(session: AssaadSession, onOpenBoard: (String) -> Unit) {
         dismissButton = { TextButton(onClick = { session.dialogOpen = false }) { Text("Close") } })
 }
 
+@Composable
+private fun SavedAssaadSets(session: AssaadSession) {
+    Column(Modifier.heightIn(max = 180.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        session.batches.asReversed().forEach { batch ->
+            OutlinedCard(onClick = { session.selectBatch(batch.id) }, modifier = Modifier.fillMaxWidth()) {
+                Row(Modifier.padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text(batch.questions.firstOrNull()?.tags?.joinToString(" · ")?.takeIf { it.isNotBlank() } ?: "Assaad questions", maxLines = 1)
+                        Text("${batch.questions.size} questions · ${org.json.JSONObject(batch.json).optString("capturedAt").take(10)}", style = MaterialTheme.typography.labelSmall)
+                    }
+                    if (session.batch?.id == batch.id) Icon(Icons.Outlined.Check, "Selected set", Modifier.size(18.dp))
+                    IconButton(onClick = { session.removeBatch(batch.id) }) { Icon(Icons.Outlined.DeleteOutline, "Remove saved set") }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun AssaadQueueControls(session: AssaadSession) {
+    Button(onClick = session::submitSavedAnswers, enabled = session.draftCount > 0, modifier = Modifier.fillMaxWidth()) { Text("Submit saved answers (${session.draftCount})") }
+    if (session.queuedCount > 0) {
+        Text("${session.queuedCount} in queue" + if (session.queuePaused) " · paused" else if (session.useTabletBrowser) " · waiting for Assaad" else " · waiting for Edge", style = MaterialTheme.typography.bodySmall)
+        Row {
+            TextButton(onClick = { if (session.queuePaused) session.resumeQueue() else session.pauseQueue() }) { Text(if (session.queuePaused) "Resume queue" else "Pause queue") }
+            TextButton(onClick = session::cancelQueue) { Text("Cancel queued answers") }
+        }
+    }
+    if (session.totalImages > 0) {
+        Text("Images available offline: ${session.savedImages}/${session.totalImages}", style = MaterialTheme.typography.bodySmall)
+        if (session.savedImages < session.totalImages) TextButton(onClick = session::saveImages, enabled = !session.savingImages) { Text(if (session.savingImages) "Saving images…" else "Save missing images") }
+    }
+    session.problem?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+}
+
 /** A sub-panel above the native ink window, with the drawing canvas left free. */
 @Composable
 internal fun AssaadOverlay(notebookId: String, study: StudyController?, placement: () -> PagePlacement?) {
     val session = LocalAssaadSession.current ?: return
+    var setsOpen by remember { mutableStateOf(false) }
+    if (setsOpen) AlertDialog(onDismissRequest = { setsOpen = false }, title = { Text("Saved question sets") }, text = { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) { SavedAssaadSets(session); AssaadQueueControls(session) } }, confirmButton = { TextButton(onClick = { setsOpen = false }) { Text("Done") } })
     if (session.boardId != notebookId) return
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val density = LocalDensity.current
         val width = (maxWidth - 24.dp).coerceAtMost(430.dp)
-        val height = (maxHeight * 0.58f).coerceAtLeast(200.dp)
+        val height = (maxHeight * (if (maxHeight < 700.dp) 0.85f else 0.68f)).coerceAtLeast(200.dp)
         var offset by remember(notebookId) { mutableStateOf(IntOffset(0, with(density) { 74.dp.roundToPx() })) }
         val minX = -with(density) { (maxWidth - (if (session.sheetOpen) width else 210.dp) - 16.dp).roundToPx() }.coerceAtLeast(0)
         val maxY = with(density) { (maxHeight - 64.dp).roundToPx() }.coerceAtLeast(0)
@@ -106,12 +153,14 @@ internal fun AssaadOverlay(notebookId: String, study: StudyController?, placemen
                     } }, verticalAlignment = Alignment.CenterVertically) {
                         Icon(Icons.Outlined.DragIndicator, null, Modifier.size(18.dp))
                         Text("Plataforma Assaad", style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
+                        if (session.sheetOpen) TextButton(onClick = { setsOpen = true }) { Text("Saved sets") }
                         IconButton(onClick = { session.sheetOpen = !session.sheetOpen }, modifier = Modifier.size(32.dp)) {
                             Icon(if (session.sheetOpen) Icons.Outlined.CloseFullscreen else Icons.Outlined.OpenInFull, if (session.sheetOpen) "Collapse Assaad questions" else "Open Assaad questions")
                         }
                     }
                     if (!session.sheetOpen) return@Column
-                    Text(if (session.platformActive) "Active in this session" else "Browser tab inactive · saved questions", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+                    Text(if (session.useTabletBrowser) if (session.tabletVerified) "On-tablet browser connected" else "Open Assaad and check the connection" else if (session.browserOnline) "Browser connected · drafts saved locally" else "Study offline · submit when your browser reconnects", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+                    if (session.useTabletBrowser) TextButton(onClick = { session.browserOpen = true }) { Text("Open Assaad") }
                     val question = session.current
                     if (question == null) {
                         Text("Use ‘Enviar questões ao Noti’ in the Assaad question bank. You can draw on the canvas while you wait.")
@@ -122,15 +171,15 @@ internal fun AssaadOverlay(notebookId: String, study: StudyController?, placemen
                             Text("${session.currentIndex + 1} / ${session.batch?.questions?.size}", Modifier.weight(1f))
                             TextButton(onClick = { session.currentIndex++ }, enabled = session.currentIndex < (session.batch?.questions?.lastIndex ?: 0)) { Text("›") }
                         }
-                        var selected by remember(question.id, session.batch?.id) { mutableStateOf<String?>(null) }
+                        val selected = session.drafts[question.id]
                         val answer = session.answers[question.id]
-                        val locked = answer?.status in listOf("pending", "unknown", "confirmed")
+                        val locked = answer?.status in listOf("queued", "pending", "unknown", "confirmed")
                         Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             Text(listOf(question.source, question.tags.joinToString(" · ")).filter { it.isNotBlank() }.joinToString("\n"), style = MaterialTheme.typography.labelSmall)
                             PlatformText(question.prompt)
                             question.images.forEach { PlatformImage(it, session) }
                             question.alternatives.forEach { alternative ->
-                                OutlinedCard(onClick = { selected = alternative.id }, enabled = !locked, modifier = Modifier.fillMaxWidth()) {
+                                OutlinedCard(onClick = { session.saveDraft(alternative.id) }, enabled = !locked, modifier = Modifier.fillMaxWidth()) {
                                     Column(Modifier.padding(10.dp)) {
                                         Row(verticalAlignment = Alignment.CenterVertically) {
                                             RadioButton(selected = (if (locked) answer?.alternativeId else selected ?: answer?.alternativeId) == alternative.id, onClick = null)
@@ -146,9 +195,9 @@ internal fun AssaadOverlay(notebookId: String, study: StudyController?, placemen
                                 Text("Correct option: ${it.label}", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelLarge)
                             } }
                         }
-                        Button(onClick = { selected?.let(session::confirm) }, enabled = selected != null && !locked && session.connected && session.paired && session.browserOnline && session.platformActive,
-                            modifier = Modifier.fillMaxWidth()) { Text(if (answer?.status == "pending") "Waiting for Assaad…" else "Confirm in Assaad") }
-                        Text("Confirms your choice on the open website.", style = MaterialTheme.typography.labelSmall)
+                        Button(onClick = { selected?.let(session::confirm) }, enabled = selected != null && !locked ,
+                            modifier = Modifier.fillMaxWidth()) { Text(if (answer?.status == "pending") "Waiting for Assaad…" else if (answer?.status == "queued") "Queued for Assaad" else "Confirm in Assaad") }
+                        Text(if (session.useTabletBrowser) "Drafts stay on this tablet. Confirm to submit through your Assaad login." else if (selected != null && answer == null) "Draft saved. Confirm to submit when Edge is available." else "Queued answers submit through your paired Edge login.", style = MaterialTheme.typography.labelSmall)
                         if (answer?.status == "unknown") TextButton(onClick = { session.allowRetry(question.id) }) { Text("Checked browser · allow another attempt") }
                         TextButton(onClick = {
                             val sheet = placement()?.visiblePages?.firstOrNull() ?: return@TextButton
@@ -190,19 +239,15 @@ private fun PlatformImage(image: AssaadImage, session: AssaadSession) {
     val bitmap by produceState<Bitmap?>(null, image.url) {
         value = withContext(Dispatchers.IO) { runCatching {
             val url = image.url?.takeIf(::safeImageUrl) ?: return@runCatching null
-            session.http.newCall(Request.Builder().url(url).build()).execute().use { response ->
-                if (!response.isSuccessful) return@use null
-                val bytes = response.body?.byteStream()?.readNBytes(2_097_153) ?: return@use null
-                if (bytes.size > 2_097_152) return@use null
-                val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
-                val options = BitmapFactory.Options().apply {
-                    var sample = 1
-                    while (bounds.outWidth / sample > 1024 || bounds.outHeight / sample > 1024) sample *= 2
-                    inSampleSize = sample
-                }
-                BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
+            val bytes = session.imageBytes(url) ?: return@runCatching null
+            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+            val options = BitmapFactory.Options().apply {
+                var sample = 1
+                while (bounds.outWidth / sample > 1024 || bounds.outHeight / sample > 1024) sample *= 2
+                inSampleSize = sample
             }
+            BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
         }.getOrNull() }
     }
     bitmap?.let { Image(it.asImageBitmap(), image.alt.ifBlank { "Question image" }, Modifier.fillMaxWidth().heightIn(max = 220.dp)) }

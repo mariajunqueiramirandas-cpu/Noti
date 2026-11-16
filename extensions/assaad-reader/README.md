@@ -1,67 +1,70 @@
-# Noti × Plataforma Assaad
+# Noti · Plataforma Assaad — version 3
 
-Manifest V3 extension for Microsoft Edge and Chrome. The popup is used only for
-pairing with Noti; its white/gray cards and blue controls follow Assaad's UI.
-The default relay is **https://noti.vendua.com.br**.
+Edge/Chrome Manifest V3 extension. The popup is exclusively six-digit pairing,
+using Assaad’s white/gray cards and blue controls. Server: **https://noti.vendua.com.br**.
 
-## Install / update in Edge
+## Install or update
 
-1. Deploy the server first using the root `compose.yaml` and `server/README.md`.
-2. Open `edge://extensions`, enable Developer mode, then **Load unpacked** and
-   choose `C:\Noti\extensions\assaad-reader` (the folder containing `manifest.json`).
-   If this folder is already installed, use **Reload**. Version 2 needs access to
-   Assaad and the relay; accept Edge's updated site permissions if prompted.
-3. Refresh your Assaad tab after installing/reloading.
-4. In Noti's library, choose **Plataforma Assaad → Generate pairing code**.
-5. Click **Conectar ao Noti** on Assaad's dashboard or open the extension popup,
-   then enter the six-digit code displayed by Noti.
-6. In a question search, click **Enviar questões ao Noti**. Open the canvas in Noti,
-   select an option, and use **Confirm in Assaad** to submit it on the website.
+Deploy the root Compose file using [the server guide](../../server/README.md).
+In `edge://extensions`, load unpacked `C:\Noti\extensions\assaad-reader`, or reload
+an existing installation. Version 3 adds `scripting` on the existing Assaad host;
+site access stays restricted to Assaad and the relay. Refresh the website afterwards.
+In Noti, open Plataforma Assaad and generate a pairing code. Enter it in the popup
+or via **Conectar ao Noti** on the dashboard. Codes expire in five minutes.
 
-Chrome uses the same steps at `chrome://extensions`. Pairing codes expire after
-five minutes and can be used once. Disconnecting either device ends the session
-for both. Pairing persists through browser/server restarts, for up to 30 days.
+## Save and answer later
 
-## What is shared
+Click **Enviar questões ao Noti** to import only currently displayed question IDs
+through the ordinary search API. Noti keeps multiple saved sets and offline drafts.
+Use **Confirm in Assaad** for one answer or **Saved sets → Submit saved answers**
+for the saved drafts. The queue supports pause/resume/cancel and runs while Noti is
+foregrounded. Ink stays in the native local canvas store.
 
-After pairing, the browser automatically sends whether Assaad is active and the
-current page category. Questions are read **only when you click send**. That sends
-the currently rendered page, including text, alternatives, metadata and image
-references. There is no automatic pagination or fetching of hidden answer keys.
-Noti receives official feedback only after you explicitly confirm an answer.
-The extension doesn't call Assaad's private APIs; confirmation uses the normal
-page controls, changes your platform answer, and may be recorded by the platform.
-There is no stealth or detection/logging guarantee.
+Edge must be running and logged into the original Assaad account. The extension
+reuses a tab or opens one background tab for an approved submission; the original
+question page is unnecessary for API-backed sets. Old DOM-only imports still need
+the original page; reimport with version 3 to upgrade them. Pairing lasts 30 days;
+re-pairing or disconnecting does not erase the tablet’s saved library.
 
-Relay traffic uses HTTPS/WSS. Separate device tokens live in extension-local
-storage restricted to trusted extension contexts. Tokens and cookies are never
-inserted into page DOM or sent as WebSocket URL parameters. No browser history,
-credentials, account profile data, drawings, or unrelated website content is read.
-Drawings stay on the tablet. The server retains the latest question batch for
-reconnection; full retention/deployment details are in `server/README.md`.
+## One tablet without Edge
 
-The reader supports the observed Assaad card layout. It excludes filters, hidden
-content and explanations, preserves rendered KaTeX as LaTeX, and skips unsupported
-cards. Navigating away, changing a question, already-confirmed controls, or losing
-the original tab prevents submission. Interrupted commands are not automatically
-repeated; check the browser if a confirmation has an unknown outcome.
+In Noti, choose **Plataforma Assaad → This tablet** to use its real embedded
+browser. Sign into the site, **Save questions**, then **Canvas** to minimize it.
+This mode needs neither the extension nor the relay. The shared adapter runs in
+the real site origin with standard CORS; a failed connection check blocks writes.
+Live Assaad WebView login/CORS behavior remains unverified on a physical device.
+You can switch connection modes while no answer is in flight; saved sets remain.
 
-## Build and test
+## Fair use and privacy
 
-Bun is needed only to build/test, not to run the installed extension. A generated
-`content.bundle.js` is included so the folder is immediately loadable.
+**Every Assaad API request originates inside the user’s own Edge page and network
+connection. The Noti server never proxies those requests or holds Assaad credentials.**
+A fixed packaged function runs through the Chrome scripting API. Tokens stay in
+the page context; no debugger, cookie access, broad host access, or arbitrary URL
+proxy is requested. VPN/proxy settings on the user’s connection determine its public IP.
 
-```powershell
-cd C:\Noti\server
-bun install --frozen-lockfile
-bun test
-cd C:\Noti\extensions\assaad-reader-dev
-npm ci
-npm test
-bun run integration
-.\package.ps1
-```
+Operations are serialized: at least five seconds between operations, two seconds
+between requests within an operation, and at most six approved answers per minute.
+HTTP 429 enforces Retry-After (at least 60 seconds) across extension restarts. No
+pagination crawl, answer-key fetch, or automatic write retry is performed. These
+are transparent limits for fair use, not measures to hide normal logged activity.
 
-The package is written to `work\artifacts\assaad-reader-2.0.0.zip`; extract it
-before **Load unpacked**. Tests/dependencies stay outside the package. CI checks
-the bundle against its sources and publishes a ZIP artifact on the PR.
+The relay receives bounded question snapshots, image references, account hashes,
+activity categories, choices, and official feedback. Assaad tokens/cookies, raw
+profiles, hidden solutions, and drawings are not shared. Before writing, the adapter
+checks account and question content. An uncertain write pauses for user review.
+
+Noti copies anonymous HTTPS images locally when possible (4 MiB each, 64 MiB total).
+Saved sets shows the offline image count. Protected or oversized images may need
+the browser. Text, formulas, drafts, and existing saved study material remain local.
+
+See [the endpoint investigation](../../docs/integrations/plataforma-assaad-api.md)
+for the source-confirmed contracts and unverified live behavior. Development tests
+do not submit answers to a real Assaad account.
+
+## Build and check
+
+Run `bun install --frozen-lockfile`, `bun run typecheck`, and `bun test` in `server`.
+In `extensions/assaad-reader-dev`, run `npm ci`, `npm test`, `bun run integration`,
+and `./package.ps1`. The ZIP is `work/artifacts/assaad-reader-3.0.0.zip`.
+Extract it before loading unpacked. Test dependencies are outside the runtime folder.

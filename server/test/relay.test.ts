@@ -82,7 +82,7 @@ test("presence, questions, answers and official feedback complete the relay roun
   const batch = sampleBatch(); browser.send("questions", batch);
   expect((await browser.next("accepted")).count).toBe(1); expect((await app.next("questions")).questions[0].id).toBe("q-1");
   const answer = { commandId: crypto.randomUUID(), batchId: batch.batchId, questionId: "q-1", alternativeId: "a-1" };
-  app.send("answer", answer); expect(await browser.next("answer")).toEqual(answer);
+  app.send("answer", answer); expect(await browser.next("answer")).toMatchObject({ ...answer, batch });
   const result = { commandId: answer.commandId, status: "confirmed", correct: true, correctAlternativeId: "a-1", feedback: "Resposta correta." };
   browser.send("answer-result", result); expect(await app.next("answer-result")).toMatchObject({ ...result, questionId: "q-1", alternativeId: "a-1", batchId: batch.batchId });
   app.send("answer", answer); expect(await app.next("answer-result")).toMatchObject(result);
@@ -105,7 +105,7 @@ test("reconnect replays a stored batch and pending command; revoked tokens canno
   const batch = sampleBatch(); browser.send("questions", batch); await browser.next("accepted"); await app.next("questions");
   const value = { commandId: crypto.randomUUID(), batchId: batch.batchId, questionId: "q-1", alternativeId: "a-2" };
   app.send("answer", value); await browser.next("answer"); browser.socket.close(); await Bun.sleep(20);
-  const nextBrowser = open(browserCredentials.token); await nextBrowser.next("session"); expect(await nextBrowser.next("answer")).toEqual(value);
+  const nextBrowser = open(browserCredentials.token); await nextBrowser.next("session"); expect(await nextBrowser.next("answer")).toMatchObject({ ...value, batch });
   const nextApp = open(appCredentials.token); await nextApp.next("session"); expect((await nextApp.next("questions")).batchId).toBe(batch.batchId);
   expect((await fetch(base + "/v1/session", { method: "DELETE", headers: { Authorization: `Bearer ${appCredentials.token}` } })).status).toBe(200);
   expect((await fetch(base + "/v1/session", { headers: { Authorization: `Bearer ${browserCredentials.token}` } })).status).toBe(401);
@@ -129,4 +129,47 @@ test("SQLite keeps tokens and batches over a restart; old commands are not repla
   store.db.close();
   if (!resolve(directory).startsWith(resolve(tmpdir(), "noti-relay-"))) throw new Error("Unexpected test directory");
   rmSync(directory, { recursive: true });
+});
+
+
+test("API-backed saved sets survive newer imports and restore into a renewed pairing without a foreground Assaad tab", async () => {
+  const { app, browser, runtime, appCredentials } = await paired();
+  const saved = { ...sampleBatch(), transport: "api-v1" as const, accountRef: "a".repeat(64) };
+  browser.send("questions", saved); await browser.next("accepted"); await app.next("questions");
+  browser.send("questions", sampleBatch()); await browser.next("accepted"); await app.next("questions");
+  browser.send("presence", { active: false, path: null, ready: true, accountRef: saved.accountRef });
+  const command = { commandId: crypto.randomUUID(), batchId: saved.batchId, questionId: "q-1", alternativeId: "a-1" };
+  app.send("answer", command);
+  expect(await browser.next("answer")).toMatchObject({ ...command, batch: saved });
+  // A new pairing can restore a device's permanent saved set; API checks its account/content before writing.
+  const other = await paired();
+  other.app.send("restore-questions", saved); expect((await other.app.next("restored")).batchId).toBe(saved.batchId);
+  other.app.send("answer", { ...command, commandId: crypto.randomUUID() });
+  expect((await other.browser.next("answer")).batch).toEqual(saved);
+  other.app.send("restore-questions", { ...saved, questions: [{ ...saved.questions[0], prompt: "changed" }] });
+  expect((await other.app.next("error")).error).toBe("restore_rejected");
+  expect(runtime.store.batch(appCredentials.sessionId, saved.batchId)).toEqual(saved);
+});
+
+
+test("forgetting a saved set releases archive capacity and never removes a pending submission", async () => {
+  const { app, browser, runtime, appCredentials } = await paired(); const saved = sampleBatch();
+  browser.send("questions", saved); await browser.next("accepted"); await app.next("questions");
+  const command = { commandId: crypto.randomUUID(), batchId: saved.batchId, questionId: "q-1", alternativeId: "a-1" };
+  app.send("answer", command); await browser.next("answer");
+  app.send("forget-questions", { batchId: saved.batchId }); expect((await app.next("error")).error).toBe("batch_in_use");
+  browser.send("answer-result", { commandId: command.commandId, status: "blocked", reason: "login_required", feedback: "Login", correct: null, correctAlternativeId: null });
+  await app.next("answer-result");
+  app.send("forget-questions", { batchId: saved.batchId }); await app.next("forgotten");
+  expect(runtime.store.batch(appCredentials.sessionId, saved.batchId)).toBeNull();
+  expect(runtime.store.batch(appCredentials.sessionId)).toBeNull();
+});
+
+
+test("the relay has no platform URL proxy and rejects arbitrary outbound request messages", async () => {
+  const { app, base } = await paired();
+  const response = await fetch(base + "/v1/platform/proxy?url=https://api.plataformaassaad.com.br/v1/question");
+  expect(response.status).toBe(404);
+  app.send("fetch", { url: "https://api.plataformaassaad.com.br/v1/question" });
+  expect((await app.next("error")).error).toBe("invalid_message");
 });

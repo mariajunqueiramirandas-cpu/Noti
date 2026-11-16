@@ -19,7 +19,7 @@ function refresh() {
       if (snapshot.skipped) throw new Error("Algumas questões têm um formato não reconhecido. Atualize a extensão antes de enviar.");
       const batch = { batchId: crypto.randomUUID(), source: snapshot.source, capturedAt: snapshot.capturedAt, questions: snapshot.questions };
       const result = await send({ type: "NOTI_SEND_QUESTIONS", batch });
-      if (result.error) throw new Error(result.error === "not_connected" ? "Reconecte o Noti antes de enviar." : "Não foi possível enviar. Confira a conexão.");
+      if (result.error) throw new Error(({ not_connected: "Reconecte o Noti antes de enviar.", login_required: "Entre na Assaad e tente novamente.", question_not_found: "Atualize a busca da Assaad antes de enviar.", question_changed: "A questão mudou. Atualize a página antes de enviar.", rate_limited: "Aguarde um pouco antes de tentar novamente." })[result.error] || "Não foi possível enviar. Confira a conexão.");
       notice = `${result.count} questões enviadas ao Noti`;
     } catch (error) { notice = error.message || "Não foi possível enviar."; }
     finally { busy = false; render(); }

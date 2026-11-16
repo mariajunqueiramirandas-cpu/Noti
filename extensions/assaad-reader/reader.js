@@ -119,7 +119,7 @@ export function readQuestions() {
   // Preserve study filters, never arbitrary query parameters or URL fragments.
   const pageUrl = new URL(location.origin + location.pathname);
   const query = new URLSearchParams(location.search);
-  for (const key of ["category_id", "subcategory_id", "tag_ids", "page"]) {
+  for (const key of ["category_id", "subcategory_id", "institution_id", "tag_ids", "page", "page_size", "search", "personal_filters", "difficulties", "years", "folder_id"]) {
     for (const value of query.getAll(key)) pageUrl.searchParams.append(key, value);
   }
   return {

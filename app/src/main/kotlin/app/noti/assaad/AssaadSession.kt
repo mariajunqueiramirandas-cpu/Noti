@@ -1,15 +1,16 @@
 package app.noti.assaad
 
 import android.content.Context
-import android.util.AtomicFile
 import androidx.compose.runtime.*
 import app.noti.data.*
-import app.noti.study.ApiKeyStore
+import app.noti.data.EncryptedSecretStore
 import kotlinx.coroutines.*
 import okhttp3.*
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
+import org.json.JSONArray
+import kotlin.coroutines.resume
 import java.io.File
 import java.util.UUID
 import java.util.concurrent.Executors
@@ -17,13 +18,97 @@ import java.util.concurrent.TimeUnit
 
 /** Foreground-only relay client. All Compose state is updated on the main scope. */
 @Stable
-class AssaadSession(context: Context, private val library: LibraryStore, private val scope: CoroutineScope) {
-    private val secrets = ApiKeyStore(context, "platform_keys", "noti-platform-session")
+class AssaadSession(context: Context, private val library: LibraryStore, private val scope: CoroutineScope, private val relaySend: ((String) -> Boolean)? = null) {
+    private val secrets = EncryptedSecretStore(context, "platform_keys", "noti-platform-session")
     private var credentials = secrets.load()?.let { runCatching { JSONObject(it) }.getOrNull() }
     private val prefs = context.getSharedPreferences("platform_preferences", Context.MODE_PRIVATE)
-    private val file = AtomicFile(File(context.filesDir, "assaad_session.json"))
+    private val file = File(context.filesDir, "assaad_session.json")
+    var useTabletBrowser by mutableStateOf(prefs.getBoolean("tabletBrowser", false)); private set
+    var browserOpen by mutableStateOf(false)
+    var browserGeneration by mutableIntStateOf(0)
+    var tabletPageLoaded by mutableStateOf(false); private set
+    var tabletVerified by mutableStateOf(false); private set
+    var tabletBusy by mutableStateOf(false); private set
+    var tabletStatus by mutableStateOf("Sign into Assaad on this tablet."); private set
+    var tabletUrl by mutableStateOf(ASSAAD_WEBSITE); private set
+    private var tabletBrowser: AssaadLocalBrowser? = null
+    val hasPendingAnswer get() = records.values.any { it.status == "pending" }
+    fun attachTabletBrowser(browser: AssaadLocalBrowser?) { tabletBrowser = browser; if (foreground) browser?.resume() }
+    fun tabletPage(loaded: Boolean, url: String, error: String?) {
+        tabletPageLoaded = loaded; tabletUrl = url
+        if (!loaded) tabletVerified = false
+        if (error != null) { tabletStatus = error; tabletVerified = false; queuePaused = true }
+        else if (loaded && useTabletBrowser && !tabletVerified) checkTabletConnection()
+    }
+    fun useTablet(enabled: Boolean) {
+        if (hasPendingAnswer) { problem = "Wait for the current submission before changing connection mode."; return }
+        val resume = foreground; stop(); useTabletBrowser = enabled
+        prefs.edit().putBoolean("tabletBrowser", enabled).apply()
+        if (enabled) { browserOpen = true; dialogOpen = false }
+        if (resume) start()
+    }
+    fun checkTabletConnection() {
+        val browser = tabletBrowser ?: return
+        if (tabletBusy || !tabletPageLoaded || hasPendingAnswer) return
+        tabletBusy = true
+        scope.launch {
+            try {
+                val result = browser.operation(JSONObject().put("operation", "connect"))
+                tabletVerified = result.optBoolean("ok") && result.optBoolean("corsVerified")
+                tabletStatus = if (tabletVerified) "Connected on this tablet." else "Sign in, then check the connection again. " + result.optString("error")
+                if (tabletVerified) {
+                    val account = result.optString("accountRef")
+                    records = records.mapValues { (_, a) ->
+                        if (a.status == "blocked" && a.reason in listOf("login_required", "account_mismatch") && batches.find { it.id == a.batchId }?.accountRef == account)
+                            a.copy(commandId = UUID.randomUUID().toString(), status = "queued", reason = null, feedback = "Waiting to submit.") else a
+                    }
+                    if (records.values.none { it.status == "unknown" }) queuePaused = false
+                    save()
+                }
+            } catch (_: Exception) { tabletVerified = false; tabletStatus = "Connection check failed. Open Assaad and try again." }
+            finally { tabletBusy = false; pump() }
+        }
+    }
+    fun importTabletQuestions() {
+        val browser = tabletBrowser ?: return
+        if (tabletBusy || !tabletPageLoaded || hasPendingAnswer) return
+        tabletBusy = true
+        scope.launch {
+            try {
+                val read = browser.readQuestions()
+                check(read.optBoolean("ok") && read.optInt("skipped") == 0 && read.getJSONArray("questions").length() > 0) { "Open a loaded question search first." }
+                val batch = JSONObject().put("batchId", UUID.randomUUID().toString()).put("source", read.getJSONObject("source"))
+                    .put("capturedAt", read.getString("capturedAt")).put("questions", read.getJSONArray("questions"))
+                val imported = browser.operation(JSONObject().put("operation", "import").put("batch", batch))
+                check(imported.optBoolean("ok")) { "Could not import questions: " + imported.optString("error") }
+                val value = imported.getJSONObject("batch")
+                AssaadBatch.parse(value)
+                receive(JSONObject().put("type", "questions").put("payload", value).toString())
+                tabletVerified = true; tabletStatus = "Saved " + value.getJSONArray("questions").length() + " questions on this tablet."
+            } catch (e: Exception) { tabletStatus = e.message ?: "Could not import this page." }
+            finally { tabletBusy = false; pump() }
+        }
+    }
+    private fun canSubmit() = if (useTabletBrowser) tabletBrowser != null && tabletVerified && tabletPageLoaded && !tabletBusy else connected && paired && browserOnline
+
     val http = OkHttpClient.Builder().connectTimeout(10, TimeUnit.SECONDS).readTimeout(20, TimeUnit.SECONDS)
         .pingInterval(20, TimeUnit.SECONDS).followRedirects(false).followSslRedirects(false).build()
+    private val media = AssaadMediaCache(context, http)
+    var savedImages by mutableIntStateOf(0); private set
+    var totalImages by mutableIntStateOf(0); private set
+    var savingImages by mutableStateOf(false); private set
+    private var mediaJob: Job? = null
+    private fun imageUrls() = batches.flatMap { b -> b.questions.flatMap { q -> q.images + q.alternatives.flatMap { it.images } } }.mapNotNull { it.url }.distinct()
+    suspend fun imageBytes(url: String): ByteArray? = withContext(Dispatchers.IO) { media.load(url) }
+    fun saveImages() {
+        if (mediaJob?.isActive == true) return
+        val urls = imageUrls(); totalImages = urls.size; savedImages = urls.count(media::contains)
+        mediaJob = scope.launch {
+            savingImages = true
+            try { for (url in urls) { imageBytes(url); savedImages = imageUrls().count(media::contains) } }
+            finally { totalImages = imageUrls().size; savedImages = imageUrls().count(media::contains); savingImages = false }
+        }
+    }
     private val writer = Executors.newSingleThreadExecutor { Thread(it, "noti-platform-save").apply { isDaemon = true } }
     private var socket: WebSocket? = null
     private var reconnect: Job? = null
@@ -42,8 +127,24 @@ class AssaadSession(context: Context, private val library: LibraryStore, private
     var codeExpiresAt by mutableLongStateOf(0L); private set
     var busy by mutableStateOf(false); private set
     var problem by mutableStateOf<String?>(null)
-    var batch by mutableStateOf<AssaadBatch?>(null); private set
-    var answers by mutableStateOf<Map<String, AssaadAnswer>>(emptyMap()); private set
+    var batches by mutableStateOf<List<AssaadBatch>>(emptyList()); private set
+    private var selectedBatchId by mutableStateOf<String?>(null)
+    val batch get() = batches.find { it.id == selectedBatchId } ?: batches.lastOrNull()
+    private var records by mutableStateOf<Map<String, AssaadAnswer>>(emptyMap())
+    private var choices by mutableStateOf<Map<String, String>>(emptyMap())
+    private var removedBatchIds = emptySet<String>()
+    val answers get() = batch?.let { b -> b.questions.mapNotNull { q -> records[b.recordKey(q.id)]?.let { q.id to it } }.toMap() } ?: emptyMap()
+    val drafts get() = batch?.let { b -> b.questions.mapNotNull { q -> choices[b.recordKey(q.id)]?.let { q.id to it } }.toMap() } ?: emptyMap()
+    val queuedCount get() = records.values.count { it.status in listOf("queued", "pending", "blocked") }
+    val draftCount get() = choices.keys.count { records[it]?.status !in listOf("queued", "pending", "confirmed", "unknown") }
+    val savedQuestionCount get() = batches.flatMap { b -> b.questions.map { b.recordKey(it.id) } }.distinct().size
+    var queuePaused by mutableStateOf(false); private set
+    private var archiveLoaded = false
+    internal val libraryLoaded get() = archiveLoaded
+    private var dirty = false
+    private var dispatchJob: Job? = null
+    private var browserReady = false
+    private var browserAccount: String? = null
     var currentIndex by mutableIntStateOf(0)
     var boardId by mutableStateOf(prefs.getString("board", null)); private set
     val hasSession get() = credentials != null
@@ -51,23 +152,38 @@ class AssaadSession(context: Context, private val library: LibraryStore, private
 
     init {
         scope.launch {
-            val saved = withContext(Dispatchers.IO) { runCatching { JSONObject(String(file.readFully(), Charsets.UTF_8)) }.getOrNull() }
-            if (batch == null && saved != null) runCatching {
-                batch = saved.optJSONObject("batch")?.let(AssaadBatch::parse)
-                answers = saved.optJSONObject("answers")?.let { a -> a.keys().asSequence().associateWith { AssaadAnswer.parse(a.getJSONObject(it)) } } ?: emptyMap()
-                // A process death leaves a submitted command uncertain; a replayed server
-                // result can settle it, but the app must not submit it a second time.
-                answers = answers.mapValues { (_, a) -> if (a.status == "pending") a.copy(status = "unknown", feedback = "Confirmation interrupted. Reconnect or check the browser.") else a }
-            }
+            val saved = withContext(Dispatchers.IO) { runCatching { JSONObject((if (file.exists()) file else File(file.path + ".bak")).readText(Charsets.UTF_8)) }.getOrNull() }
+            if (saved != null) runCatching {
+                val raw = saved.optJSONArray("batches") ?: JSONArray().apply { saved.optJSONObject("batch")?.let(::put) }
+                val removed = saved.optJSONArray("removedBatchIds")
+                removedBatchIds = removedBatchIds + (0 until (removed?.length() ?: 0)).map { removed!!.getString(it) }
+                val restored = (0 until raw.length().coerceAtMost(100)).mapNotNull { runCatching { AssaadBatch.parse(raw.getJSONObject(it)) }.getOrNull() }
+                batches = (restored + batches).distinctBy { it.id }.filterNot { it.id in removedBatchIds }
+                if (selectedBatchId == null) selectedBatchId = saved.optString("selectedBatchId").takeIf { it.isNotBlank() }
+                val oldRecords = mutableMapOf<String, AssaadAnswer>()
+                saved.optJSONObject("records")?.let { obj -> obj.keys().forEach { key -> oldRecords[key] = AssaadAnswer.parse(obj.getJSONObject(key)) } }
+                // Migrate the v1 single-batch session into the permanent library.
+                saved.optJSONObject("answers")?.let { obj -> restored.firstOrNull()?.let { b -> obj.keys().forEach { q -> oldRecords[b.recordKey(q)] = AssaadAnswer.parse(obj.getJSONObject(q)).copy(batchId = b.id) } } }
+                records = oldRecords.mapValues { (_, a) -> if (a.status == "pending") a.copy(status = "unknown", feedback = "Confirmation interrupted. Reconnect or check Assaad before another attempt.") else a } + records
+                val oldChoices = saved.optJSONObject("drafts")?.let { obj -> obj.keys().asSequence().associateWith { obj.getString(it) } } ?: emptyMap()
+                choices = oldChoices + choices
+                queuePaused = saved.optBoolean("queuePaused") || records.values.any { it.status == "unknown" }
+            }.onFailure { problem = "Some saved session data could not be restored. Your canvas is saved separately." }
+            archiveLoaded = true
+            if (connected) removedBatchIds.forEach { send("forget-questions", JSONObject().put("batchId", it)) }
+            totalImages = imageUrls().size; savedImages = imageUrls().count(media::contains)
+            if (dirty) save()
+            pump()
         }
     }
-    fun start() { foreground = true; connect() }
+    fun start() { foreground = true; if (useTabletBrowser) tabletBrowser?.resume() else connect(); pump() }
     fun stop() {
-        foreground = false; reconnect?.cancel(); heartbeat?.cancel(); socket?.close(1000, "App in background"); socket = null
+        foreground = false; tabletBrowser?.pause(); reconnect?.cancel(); heartbeat?.cancel(); socket?.close(1000, "App in background"); socket = null
         connected = false; browserOnline = false; platformActive = false
     }
     fun dispose() { stop(); writer.shutdown(); http.dispatcher.executorService.shutdown(); http.connectionPool.evictAll() }
     private fun connect() {
+        if (useTabletBrowser) return
         val saved = credentials ?: return
         if (!foreground || socket != null) return
         val request = Request.Builder().url(ASSAAD_SERVER.replace("https:", "wss:") + "/v1/stream").build()
@@ -91,53 +207,78 @@ class AssaadSession(context: Context, private val library: LibraryStore, private
             reconnect?.cancel(); reconnect = scope.launch { delay(backoff); backoff = (backoff * 2).coerceAtMost(30_000); connect() }
         }
     }
-    private fun send(type: String, payload: JSONObject? = null): Boolean = socket?.send(JSONObject().put("type", type).apply { payload?.let { put("payload", it) } }.toString()) == true
+    private fun send(type: String, payload: JSONObject? = null): Boolean {
+        val json = JSONObject().put("type", type).apply { payload?.let { put("payload", it) } }.toString()
+        return relaySend?.invoke(json) ?: (socket?.send(json) == true)
+    }
     internal fun receive(text: String) {
         runCatching {
             val message = JSONObject(text); val payload = message.optJSONObject("payload") ?: JSONObject()
             when (message.optString("type")) {
                 "session" -> {
                     val first = !connected
+                    val wasOnline = browserOnline; val wasReady = browserReady; val oldAccount = browserAccount
                     connected = true; backoff = 1000; paired = payload.optBoolean("paired"); browserOnline = payload.optBoolean("peerOnline")
-                    platformActive = payload.optJSONObject("presence")?.optBoolean("active") == true
-                    activePath = payload.optJSONObject("presence")?.optString("path")?.takeIf { it != "null" }
+                    val presence = payload.optJSONObject("presence")
+                    platformActive = presence?.optBoolean("active") == true
+                    activePath = presence?.optString("path")?.takeIf { it != "null" }
+                    browserReady = presence?.optBoolean("ready") == true
+                    browserAccount = presence?.optString("accountRef")?.takeIf { Regex("[a-f0-9]{64}").matches(it) }
                     if (paired) code = null
-                    if (first) { heartbeat?.cancel(); heartbeat = scope.launch { while (isActive) { delay(20_000); send("ping") } } }
+                    if (first) { removedBatchIds.forEach { send("forget-questions", JSONObject().put("batchId", it)) }; heartbeat?.cancel(); heartbeat = scope.launch { while (isActive) { delay(20_000); send("ping") } } }
+                    if (browserOnline && (!wasOnline || browserReady && (!wasReady || browserAccount != oldAccount))) {
+                        var resumed = false
+                        records = records.mapValues { (_, a) ->
+                            val sameAccount = batches.find { it.id == a.batchId }?.accountRef == browserAccount
+                            if (a.status == "blocked" && (a.reason == "browser_offline" || browserReady && sameAccount && a.reason in listOf("login_required", "account_mismatch"))) {
+                                resumed = true; a.copy(commandId = UUID.randomUUID().toString(), status = "queued", feedback = "Waiting to submit.", reason = null)
+                            } else a
+                        }
+                        if (resumed && records.values.none { it.status == "unknown" }) { queuePaused = false; save() }
+                    }
+                    pump()
                 }
                 "questions" -> {
                     val incoming = AssaadBatch.parse(payload)
-                    if (incoming.id != batch?.id) {
-                        batch = incoming; currentIndex = 0; sheetOpen = true
-                        answers = answers.filterKeys { key -> incoming.questions.any { it.id == key } }
-                        save()
+                    if (incoming.id !in removedBatchIds && batches.none { it.id == incoming.id }) {
+                        if (batches.size >= 100) { problem = "The saved library is full. Remove a saved set before importing another."; return }
+                        batches = batches + incoming; selectedBatchId = incoming.id; currentIndex = 0; sheetOpen = true; save(); saveImages()
                     }
+                }
+                "forgotten" -> {
+                    removedBatchIds = removedBatchIds - payload.optString("batchId"); save()
                 }
                 "answer-result" -> {
                     val id = payload.getString("commandId")
-                    val entry = answers.entries.find { it.value.commandId == id }
-                    val questionId = entry?.key ?: payload.optString("questionId")
+                    val entry = records.entries.find { it.value.commandId == id }
+                    val b = batches.find { it.id == payload.optString("batchId") } ?: entry?.value?.batchId?.let { bid -> batches.find { it.id == bid } }
+                    val qid = payload.optString("questionId").takeIf { it.isNotBlank() } ?: b?.questions?.find { b.recordKey(it.id) == entry?.key }?.id
+                    val key = entry?.key ?: if (b != null && qid != null) b.recordKey(qid) else return
                     val previous = entry?.value ?: run {
-                        // The server also returns command context so a process death
-                        // between sending and a local disk write cannot lose feedback.
-                        if (payload.optString("batchId") != batch?.id) return
-                        val question = batch?.questions?.find { it.id == questionId } ?: return
+                        val q = b?.questions?.find { it.id == qid } ?: return
                         val alternative = payload.optString("alternativeId")
-                        if (question.alternatives.none { it.id == alternative }) return
-                        AssaadAnswer(id, alternative)
+                        if (q.alternatives.none { it.id == alternative }) return
+                        AssaadAnswer(id, alternative, batchId = b.id)
                     }
                     val result = AssaadAnswer.parse(JSONObject(previous.json().toString()).apply {
-                        for (key in listOf("status", "feedback", "correct", "correctAlternativeId")) if (payload.has(key)) put(key, payload.get(key))
+                        for (field in listOf("status", "feedback", "correct", "correctAlternativeId", "reason")) if (payload.has(field)) put(field, payload.get(field))
                     })
-                    if (answers[questionId] != result) { answers = answers + (questionId to result); save() }
+                    if (result.status !in listOf("confirmed", "failed", "unknown", "blocked")) return
+                    if (records[key] != result) {
+                        records = records + (key to result)
+                        if (result.status != "confirmed") queuePaused = true
+                        save(); pump()
+                    }
                 }
                 "error" -> {
                     val id = payload.optString("commandId")
-                    answers.entries.find { it.value.commandId == id }?.let { entry ->
-                        answers = answers + (entry.key to entry.value.copy(status = "failed", feedback = when (payload.optString("error")) {
-                            "browser_offline" -> "Keep the Assaad question tab open in the paired browser."
-                            "stale_question" -> "Send the current questions from the browser again."
-                            else -> "The request was not accepted. Check the browser before trying again."
-                        })); save()
+                    records.entries.find { it.value.commandId == id }?.let { entry ->
+                        val code = payload.optString("error")
+                        records = records + (entry.key to entry.value.copy(status = "blocked", reason = code, feedback = when (code) {
+                            "browser_offline" -> "Waiting for the paired browser."
+                            "stale_question" -> "This saved set was not accepted. Update it from Assaad."
+                            else -> "Submission was not accepted. Resume after checking the connection."
+                        })); queuePaused = true; save()
                     }
                 }
             }
@@ -184,7 +325,7 @@ class AssaadSession(context: Context, private val library: LibraryStore, private
         busy = true; problem = null
         scope.launch {
             val result = withContext(Dispatchers.IO) { runCatching { request("/v1/session", "DELETE", token = value.getString("token")) } }
-            result.onSuccess { stop(); credentials = null; secrets.clear(); code = null; paired = false }
+            result.onSuccess { val resume = foreground; stop(); credentials = null; secrets.clear(); code = null; paired = false; if (resume) start() }
                 .onFailure { problem = it.message ?: "Couldn't end the session. Try again." }
             busy = false
         }
@@ -195,32 +336,125 @@ class AssaadSession(context: Context, private val library: LibraryStore, private
         val board = library.create("Plataforma Assaad", Paper(PaperTemplate.Grid), null, board = true)
         boardId = board.id; prefs.edit().putString("board", board.id).apply(); return board.id
     }
-    fun confirm(alternativeId: String) {
-        val batch = batch ?: return; val question = current ?: return
-        if (!connected || !paired || !browserOnline || !platformActive || question.alternatives.none { it.id == alternativeId }) return
-        if (answers[question.id]?.status in listOf("pending", "unknown", "confirmed")) return
-        val commandId = UUID.randomUUID().toString()
-        answers = answers + (question.id to AssaadAnswer(commandId, alternativeId)); save()
-        val accepted = send("answer", JSONObject().put("commandId", commandId).put("batchId", batch.id).put("questionId", question.id).put("alternativeId", alternativeId))
-        if (!accepted) { answers = answers + (question.id to answers.getValue(question.id).copy(status = "failed", feedback = "Not sent. Reconnect and try again.")); save(); return }
-        scope.launch {
-            delay(120_000)
-            val pending = answers[question.id]
-            if (pending?.commandId == commandId && pending.status == "pending") {
-                answers = answers + (question.id to pending.copy(status = "unknown", feedback = "No confirmation received. Check the browser before answering again.")); save()
-            }
+    fun selectBatch(id: String) {
+        if (batches.none { it.id == id }) return
+        selectedBatchId = id; currentIndex = 0; sheetOpen = true; save()
+    }
+    fun removeBatch(id: String) {
+        val b = batches.find { it.id == id } ?: return
+        if (b.questions.any { records[b.recordKey(it.id)]?.status in listOf("pending", "unknown", "queued") }) {
+            problem = "Finish or cancel this set's queue before removing it."; return
         }
+        batches = batches.filterNot { it.id == id }
+        removedBatchIds = removedBatchIds + id
+        if (connected) send("forget-questions", JSONObject().put("batchId", id))
+        val remainingKeys = batches.flatMap { other -> other.questions.map { other.recordKey(it.id) } }.toSet()
+        records = records.filterKeys { it in remainingKeys }; choices = choices.filterKeys { it in remainingKeys }
+        if (selectedBatchId == id) selectedBatchId = batches.lastOrNull()?.id
+        currentIndex = 0; save()
+        val urls = imageUrls()
+        scope.launch { withContext(Dispatchers.IO) { media.retain(urls) }; totalImages = imageUrls().size; savedImages = imageUrls().count(media::contains) }
+    }
+    fun saveDraft(alternativeId: String) {
+        val b = batch ?: return; val q = current ?: return
+        val key = b.recordKey(q.id)
+        if (q.alternatives.none { it.id == alternativeId } || records[key]?.status in listOf("pending", "queued", "unknown", "confirmed")) return
+        choices = choices + (key to alternativeId)
+        if (records[key]?.status in listOf("failed", "blocked")) records = records - key
+        save()
+    }
+    fun confirm(alternativeId: String) {
+        saveDraft(alternativeId)
+        val b = batch ?: return; val q = current ?: return
+        enqueue(b, q.id); queuePaused = false; save(); pump()
+    }
+    private fun enqueue(b: AssaadBatch, qid: String) {
+        val key = b.recordKey(qid); val alternative = choices[key] ?: return
+        if (records[key]?.status in listOf("pending", "queued", "unknown", "confirmed")) return
+        records = records + (key to AssaadAnswer(UUID.randomUUID().toString(), alternative, "queued", "Waiting for the Assaad connection.", batchId = b.id))
+    }
+    fun submitSavedAnswers() {
+        batches.forEach { b -> b.questions.forEach { q -> enqueue(b, q.id) } }
+        queuePaused = false; save(); pump()
+    }
+    fun pauseQueue() { queuePaused = true; save() }
+    fun resumeQueue() {
+        records = records.mapValues { (_, a) -> if (a.status in listOf("blocked", "failed")) a.copy(commandId = UUID.randomUUID().toString(), status = "queued", feedback = "Waiting to submit.", reason = null) else a }
+        queuePaused = false; save(); pump()
+    }
+    fun cancelQueue() {
+        records = records.filterValues { it.status !in listOf("queued", "blocked") }
+        queuePaused = true; save()
     }
     fun allowRetry(questionId: String) {
-        if (answers[questionId]?.status != "unknown") return
-        answers = answers - questionId; save()
+        val b = batch ?: return; val key = b.recordKey(questionId)
+        if (records[key]?.status != "unknown") return
+        choices = choices + (key to records.getValue(key).alternativeId)
+        records = records - key; save()
     }
+    private fun pump() {
+        if (!archiveLoaded || !foreground || !canSubmit() || queuePaused || dispatchJob?.isActive == true || records.values.any { it.status == "pending" }) return
+        val entry = records.entries.firstOrNull { it.value.status == "queued" } ?: return
+        val b = batches.find { it.id == entry.value.batchId } ?: return
+        val q = b.questions.find { b.recordKey(it.id) == entry.key } ?: return
+        dispatchJob = scope.launch {
+            val pending = entry.value.copy(status = "pending", feedback = "Waiting for Assaad…")
+            records = records + (entry.key to pending)
+            // Persist BEFORE sending; process death can never turn a sent answer back into an unsent draft.
+            val snapshot = snapshot()
+            val stored = suspendCancellableCoroutine<Boolean> { continuation ->
+                writer.execute { val ok = runCatching { writeSnapshot(snapshot) }.isSuccess; if (continuation.isActive) continuation.resume(ok) }
+            }
+            if (!stored) {
+                records = records + (entry.key to pending.copy(status = "failed", feedback = "Couldn't save the submission. Nothing was sent.")); queuePaused = true; return@launch
+            }
+            if (!foreground || !canSubmit() || queuePaused) {
+                records = records + (entry.key to pending.copy(status = "queued", feedback = "Waiting for the Assaad connection.")); save(); return@launch
+            }
+            if (useTabletBrowser) {
+                val command = JSONObject().put("commandId", pending.commandId).put("batchId", b.id).put("questionId", q.id).put("alternativeId", pending.alternativeId)
+                val result = try {
+                    tabletBrowser!!.operation(JSONObject().put("operation", "answer").put("batch", JSONObject(b.json)).put("command", command))
+                } catch (e: CancellationException) { throw e }
+                catch (_: Exception) { JSONObject().put("status", "unknown").put("feedback", "Check Assaad before another attempt.").put("correct", JSONObject.NULL).put("correctAlternativeId", JSONObject.NULL) }
+                if (result.optString("status") !in listOf("confirmed", "blocked", "unknown", "failed")) {
+                    result.put("status", "unknown").put("feedback", "Confirmation could not be verified. Check Assaad before another attempt.")
+                }
+                result.put("commandId", pending.commandId).put("batchId", b.id).put("questionId", q.id).put("alternativeId", pending.alternativeId)
+                if (result.optString("reason") in listOf("login_required", "account_mismatch")) tabletVerified = false
+                receive(JSONObject().put("type", "answer-result").put("payload", result).toString())
+                return@launch
+            }
+            val restored = b.transport != "api-v1" || send("restore-questions", JSONObject(b.json))
+            val accepted = restored && send("answer", JSONObject().put("commandId", pending.commandId).put("batchId", b.id).put("questionId", q.id).put("alternativeId", pending.alternativeId))
+            if (!accepted) {
+                records = records + (entry.key to pending.copy(status = "blocked", reason = "browser_offline", feedback = "Waiting for the paired browser.")); queuePaused = true; browserOnline = false; save(); return@launch
+            }
+            // The result handler pumps the next item. A missing acknowledgement pauses the queue.
+            scope.launch {
+                delay(120_000)
+                if (records[entry.key]?.let { it.commandId == pending.commandId && it.status == "pending" } == true) {
+                    records = records + (entry.key to pending.copy(status = "unknown", feedback = "No confirmation received. Check Assaad before trying again."))
+                    queuePaused = true; save()
+                }
+            }
+        }
+        dispatchJob?.invokeOnCompletion { scope.launch { pump() } }
+    }
+    private fun snapshot(): String = JSONObject().put("version", 2)
+        .put("batches", JSONArray().apply { batches.forEach { put(JSONObject(it.json)) } })
+        .put("removedBatchIds", JSONArray(removedBatchIds.toList())).put("selectedBatchId", selectedBatchId ?: JSONObject.NULL).put("queuePaused", queuePaused)
+        .put("drafts", JSONObject().apply { choices.forEach { (key, value) -> put(key, value) } })
+        .put("records", JSONObject().apply { records.forEach { (key, value) -> put(key, value.json()) } }).toString()
+    private fun writeSnapshot(json: String) { writeAssaadFile(file, json.toByteArray(Charsets.UTF_8)) }
     private fun save() {
-        val json = JSONObject().put("batch", batch?.json?.let(::JSONObject) ?: JSONObject.NULL)
-            .put("answers", JSONObject().apply { answers.forEach { (id, answer) -> put(id, answer.json()) } }).toString()
-        writer.execute { runCatching {
-            val output = file.startWrite()
-            try { output.write(json.toByteArray(Charsets.UTF_8)); file.finishWrite(output) } catch (e: Exception) { file.failWrite(output); throw e }
-        }.onFailure { scope.launch { problem = "Couldn't save the platform session. Your canvas ink is saved separately." } } }
+        dirty = true
+        if (!archiveLoaded) return
+        val json = snapshot()
+        writer.execute { runCatching { writeSnapshot(json) }.onFailure { scope.launch { problem = "Couldn't save the platform library. Your canvas ink is saved separately." } } }
+    }
+    internal suspend fun awaitSaved() {
+        while (!archiveLoaded) delay(5)
+        suspendCancellableCoroutine<Unit> { continuation -> writer.execute { if (continuation.isActive) continuation.resume(Unit) } }
     }
 }

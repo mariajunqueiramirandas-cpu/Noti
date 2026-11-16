@@ -62,7 +62,7 @@ export class Relay {
         const batch = this.store.batch(auth.room.id);
         if (batch) this.send(socket, "questions", batch);
         for (const result of this.store.results(auth.room.id)) this.send(socket, "answer-result", result);
-      } else for (const command of this.store.pending(auth.room.id)) this.send(socket, "answer", command);
+      } else for (const command of this.store.pending(auth.room.id)) this.send(socket, "answer", { ...command, batch: this.store.batch(auth.room.id, command.batchId) });
       return;
     }
     const { sessionId, role } = socket.data;
@@ -71,12 +71,20 @@ export class Relay {
     if (!parsed.success) { this.send(socket, "error", { error: "invalid_message" }); return; }
     const message = parsed.data;
     if (message.type === "ping") { this.send(socket, "pong", {}); this.notify(sessionId); return; }
-    const allowed = role === "browser" ? ["presence", "questions", "answer-result"] : ["answer"];
+    const allowed = role === "browser" ? ["presence", "questions", "answer-result"] : ["answer", "restore-questions", "forget-questions"];
     if (!allowed.includes(message.type)) { this.send(socket, "error", { error: "wrong_role" }); return; }
     if (message.type === "presence") {
       this.presence.set(sessionId, { ...message.payload, at: this.store.now() }); this.notify(sessionId);
+    } else if (message.type === "forget-questions") {
+      if (this.store.forgetBatch(sessionId, message.payload.batchId)) this.send(socket, "forgotten", message.payload);
+      else this.send(socket, "error", { error: "batch_in_use", batchId: message.payload.batchId });
+    } else if (message.type === "restore-questions") {
+      if (message.payload.transport !== "api-v1" || !message.payload.accountRef || !this.store.saveBatch(sessionId, message.payload, false)) {
+        this.send(socket, "error", { error: "restore_rejected", batchId: message.payload.batchId }); return;
+      }
+      this.send(socket, "restored", { batchId: message.payload.batchId });
     } else if (message.type === "questions") {
-      this.store.saveBatch(sessionId, message.payload);
+      if (!this.store.saveBatch(sessionId, message.payload)) { this.send(socket, "error", { error: "library_full_or_conflict" }); return; }
       const app = this.peer(sessionId, "app");
       if (app) this.send(app, "questions", message.payload);
       this.send(socket, "accepted", { batchId: message.payload.batchId, count: message.payload.questions.length });
@@ -89,11 +97,11 @@ export class Relay {
         else if (existing.created_at + COMMAND_TTL <= this.store.now()) this.send(socket, "error", { error: "command_expired", commandId: value.commandId });
         return;
       }
-      const current = this.store.batch(sessionId);
+      const current = this.store.batch(sessionId, value.batchId);
       const question = current?.questions.find(q => q.id === value.questionId);
       const browser = this.peer(sessionId, "browser");
       const active = this.presence.get(sessionId);
-      if (!browser || !active?.active || active.at + 45_000 <= this.store.now()) {
+      if (!browser || (current?.transport !== "api-v1" && (!active?.active || active.at + 45_000 <= this.store.now()))) {
         this.send(socket, "error", { error: "browser_offline", commandId: value.commandId }); return;
       }
       if (current?.batchId !== value.batchId || !question?.alternatives.some(a => a.id === value.alternativeId)) {
@@ -102,7 +110,7 @@ export class Relay {
       if (this.store.pending(sessionId).length >= 100 || this.store.saveCommand(sessionId, value) !== "new") {
         this.send(socket, "error", { error: "command_conflict", commandId: value.commandId }); return;
       }
-      this.send(browser, "answer", value);
+      this.send(browser, "answer", { ...value, batch: current });
     } else if (message.type === "answer-result") {
       if (!this.store.saveResult(sessionId, message.payload)) return;
       const app = this.peer(sessionId, "app");

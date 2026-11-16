@@ -97,7 +97,7 @@ test("exports complete plain text and JSON-safe strings including images", () =>
 test("manifest limits persistent access to Assaad and the user-specified relay", () => {
   const manifest = JSON.parse(readFileSync(new URL("manifest.json", root), "utf8"));
   assert.equal(manifest.manifest_version, 3);
-  assert.deepEqual(manifest.permissions.sort(), ["alarms", "storage"]);
+  assert.deepEqual(manifest.permissions.sort(), ["alarms", "scripting", "storage"]);
   assert.deepEqual(manifest.host_permissions, ["https://app.plataformaassaad.com.br/*", "https://noti.vendua.com.br/*"]);
   assert.deepEqual(manifest.content_scripts[0].matches, ["https://app.plataformaassaad.com.br/*"]);
   for (const key of ["optional_host_permissions", "externally_connectable", "web_accessible_resources"]) assert.equal(manifest[key], undefined);

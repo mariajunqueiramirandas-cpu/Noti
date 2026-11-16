@@ -118,7 +118,6 @@ private enum class Section(val label: String, val icon: ImageVector) {
     Writing("Writing", Icons.Outlined.Gesture),
     Palm("Palm rejection", Icons.Outlined.PanTool),
     Pages("Pages", Icons.Outlined.Description),
-    Study("Study", Icons.Outlined.School),
     Appearance("Appearance", Icons.Outlined.Palette),
     About("About", Icons.Outlined.Info),
 }
@@ -146,10 +145,6 @@ fun SettingsScreen(settings: SettingsStore, onBack: () -> Unit) {
                         Section.Pages -> Pane {
                             SectionIntro("Your kind of paper.", "A fresh page should feel like you.")
                             PagesSection(settings)
-                        }
-                        Section.Study -> Pane {
-                            SectionIntro("Study smarter.", "Questions from your PDFs, checked on the board.")
-                            StudySection(settings)
                         }
                         Section.Appearance -> Pane {
                             SectionIntro("A little change of scenery.", "Find the light that feels right.")

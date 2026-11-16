@@ -47,6 +47,7 @@ android {
     sourceSets {
         getByName("test") { resources.directories += "../protocol/fixtures" }
         getByName("main") {
+            assets.directories += layout.buildDirectory.dir("generated/assaadAssets").get().asFile.absolutePath
             kotlin.directories += "../engine/android/kotlin"
             baselineProfiles.directories += "../engine/android/baseline-profile"
         }
@@ -136,3 +137,11 @@ dependencies {
     // The latest work-runtime ships Room rules that keep it. Noti itself never uses WorkManager.
     implementation("androidx.work:work-runtime:2.12.0")
 }
+
+
+// The embedded browser and extension execute the same audited, packaged page adapter.
+val packageAssaadBrowserAssets by tasks.registering(Sync::class) {
+    from(rootProject.file("extensions/assaad-reader")) { include("platform-api.js", "reader.js") }
+    into(layout.buildDirectory.dir("generated/assaadAssets"))
+}
+tasks.named("preBuild").configure { dependsOn(packageAssaadBrowserAssets) }

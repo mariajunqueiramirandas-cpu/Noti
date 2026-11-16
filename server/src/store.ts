@@ -19,7 +19,10 @@ export class Store {
         code_hash TEXT UNIQUE, code_expires INTEGER NOT NULL, expires_at INTEGER NOT NULL, batch TEXT);
       CREATE TABLE IF NOT EXISTS commands (id TEXT PRIMARY KEY, room_id TEXT NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
         payload TEXT NOT NULL, result TEXT, created_at INTEGER NOT NULL);
-      CREATE INDEX IF NOT EXISTS commands_room ON commands(room_id);`);
+      CREATE INDEX IF NOT EXISTS commands_room ON commands(room_id);
+      CREATE TABLE IF NOT EXISTS batches (room_id TEXT NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+        id TEXT NOT NULL, payload TEXT NOT NULL, PRIMARY KEY(room_id,id));
+      INSERT OR IGNORE INTO batches SELECT id, json_extract(batch, '$.batchId'), batch FROM rooms WHERE batch IS NOT NULL;`);
   }
   cleanup() {
     this.db.query("DELETE FROM rooms WHERE expires_at <= ?").run(this.now());
@@ -55,8 +58,28 @@ export class Store {
   }
   room(id: string) { return this.db.query("SELECT * FROM rooms WHERE id = ? AND expires_at > ?").get(id, this.now()) as Room | null; }
   remove(id: string) { this.db.query("DELETE FROM rooms WHERE id = ?").run(id); }
-  saveBatch(roomId: string, value: Batch) { this.db.query("UPDATE rooms SET batch = ? WHERE id = ?").run(JSON.stringify(value), roomId); }
-  batch(roomId: string): Batch | null { const value = this.room(roomId)?.batch; return value ? JSON.parse(value) : null; }
+  saveBatch(roomId: string, value: Batch, latest = true) {
+    const payload = JSON.stringify(value);
+    const existing = this.db.query("SELECT payload FROM batches WHERE room_id=? AND id=?").get(roomId, value.batchId) as { payload: string } | null;
+    if (existing && existing.payload !== payload) return false;
+    const count = (this.db.query("SELECT count(*) AS n FROM batches WHERE room_id=?").get(roomId) as { n: number }).n;
+    if (!existing && count >= 100) return false;
+    this.db.query("INSERT OR IGNORE INTO batches VALUES(?,?,?)").run(roomId, value.batchId, payload);
+    if (latest) this.db.query("UPDATE rooms SET batch = ? WHERE id = ?").run(payload, roomId);
+    return true;
+  }
+  batch(roomId: string, batchId?: string): Batch | null {
+    const value = batchId ? (this.db.query("SELECT payload FROM batches WHERE room_id=? AND id=?").get(roomId, batchId) as { payload: string } | null)?.payload : this.room(roomId)?.batch;
+    return value ? JSON.parse(value) : null;
+  }
+  forgetBatch(roomId: string, id: string) {
+    const pending = this.pending(roomId).some(command => command.batchId === id);
+    if (pending) return false;
+    this.db.query("DELETE FROM batches WHERE room_id=? AND id=?").run(roomId, id);
+    const latest = this.batch(roomId);
+    if (latest?.batchId === id) this.db.query("UPDATE rooms SET batch=NULL WHERE id=?").run(roomId);
+    return true;
+  }
   command(roomId: string, commandId: string) {
     return this.db.query("SELECT payload, result, created_at FROM commands WHERE id = ? AND room_id = ?").get(commandId, roomId) as
       { payload: string; result: string | null; created_at: number } | null;

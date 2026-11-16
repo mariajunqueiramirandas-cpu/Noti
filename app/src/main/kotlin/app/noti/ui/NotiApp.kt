@@ -19,6 +19,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import app.noti.assaad.AssaadSession
 import app.noti.ui.assaad.LocalAssaadSession
 import app.noti.ui.assaad.AssaadPairingDialog
+import app.noti.ui.assaad.AssaadTabletBrowserHost
 import androidx.compose.ui.platform.LocalView
 import androidx.core.view.WindowCompat
 import app.noti.data.LibraryStore
@@ -75,6 +76,7 @@ fun NotiApp(library: LibraryStore, settings: SettingsStore) {
                 onSettings = { route = SETTINGS },
             )
         }
+        AssaadTabletBrowserHost(platform, onCanvas = { route = EDITOR + platform.openBoard() })
     }
     }
 }

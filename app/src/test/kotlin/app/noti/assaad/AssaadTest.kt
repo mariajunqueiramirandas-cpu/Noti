@@ -48,9 +48,9 @@ class AssaadTest {
         assertSame(first, session.batch)
         session.receive("""{"type":"session","payload":{"paired":true,"peerOnline":true,"presence":{"active":true,"path":"/banco-de-questoes/explorar"}}}""")
         assertTrue(session.platformActive)
-        // No socket in this test: a failed delivery is never graded on the tablet.
+        // No socket in this test: explicit submissions wait durably for Edge.
         session.confirm("a-1")
-        assertEquals("failed", session.answers["q-1"]?.status)
+        assertEquals("queued", session.answers["q-1"]?.status)
         assertNull(session.answers["q-1"]?.correct)
         val command = session.answers.getValue("q-1").commandId
         session.receive("""{"type":"answer-result","payload":{"commandId":"$command","status":"confirmed","correct":true,"correctAlternativeId":"a-1","feedback":"Resposta correta."}}""")

@@ -10,6 +10,8 @@ on:
       - 'gradle/**'
       - 'gradlew'
       - 'protocol/**'
+      - 'extensions/assaad-reader/platform-api.js'
+      - 'extensions/assaad-reader/reader.js'
       - '.github/workflows/android-ui-tests.yml'
   workflow_dispatch:
 

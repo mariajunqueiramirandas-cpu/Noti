@@ -159,23 +159,23 @@ the ink itself, so dots, accents and descenders stay on the line they belong to.
 
 ### 🎓 Study boards
 
-**New → Study board** makes an endless canvas that studies a PDF with you. Link one from the library, and Mistral
-Large 4 turns it (or a page range, or notes you loop on the board) into **math and physics** questions, multiple
-choice, problems and flash cards. They stream onto a **floating sheet** over the board:
+**New → Study board** opens an endless canvas for saved study material. Existing
+multiple-choice questions, flash cards, hints, source-page previews, pinned cards,
+spaced reviews, and practice exams continue to work locally. Written answers can
+be self-assessed. Exported PDFs include pinned cards and drawings.
 
-- **Work it on the board**, then **Check**: loop your work and get a red-pen verdict, feedback and a ✓ or ✗ per step.
-- **Multiple choice** is checked on the tablet. **Flash cards** flip and get rated.
-- **Hints** come one at a time. **Answer** shows the worked solution. **Source** shows the cited page and can lay
-  it on the board.
-- **Print** pins the item to the board exactly where, and as big as, the sheet showed it. The sheet steps aside
-  until **Study** in the top bar brings it back on what's due.
+Cloud question generation, remote answer grading, PDF/ink uploads to AI providers,
+and cloud API-key settings have been removed. On-device **Transcribe** remains.
 
-Reviews are spaced with FSRS. There are timed exams with a printable score card, and a button that arranges
-printed cards in columns by topic. Export PDF includes the cards.
-
-It uses **your own Mistral API key** (Settings → Study), encrypted on the tablet. Nothing leaves the tablet unless
-you ask, and uploaded PDFs are deleted from Mistral once the questions are made. Details are in
-[docs/STUDY_BOARD.md](docs/STUDY_BOARD.md).
+Open **Plataforma Assaad** from the library to receive questions on the canvas.
+Choose **This tablet** to sign into the real site inside Noti, or pair the
+**Edge / Chrome** extension with a six-digit code. The tablet browser minimizes
+while you draw; it uses normal browser CORS and needs no relay or second device.
+Multiple sets and draft answers stay saved for later. Approved submissions queue
+until the selected browser is connected, then call Assaad from the user’s own
+browser connection. The Noti backend never proxies those requests or stores Assaad tokens.
+See [the endpoint investigation](docs/integrations/plataforma-assaad-api.md),
+[deployment guide](server/README.md), and [study board guide](docs/STUDY_BOARD.md).
 
 <details>
 <summary><b>🔧 How the floating bits stay out of the ink's way</b></summary>

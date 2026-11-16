@@ -1,4 +1,4 @@
-package app.noti.study
+package app.noti.data
 
 import android.content.Context
 import android.security.keystore.KeyGenParameterSpec
@@ -13,16 +13,12 @@ import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
-/**
- * The pasted Mistral API key, encrypted with an AES key that lives in the Android
- * Keystore (it never leaves the secure hardware), stored in its own preferences file
- * that is excluded from backups (see res/xml). Main thread.
- */
-class ApiKeyStore(context: Context, storeName: String = "study_keys", private val alias: String = "noti-mistral-key") {
+/** Device-bound encrypted credentials. Legacy field names are read only for pairing migration. */
+class EncryptedSecretStore(context: Context, storeName: String, private val alias: String) {
     private val prefs = context.getSharedPreferences(storeName, Context.MODE_PRIVATE)
 
     /** Whether a key is saved; Compose state. */
-    var hasKey by mutableStateOf(prefs.contains(KEY))
+    var hasKey by mutableStateOf((prefs.contains(KEY) || prefs.contains(LEGACY_KEY)))
         private set
 
     /** The last characters of the saved key, to show which one it is. */
@@ -30,7 +26,7 @@ class ApiKeyStore(context: Context, storeName: String = "study_keys", private va
         private set
 
     fun load(): String? = runCatching {
-        val stored = prefs.getString(KEY, null) ?: return null
+        val stored = prefs.getString(KEY, null) ?: prefs.getString(LEGACY_KEY, null) ?: return null
         val bytes = Base64.decode(stored, Base64.NO_WRAP)
         val cipher = Cipher.getInstance(TRANSFORM)
         cipher.init(Cipher.DECRYPT_MODE, secret(), GCMParameterSpec(128, bytes, 0, IV))
@@ -47,13 +43,13 @@ class ApiKeyStore(context: Context, storeName: String = "study_keys", private va
         check(iv.size == IV)
         val out = iv + cipher.doFinal(clean.toByteArray(Charsets.UTF_8))
         val shown = "…" + clean.takeLast(4)
-        prefs.edit().putString(KEY, Base64.encodeToString(out, Base64.NO_WRAP)).putString(HINT, shown).apply()
+        prefs.edit().putString(KEY, Base64.encodeToString(out, Base64.NO_WRAP)).putString(HINT, shown).remove(LEGACY_KEY).remove(LEGACY_HINT).apply()
         hasKey = true
         hint = shown
     }
 
     fun clear() {
-        prefs.edit().remove(KEY).remove(HINT).apply()
+        prefs.edit().remove(KEY).remove(HINT).remove(LEGACY_KEY).remove(LEGACY_HINT).apply()
         hasKey = false
         hint = ""
     }
@@ -71,8 +67,10 @@ class ApiKeyStore(context: Context, storeName: String = "study_keys", private va
     }
 
     private companion object {
-        const val KEY = "mistral"
-        const val HINT = "mistralHint"
+        const val KEY = "value"
+        const val LEGACY_KEY = "mistral"
+        const val HINT = "hint"
+        const val LEGACY_HINT = "mistralHint"
         const val TRANSFORM = "AES/GCM/NoPadding"
         const val IV = 12
     }

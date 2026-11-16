@@ -20,6 +20,7 @@ import app.noti.ui.theme.NotiTheme
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.cancel
 import org.json.JSONObject
+import org.junit.Assert.*
 import org.junit.After
 import org.junit.Rule
 import org.junit.Test
@@ -69,8 +70,36 @@ class AssaadUiTest {
                 Box(Modifier.fillMaxSize().testTag("platform")) { AssaadOverlay(id, null) { null } }
             } }
         }
-        compose.onNodeWithText("Confirm in Assaad").assertExists().assertIsNotEnabled()
+        compose.onNodeWithText("Confirm in Assaad").assertIsDisplayed().assertIsNotEnabled()
+        compose.onNodeWithText("A) Rio Nilo").performClick()
+        compose.onNodeWithText("Draft saved. Confirm to submit when Edge is available.").assertIsDisplayed()
+        compose.onNodeWithText("Confirm in Assaad").assertIsEnabled().performClick()
+        compose.onNodeWithText("Queued for Assaad").assertIsDisplayed()
+        compose.onNodeWithText("Saved sets").performClick()
+        compose.onNodeWithText("1 in queue · waiting for Edge").assertIsDisplayed()
+        compose.onNodeWithText("Cancel queued answers").performClick()
+        compose.onNodeWithText("Submit saved answers (1)").assertIsEnabled()
+        compose.onNodeWithText("Done").performClick()
         compose.onNodeWithContentDescription("Collapse Assaad questions").performClick()
         compose.onNodeWithContentDescription("Open Assaad questions").assertIsDisplayed()
     }
+    @Test fun tabletBrowserCanMinimizeForCanvasAndReopenWithoutChangingMode() {
+        context.getSharedPreferences("platform_keys", 0).edit().clear().commit()
+        session = AssaadSession(context, LibraryStore(context), scope)
+        session.useTablet(true)
+        var canvasOpened = false
+        compose.setContent {
+            NotiTheme(ThemeMode.Light) {
+                androidx.compose.material3.TextButton(onClick = { session.browserOpen = true }) { androidx.compose.material3.Text("Reopen tablet browser") }
+                AssaadTabletBrowserHost(session) { canvasOpened = true }
+            }
+        }
+        compose.onNodeWithText("Save questions").assertIsDisplayed().assertIsNotEnabled()
+        compose.onNodeWithText("Canvas").performClick()
+        compose.runOnIdle { assertTrue(canvasOpened); assertTrue(session.useTabletBrowser); assertFalse(session.browserOpen) }
+        compose.onNodeWithText("Save questions").assertDoesNotExist()
+        compose.onNodeWithText("Reopen tablet browser").performClick()
+        compose.onNodeWithText("Check connection").assertIsDisplayed()
+    }
+
 }

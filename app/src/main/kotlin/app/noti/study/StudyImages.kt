@@ -15,7 +15,7 @@ import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
 
-/** Pictures for the model: looped handwriting, and page ranges of a PDF. Any thread. */
+/** Local handwriting images and PDF page utilities. Any thread. */
 object StudyImages {
     /** The strokes of InkLayer.selectionInk (see InkLines.parse), as they look on the board. */
     fun strokes(selection: FloatArray): List<InkArchive.Stroke> {
