@@ -264,6 +264,7 @@ fun LibraryScreen(
             }
             val content: @Composable () -> Unit = {
                 Column(Modifier.fillMaxSize()) {
+                    app.noti.ui.assaad.AssaadLibraryEntry()
                     if (selection.isEmpty()) {
                         TopBar(
                             title = title,

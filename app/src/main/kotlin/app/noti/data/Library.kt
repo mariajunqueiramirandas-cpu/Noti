@@ -7,6 +7,9 @@ import androidx.compose.runtime.setValue
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import java.nio.file.AtomicMoveNotSupportedException
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 import java.util.UUID
 
 enum class PaperTemplate(val label: String) { Blank("Blank"), Lined("Lined"), Grid("Grid"), Dots("Dots") }
@@ -248,7 +251,11 @@ class LibraryStore(context: Context) {
         // Write-then-rename so a crash mid-write never leaves a truncated library.
         val tmp = File(file.parentFile, "library.json.tmp")
         tmp.writeText(root.toString())
-        tmp.renameTo(file)
+        try {
+            Files.move(tmp.toPath(), file.toPath(), StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
+        } catch (_: AtomicMoveNotSupportedException) {
+            Files.move(tmp.toPath(), file.toPath(), StandardCopyOption.REPLACE_EXISTING)
+        }
     }
 
     private fun JSONArray?.objects(): List<JSONObject> =

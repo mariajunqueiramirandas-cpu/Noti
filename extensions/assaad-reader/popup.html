@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="pt-BR">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Conectar ao Noti</title><link rel="stylesheet" href="popup.css"><script type="module" src="popup.js"></script></head>
+<body>
+  <header><span class="logo" aria-hidden="true">n.</span><div><h1>Noti <span>× Plataforma Assaad</span></h1><p>Seu canvas, conectado aos seus estudos.</p></div></header>
+  <main>
+    <section id="pair-view" class="card">
+      <div class="card-heading"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><rect x="3" y="4" width="12" height="16" rx="2"/><path d="m17 8 4 4-4 4M8 8h2M7 16h4"/></svg><h2>Conectar ao Noti</h2></div>
+      <form id="pair-form"><p>Abra <strong>Plataforma Assaad</strong> na biblioteca do Noti e gere um código de conexão.</p>
+        <label for="code">Código exibido no Noti</label><input id="code" name="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" placeholder="000000" required aria-describedby="code-help">
+        <p id="code-help" class="hint">O código tem 6 dígitos e vale por 5 minutos.</p><button id="pair" type="submit">Conectar dispositivos <span aria-hidden="true">↗</span></button>
+      </form>
+    </section>
+    <section id="connected-view" class="card" hidden>
+      <div class="card-heading"><span class="dot" aria-hidden="true"></span><h2>Dispositivos pareados</h2></div>
+      <div class="connected-body"><span class="connected-icon" aria-hidden="true">✓</span><h3>Pronto para estudar.</h3><p id="peer">Conectando ao Noti…</p><p>Na página de questões, use <strong>Enviar questões ao Noti</strong>. Resolva no canvas e confirme a alternativa pelo app.</p><button id="disconnect" class="secondary" type="button">Desconectar dispositivos</button></div>
+    </section>
+    <p id="status" role="status" aria-live="polite"></p>
+    <footer><span class="dot" aria-hidden="true"></span><p>Servidor: <strong>noti.vendua.com.br</strong><br>A conexão compartilha o estado da sessão e as questões que você enviar. Seus desenhos ficam no Noti.</p></footer>
+  </main>
+</body></html>

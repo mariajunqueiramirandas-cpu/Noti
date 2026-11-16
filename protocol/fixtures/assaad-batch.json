@@ -1,0 +1,13 @@
+{
+  "batchId": "9e7ead32-97ca-4183-8ae2-69a877cf4c9b",
+  "capturedAt": "2026-11-16T16:00:00.000Z",
+  "source": { "url": "https://app.plataformaassaad.com.br/banco-de-questoes/explorar?category_id=567", "page": "1" },
+  "questions": [{
+    "id": "q-1", "source": "Original test question | História | 2026", "tags": ["Egito"], "difficulty": "Fácil",
+    "prompt": "Qual rio favoreceu a agricultura egípcia?", "images": [],
+    "alternatives": [
+      { "id": "a-1", "label": "A", "text": "Rio Nilo", "images": [] },
+      { "id": "a-2", "label": "B", "text": "Rio Amazonas", "images": [] }
+    ]
+  }]
+}

@@ -18,8 +18,8 @@ import javax.crypto.spec.GCMParameterSpec
  * Keystore (it never leaves the secure hardware), stored in its own preferences file
  * that is excluded from backups (see res/xml). Main thread.
  */
-class ApiKeyStore(context: Context) {
-    private val prefs = context.getSharedPreferences("study_keys", Context.MODE_PRIVATE)
+class ApiKeyStore(context: Context, storeName: String = "study_keys", private val alias: String = "noti-mistral-key") {
+    private val prefs = context.getSharedPreferences(storeName, Context.MODE_PRIVATE)
 
     /** Whether a key is saved; Compose state. */
     var hasKey by mutableStateOf(prefs.contains(KEY))
@@ -60,9 +60,9 @@ class ApiKeyStore(context: Context) {
 
     private fun secret(): SecretKey {
         val store = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
-        (store.getEntry(ALIAS, null) as? KeyStore.SecretKeyEntry)?.let { return it.secretKey }
+        (store.getEntry(alias, null) as? KeyStore.SecretKeyEntry)?.let { return it.secretKey }
         val generator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore")
-        generator.init(KeyGenParameterSpec.Builder(ALIAS, KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT)
+        generator.init(KeyGenParameterSpec.Builder(alias, KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT)
             .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
             .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
             .setKeySize(256)
@@ -71,7 +71,6 @@ class ApiKeyStore(context: Context) {
     }
 
     private companion object {
-        const val ALIAS = "noti-mistral-key"
         const val KEY = "mistral"
         const val HINT = "mistralHint"
         const val TRANSFORM = "AES/GCM/NoPadding"

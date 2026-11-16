@@ -45,6 +45,7 @@ android {
     }
 
     sourceSets {
+        getByName("test") { resources.directories += "../protocol/fixtures" }
         getByName("main") {
             kotlin.directories += "../engine/android/kotlin"
             baselineProfiles.directories += "../engine/android/baseline-profile"
@@ -117,6 +118,7 @@ androidComponents {
 }
 
 dependencies {
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.robolectric:robolectric:4.17")
     testImplementation("androidx.compose.ui:ui-test-junit4")
