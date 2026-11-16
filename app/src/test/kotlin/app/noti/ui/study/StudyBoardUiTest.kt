@@ -77,7 +77,7 @@ class StudyBoardUiTest {
         val res = context.resources
         fonts = CardFace.Fonts(res.getFont(R.font.nunito_regular), res.getFont(R.font.nunito_semibold), res.getFont(R.font.nunito_bold))
         val nb = Notebook("board", "Physics 1", Paper(PaperTemplate.Grid, PaperColor.White, PaperSize.Endless), createdAt = now, openedAt = now, board = true)
-        study = StudyController(nb, library, settings, store, MainScope(), context.cacheDir, {}, now = { now })
+        study = StudyController(nb, library, store, {}, now = { now })
         layer = BoardLayer(store, library, fonts)
         study.board = layer
     }
@@ -191,14 +191,11 @@ class StudyBoardUiTest {
         screenshot("board-phone")
     }
 
-    @Test fun checkingWithoutAKeyAsksForOneAndLeavesTheToolAlone() {
-        study.settings.tool = Tool.Pen
-        study.settings.studyKey.clear()
+    @Test fun writtenAnswersCanBeSelfAssessedLocally() {
         study.select("q4")
-        study.startCheck(serial = 3)
-        assertNull(study.loop)
-        assertEquals(Tool.Pen, study.settings.tool)
-        assertTrue(study.problem!!.contains("Settings"))
+        study.selfAssess(app.noti.study.Verdict.Partial)
+        assertEquals(app.noti.study.Verdict.Partial, study.data.progressOf("q4").grade?.verdict)
+        assertEquals("Self-assessed", study.data.progressOf("q4").grade?.feedback)
     }
 
     @Test fun anExamHidesItsResultsUntilTheEndThenSchedulesThem() {

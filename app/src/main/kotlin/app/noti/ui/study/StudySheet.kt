@@ -39,7 +39,6 @@ import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
 import app.noti.pdf.PagePlacement
 import app.noti.study.CardFace
-import app.noti.study.DeckRequest
 import app.noti.study.ItemKind
 import app.noti.study.Rating
 import app.noti.study.StudyItem
@@ -245,18 +244,6 @@ private fun ExamClock(study: StudyController, endsAt: Long) {
 @Composable
 private fun Banners(study: StudyController, onSettings: () -> Unit) {
     val colors = MaterialTheme.colorScheme
-    study.loop?.let { l ->
-        Banner(if (l is StudyController.Loop.Answer) "Draw a loop around your answer on the board." else
-            "Draw a loop around the notes to make questions from.", Icons.Outlined.Gesture, colors.primaryContainer) {
-            BannerAction("Cancel") { study.cancelLoop() }
-        }
-    }
-    if (study.checking != null && study.checking == study.current?.id) Banner("Checking your answer…", null, colors.surfaceContainer, busy = true)
-    study.generating?.let { g ->
-        Banner("Making questions from ${g.label}… ${if (g.made > 0) "${g.made} so far" else ""}".trim(), null, colors.surfaceContainer, busy = true) {
-            BannerAction("Stop") { study.stopGenerating() }
-        }
-    }
     study.problem?.let { p ->
         Banner(p, Icons.Outlined.ErrorOutline, colors.errorContainer) {
             if (p.contains("Settings")) BannerAction("Settings") { study.problem = null; onSettings() }
@@ -290,24 +277,20 @@ private fun EmptyDeck(study: StudyController) {
         verticalArrangement = Arrangement.spacedBy(10.dp)) {
         DotiMascot(Modifier.size(72.dp))
         Text("Nothing to study yet", style = MaterialTheme.typography.titleMedium)
-        Text("Link a PDF and Noti makes math and physics questions from it. You can also loop notes on the board.",
+        Text("Send questions from Plataforma Assaad to your canvas, or review material already saved on this board.",
             style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        app.noti.ui.common.NotiButton(onClick = { study.generateOpen = true }, enabled = study.generating == null) {
-            Icon(Icons.Outlined.AutoAwesome, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text("Make questions")
-        }
+
     }
 }
 
 @Composable
 private fun Actions(study: StudyController, item: StudyItem, serial: Long, exam: Boolean, onPrint: () -> Unit) {
     val p = study.data.progressOf(item.id)
-    val waiting = study.loop != null || study.checking == item.id
     FlowRow(Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, top = 6.dp, bottom = 12.dp),
         horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
         when {
             exam -> {
-                if (item.kind != ItemKind.Choice) Pill(Icons.Outlined.Gesture, if (p.grade != null) "Answer again" else "Submit answer",
-                    enabled = !waiting, primary = p.grade == null) { study.startCheck(serial) }
+                if (item.kind != ItemKind.Choice) SelfAssessment(study)
                 Pill(Icons.Outlined.Flag, "Finish exam") { study.finishExam() }
             }
             item.kind == ItemKind.Flash -> {
@@ -320,13 +303,19 @@ private fun Actions(study: StudyController, item: StudyItem, serial: Long, exam:
             else -> {
                 if (item.hints.isNotEmpty() && p.hintsShown < item.hints.size && !p.answerShown)
                     Pill(Icons.Outlined.Lightbulb, if (p.hintsShown == 0) "Hint" else "Hint ${p.hintsShown + 1}") { study.hint() }
-                if (item.kind != ItemKind.Choice) Pill(Icons.Outlined.Gesture, if (p.grade != null) "Check again" else "Check",
-                    enabled = !waiting, primary = p.grade == null) { study.startCheck(serial) }
+                if (item.kind != ItemKind.Choice) SelfAssessment(study)
                 if (!p.answerShown) Pill(Icons.Outlined.Visibility, "Answer") { study.reveal() }
                 if (item.pages.isNotEmpty() && item.sourceId != null) Pill(Icons.Outlined.MenuBook, "Source") { study.sourceOf = item }
                 Pill(Icons.Outlined.PushPin, "Print", primary = p.grade != null || p.chosen >= 0 || p.answerShown) { onPrint() }
             }
         }
+    }
+}
+
+@Composable
+private fun SelfAssessment(study: StudyController) {
+    app.noti.study.Verdict.entries.forEach { verdict ->
+        Pill(null, "Mark " + verdict.label.lowercase()) { study.selfAssess(verdict) }
     }
 }
 
@@ -360,10 +349,6 @@ private fun SheetMenu(study: StudyController, serial: Long) {
             @Composable fun entry(label: String, icon: ImageVector, enabled: Boolean = true, destructive: Boolean = false, action: () -> Unit) =
                 app.noti.ui.common.NotiMenuItem(text = { Text(label) }, leadingIcon = { Icon(icon, null) }, enabled = enabled,
                     destructive = destructive, onClick = { open = false; action() })
-            entry("Make questions…", Icons.Outlined.AutoAwesome, enabled = study.generating == null) { study.generateOpen = true }
-            entry("Questions from notes on the board", Icons.Outlined.Gesture, enabled = study.generating == null && study.loop == null) {
-                study.startNotes(DeckRequest(count = 6, level = study.settings.studyLevel), serial)
-            }
             entry("Deck", Icons.Outlined.Style) { study.deckOpen = true }
             if (study.exam == null) entry("Start an exam…", Icons.Outlined.Timer) { study.examSetupOpen = true }
             else entry("Finish the exam", Icons.Outlined.Flag) { study.finishExam() }

@@ -37,7 +37,6 @@ import app.noti.pdf.PagePlacement
 import app.noti.pdf.PdfImport
 import app.noti.study.BoardLayer
 import app.noti.study.CardFace
-import app.noti.study.DeckRequest
 import app.noti.study.ItemKind
 import app.noti.study.StudyImages
 import app.noti.study.StudyItem
@@ -55,7 +54,6 @@ import kotlinx.coroutines.withContext
 /** Every dialog and menu the Study board opens, driven by [study]'s state. */
 @Composable
 internal fun StudyDialogs(study: StudyController, geometry: SheetGeometry, placement: () -> PagePlacement?, serial: Long) {
-    if (study.generateOpen) GenerateDialog(study, serial) { study.generateOpen = false }
     if (study.deckOpen) DeckDialog(study) { study.deckOpen = false }
     if (study.examSetupOpen) ExamSetupDialog(study) { study.examSetupOpen = false }
     study.examResults?.let { id -> ExamResultsDialog(study, id, geometry, placement) { study.examResults = null } }
@@ -65,120 +63,6 @@ internal fun StudyDialogs(study: StudyController, geometry: SheetGeometry, place
 
 // ---- make questions ----
 
-@Composable
-private fun GenerateDialog(study: StudyController, serial: Long, onClose: () -> Unit) {
-    val context = LocalContext.current
-    val scope = rememberCoroutineScope()
-    val library = study.library
-    val pdfs = library.notebooks.filter { it.isPdf && it.trashedAt == null }
-    val linked = study.data.sources.map { it.id }.toSet()
-    var choice by remember { mutableStateOf(pdfs.sortedByDescending { it.id in linked }.firstOrNull()?.id ?: NOTES) }
-    var kinds by remember { mutableStateOf(ItemKind.entries.toSet()) }
-    var count by remember { mutableIntStateOf(study.settings.studyCount) }
-    var level by remember { mutableIntStateOf(study.settings.studyLevel) }
-    var range by remember { mutableStateOf(false) }
-    var from by remember { mutableStateOf("1") }
-    var to by remember { mutableStateOf("") }
-    var focus by remember { mutableStateOf("") }
-    var importing by remember { mutableStateOf(false) }
-    val import = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri == null) return@rememberLauncherForActivityResult
-        importing = true
-        scope.launch {
-            val result = withContext(Dispatchers.IO) { runCatching { PdfImport.import(context, uri, library.pdfDir) } }
-            importing = false
-            result.onSuccess { choice = library.addPdf(it.id, it.name, it.pageCount, study.notebook.folderId).id }
-                .onFailure { Toast.makeText(context, it.message ?: "Couldn't import that PDF.", Toast.LENGTH_LONG).show() }
-        }
-    }
-    val chosen = pdfs.firstOrNull { it.id == choice }
-    val pageCount = chosen?.pageCount ?: 0
-    val first = from.toIntOrNull()
-    val last = to.toIntOrNull() ?: pageCount
-    val rangeOk = !range || chosen == null || (first != null && first in 1..pageCount && last in first..pageCount)
-    val hasKey = study.settings.studyKey.hasKey
-
-    NotiDialogFrame(onClose, title = { Text("Make questions") }, maxWidth = 600.dp, actions = {
-        NotiTextButton(onClick = onClose) { Text("Cancel") }
-        NotiButton(enabled = hasKey && kinds.isNotEmpty() && rangeOk && !importing && (chosen != null || choice == NOTES), onClick = {
-            study.settings.studyCount = count; study.settings.studyLevel = level
-            val request = DeckRequest(kinds, count, level, if (range && chosen != null) first!!..last else null, focus)
-            onClose()
-            if (chosen != null) study.generate(chosen, request) else study.startNotes(request, serial)
-        }) { Text(if (choice == NOTES) "Loop the notes" else "Make ${count} items") }
-    }) {
-        if (!hasKey) Text("Add your Mistral API key in Settings → Study first.", color = MaterialTheme.colorScheme.error)
-        Text("From", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurface)
-        Column(Modifier.clip(MaterialTheme.shapes.large).background(MaterialTheme.colorScheme.surfaceContainerLow)) {
-            pdfs.sortedByDescending { it.id in linked }.forEach { nb ->
-                SourceRow(nb.name, "${nb.pageCount} pages" + if (nb.id in linked) " · linked" else "", Icons.Outlined.PictureAsPdf,
-                    choice == nb.id) { choice = nb.id; to = "" }
-            }
-            SourceRow("Notes on this board", "Loop handwriting on the board after this", Icons.Outlined.Gesture, choice == NOTES) { choice = NOTES }
-            Row(Modifier.fillMaxWidth().clickable(enabled = !importing) { import.launch(arrayOf("application/pdf")) }
-                .padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                if (importing) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
-                else Icon(Icons.Outlined.Add, null, tint = MaterialTheme.colorScheme.primary)
-                Text("Import a PDF…", Modifier.padding(start = 14.dp), color = MaterialTheme.colorScheme.primary,
-                    style = MaterialTheme.typography.titleSmall)
-            }
-        }
-        if (chosen != null) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                NotiFilterChip(selected = !range, onClick = { range = false }, label = { Text("All ${chosen.pageCount} pages") })
-                NotiFilterChip(selected = range, onClick = { range = true }, label = { Text("Pages") })
-                if (range) {
-                    NumberField(from, { from = it }, "From")
-                    NumberField(to, { to = it }, "To", placeholder = "$pageCount")
-                }
-            }
-            if (!rangeOk) Text("Pick pages between 1 and $pageCount.", color = MaterialTheme.colorScheme.error)
-        }
-        Text("What to make", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurface)
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            ItemKind.entries.forEach { k ->
-                NotiFilterChip(selected = k in kinds, onClick = { kinds = if (k in kinds) kinds - k else kinds + k },
-                    label = { Text(when (k) { ItemKind.Short -> "Questions"; ItemKind.Choice -> "Multiple choice"; ItemKind.Problem -> "Problems"; ItemKind.Flash -> "Flash cards" }) })
-            }
-        }
-        Text("How many", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurface)
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf(5, 10, 15, 25, 40).forEach { n -> NotiFilterChip(selected = count == n, onClick = { count = n }, label = { Text("$n") }) }
-        }
-        Text("Level", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurface)
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf(1 to "Review", 2 to "Exam", 3 to "Hard").forEach { (v, l) -> NotiFilterChip(selected = level == v, onClick = { level = v }, label = { Text(l) }) }
-        }
-        OutlinedTextField(focus, { focus = it.take(200) }, label = { Text("Focus on (optional)") },
-            placeholder = { Text("Projectile motion, chapter 3, integration by parts…") }, singleLine = true,
-            shape = MaterialTheme.shapes.small, modifier = Modifier.fillMaxWidth())
-        Text("Math and physics only, for now. The PDF goes to Mistral Large 4 with your key and is deleted there once the " +
-            "questions are made.", style = MaterialTheme.typography.bodySmall)
-    }
-}
-
-private const val NOTES = "\u0000notes"
-
-@Composable
-private fun SourceRow(title: String, subtitle: String, icon: androidx.compose.ui.graphics.vector.ImageVector, selected: Boolean, onClick: () -> Unit) {
-    Row(Modifier.fillMaxWidth().selectable(selected, role = Role.RadioButton, onClick = onClick).padding(horizontal = 16.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically) {
-        Icon(icon, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
-        Column(Modifier.weight(1f).padding(horizontal = 14.dp)) {
-            Text(title, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(subtitle, style = MaterialTheme.typography.bodySmall)
-        }
-        RadioButton(selected = selected, onClick = null)
-    }
-}
-
-@Composable
-private fun NumberField(value: String, onChange: (String) -> Unit, label: String, placeholder: String = "") {
-    OutlinedTextField(value, { v -> onChange(v.filter(Char::isDigit).take(5)) }, label = { Text(label) },
-        placeholder = { Text(placeholder) }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-        shape = MaterialTheme.shapes.small, modifier = Modifier.width(92.dp))
-}
-
 // ---- the deck ----
 
 @Composable
@@ -187,13 +71,12 @@ private fun DeckDialog(study: StudyController, onClose: () -> Unit) {
     val now = System.currentTimeMillis()
     var confirm by remember { mutableStateOf<StudyItem?>(null) }
     NotiDialogFrame(onClose, title = { Text("Deck") }, maxWidth = 640.dp, actions = {
-        NotiOutlinedButton(onClick = { onClose(); study.generateOpen = true }, enabled = study.generating == null) { Text("Make more") }
         NotiButton(onClick = onClose) { Text("Done") }
     }) {
         val due = data.dueCount(now)
         Text("${data.items.size} items · $due due · ${data.cards.size} on the board" +
             if (data.sources.isNotEmpty()) " · from ${data.sources.joinToString { it.name }}" else "")
-        if (data.items.isEmpty()) Text("No items yet. Make questions from a PDF or from your notes.")
+        if (data.items.isEmpty()) Text("No items yet. Send questions from Plataforma Assaad to your canvas.")
         data.topics().forEach { topic ->
             val items = data.items.filter { it.topic.ifBlank { "General" } == topic }
             Text(topic, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurface)

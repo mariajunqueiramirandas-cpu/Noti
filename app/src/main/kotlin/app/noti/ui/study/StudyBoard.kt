@@ -38,7 +38,6 @@ internal class StudyBoard(val controller: StudyController, val layer: BoardLayer
     /** A finger tap on the canvas at ([x], [y]) px: a menu for whatever is printed there. */
     fun tap(x: Float, y: Float, placement: PagePlacement?) {
         val sheet = placement?.visiblePages?.firstOrNull() ?: return
-        if (controller.loop != null) return
         val hit = layer.hit(x, y, sheet) ?: return
         controller.menu = hit to IntOffset(x.toInt(), y.toInt())
     }
@@ -49,7 +48,6 @@ internal class StudyBoard(val controller: StudyController, val layer: BoardLayer
 internal fun rememberStudyBoard(notebook: Notebook, library: LibraryStore, settings: SettingsStore): StudyBoard? {
     if (!notebook.board) return null
     val context = LocalContext.current
-    val scope = rememberCoroutineScope()
     val store by produceState<StudyStore?>(null, notebook.id) {
         value = withContext(Dispatchers.IO) { StudyStore.load(library.studyFile(notebook)) }
     }
@@ -58,7 +56,7 @@ internal fun rememberStudyBoard(notebook: Notebook, library: LibraryStore, setti
         val res = context.resources
         val fonts = CardFace.Fonts(res.getFont(R.font.nunito_regular), res.getFont(R.font.nunito_semibold), res.getFont(R.font.nunito_bold))
         val toast: (String) -> Unit = { Toast.makeText(context, it, Toast.LENGTH_SHORT).show() }
-        val controller = StudyController(notebook, library, settings, loaded, scope, context.cacheDir, toast)
+        val controller = StudyController(notebook, library, loaded, toast)
         val layer = BoardLayer(loaded, library, fonts)
         controller.board = layer
         StudyBoard(controller, layer, fonts)
@@ -68,8 +66,6 @@ internal fun rememberStudyBoard(notebook: Notebook, library: LibraryStore, setti
         if (loaded.loadError) Toast.makeText(context, "The study material couldn't be read; a copy was kept aside.", Toast.LENGTH_LONG).show()
         onDispose {
             loaded.onSaved = null
-            board.controller.cancelLoop()
-            board.controller.stopGenerating()
             board.layer.close()
         }
     }
@@ -84,12 +80,6 @@ internal fun rememberStudyBoard(notebook: Notebook, library: LibraryStore, setti
 internal fun StudyOverlay(board: StudyBoard, layer: InkLayer?, placement: () -> PagePlacement?, serial: Long,
     maxWidth: androidx.compose.ui.unit.Dp, maxHeight: androidx.compose.ui.unit.Dp, hidden: Boolean, onSettings: () -> Unit) {
     val study = board.controller
-    LaunchedEffect(layer, serial, study.loop) {
-        val current = layer ?: return@LaunchedEffect
-        if (study.loop != null && serial > study.loopFrom) {
-            current.selectionInk { data -> study.onLoop(data) { current.documentAction(CLEAR_SELECTION) } }
-        }
-    }
     if (!hidden) StudySheet(study, board.geometry, board.fonts, placement, serial, maxWidth, maxHeight, onSettings)
     StudyDialogs(study, board.geometry, placement, serial)
 }
@@ -109,8 +99,7 @@ internal fun StudyButton(study: StudyController) {
         .semantics { contentDescription = "Study" + if (due > 0) ", $due due" else ""; selected = active }
         .padding(start = 12.dp, end = 14.dp), verticalAlignment = Alignment.CenterVertically) {
         val fg = if (active) colors.onPrimaryContainer else colors.onPrimary
-        if (study.generating != null) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp, color = fg)
-        else Icon(Icons.Outlined.School, null, Modifier.size(18.dp), tint = fg)
+        Icon(Icons.Outlined.School, null, Modifier.size(18.dp), tint = fg)
         Text("Study", style = MaterialTheme.typography.labelLarge, color = fg, modifier = Modifier.padding(start = 6.dp))
         if (due > 0) Text("$due", style = MaterialTheme.typography.labelSmall, color = if (active) colors.onPrimary else colors.primary,
             modifier = Modifier.padding(start = 6.dp).background(if (active) colors.primary else colors.onPrimary, CircleShape)

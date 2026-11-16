@@ -1,0 +1,81 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
+import { harness, imported, snapshot, command, official, aid, bid, qid, source } from "./api-fixture.mjs";
+test("imports only the requested IDs, strips solutions and credentials, and translates the website's filter names", async () => {
+  const h = harness(); const value = await h.run({ operation: "import", batch: snapshot() });
+  assert.equal(value.ok, true); assert.equal(value.batch.transport, "api-v1");
+  assert.equal(value.batch.accountRef, createHash("sha256").update("assaad:test-user").digest("hex"));
+  assert.equal(value.batch.questions[0].prompt, "Which river flows through Egypt?");
+  assert.doesNotMatch(JSON.stringify(value), /BROWSER_SECRET|SECRET_SOLUTION|"correct"|"explanation"/);
+  assert.match(h.calls[1].url, /category_ids=567/); assert.match(h.calls[1].url, /subcategory_ids=719/); assert.match(h.calls[1].url, /tag_ids=422/);
+  assert.equal(h.calls.filter(c => c.method === "PATCH").length, 0);
+});
+test("submits using stable IDs from a normal Assaad tab and accepts only verified official feedback", async () => {
+  const batch = await imported(); const h = harness((_url, options) => options.method === "PATCH" ? new Response(JSON.stringify(official())) : null);
+  const result = await h.run({ operation: "answer", batch, command: command() });
+  assert.equal(result.status, "confirmed"); assert.equal(result.correct, true);
+  const writes = h.calls.filter(c => c.method === "PATCH"); assert.equal(writes.length, 1);
+  assert.equal(writes[0].url, "https://api.plataformaassaad.com.br/v1/question/answer");
+  assert.deepEqual(JSON.parse(writes[0].body), { question_id: qid, alternative_id: aid });
+  assert.doesNotMatch(JSON.stringify(result), /BROWSER_SECRET|SECRET_SOLUTION/);
+});
+test("content changes or a different account block the write", async () => {
+  const batch = await imported(); const changed = structuredClone(batch); changed.questions[0].alternatives[0].text = "Old option";
+  for (const expected of [changed, { ...batch, accountRef: "a".repeat(64) }]) {
+    const h = harness(); const result = await h.run({ operation: "answer", batch: expected, command: command() });
+    assert.equal(result.status, "blocked"); assert.equal(h.calls.some(c => c.method === "PATCH"), false);
+  }
+});
+test("expired login and read rate limits stop without automatic retries", async () => {
+  const batch = await imported();
+  for (const status of [401, 429]) {
+    const h = harness(() => new Response("{}", { status }));
+    assert.equal((await h.run({ operation: "answer", batch, command: command() })).status, "blocked");
+    assert.equal(h.calls.length, 1);
+  }
+});
+test("a missing original page uses one bounded search then matches the exact question ID", async () => {
+  const batch = await imported();
+  const h = harness((url, options) => options.method === "PATCH" ? new Response(JSON.stringify(official())) : url.includes("/question?") && !url.includes("search=") ? new Response('{"data":[]}') : null);
+  assert.equal((await h.run({ operation: "answer", batch, command: command() })).status, "confirmed");
+  assert.equal(h.calls.filter(c => c.url.includes("/question?")).length, 2);
+  assert.ok(h.calls.some(c => c.url.includes("search=Which+river")));
+});
+test("an interrupted write or malformed confirmation remains unknown and is never retried", async () => {
+  const batch = await imported();
+  for (const handler of [() => { throw new Error("network interrupted"); }, () => new Response(JSON.stringify({ ...official(), correctAnswer: null })), () => new Response(JSON.stringify({ ...official(), created: { ...official().created, question_id: bid } }))]) {
+    const h = harness((_url, options) => options.method === "PATCH" ? handler() : null);
+    assert.equal((await h.run({ operation: "answer", batch, command: command() })).status, "unknown");
+    assert.equal(h.calls.filter(c => c.method === "PATCH").length, 1);
+  }
+});
+test("arbitrary origins and unavailable question IDs cannot be used as a request proxy", async () => {
+  const batch = await imported(); const h = harness(() => new Response('{"data":[]}'));
+  const foreign = { ...batch, source: { ...source, url: "https://evil.example/banco-de-questoes/explorar" } };
+  assert.equal((await h.run({ operation: "answer", batch: foreign, command: command() })).status, "blocked");
+  assert.equal(h.calls.length, 1);
+  const wrongPage = harness(() => null, "https://evil.example/");
+  assert.equal((await wrongPage.run({ operation: "session" })).ok, false); assert.equal(wrongPage.calls.length, 0);
+});
+
+
+test("fair-use pacing separates requests and a read-only verification never submits", async () => {
+  const batch = await imported(); const h = harness();
+  assert.equal((await h.run({ operation: "verify", batch, command: command() })).matched, true);
+  assert.equal(h.calls.filter(c => c.method === "PATCH").length, 0);
+  assert.ok(h.delays.some(ms => ms > 1500 && ms <= 2000));
+  const limited = harness(() => new Response("{}", { status: 429, headers: { "Retry-After": "120" } }));
+  const result = await limited.run({ operation: "verify", batch, command: command() });
+  assert.equal(result.retryAfterMs, 120000); assert.equal(limited.calls.length, 1);
+});
+
+
+test("connection preflight proves the authenticated metadata request shape without submitting", async () => {
+  const h = harness(url => url.endsWith("/question/metadata") ? new Response('{"tags":[],"category_groups":[]}') : null);
+  const result = await h.run({ operation: "connect" });
+  assert.equal(result.ok, true); assert.equal(result.corsVerified, true);
+  assert.equal(h.calls.filter(c => c.url.endsWith("/question/metadata")).length, 1);
+  assert.equal(h.calls.some(c => c.method === "PATCH"), false);
+  assert.doesNotMatch(JSON.stringify(result), /BROWSER_SECRET/);
+});

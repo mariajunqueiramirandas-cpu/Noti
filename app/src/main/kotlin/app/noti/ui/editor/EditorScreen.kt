@@ -242,6 +242,7 @@ private fun EditorContent(notebook: Notebook, library: LibraryStore, settings: S
                 app.noti.ui.study.StudyOverlay(study, layer, { pages.placement }, loopSerial, maxWidth, maxHeight,
                     hidden = settingsOpen, onSettings = { settingsOpen = true })
             }
+            if (!settingsOpen) app.noti.ui.assaad.AssaadOverlay(notebook.id, study?.controller) { pages.placement }
             if (pagesOpen && !fullScreen && !notebook.isCanvas) {
                 androidx.compose.ui.window.Popup(alignment = Alignment.TopStart,
                     offset = with(androidx.compose.ui.platform.LocalDensity.current) { androidx.compose.ui.unit.IntOffset(2.dp.roundToPx(), 62.dp.roundToPx()) },
@@ -260,8 +261,7 @@ private fun EditorContent(notebook: Notebook, library: LibraryStore, settings: S
             }
         }
     }
-    TranscribeTool(layer, pages.documentState, settings.handwritingLanguage, canvas = notebook.isCanvas,
-        enabled = study?.controller?.loop == null)
+    TranscribeTool(layer, pages.documentState, settings.handwritingLanguage, canvas = notebook.isCanvas)
     if (restoreError) AlertDialog(onDismissRequest = {}, title = { Text("Couldn't read saved ink") },
         text = { Text("The saved file has been kept without changes. Return to the library to keep your original ink safe.") },
         confirmButton = { app.noti.ui.common.NotiButton(onClick = onBack) { Text("Back to library") } })

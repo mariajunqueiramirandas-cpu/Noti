@@ -1,0 +1,36 @@
+name: Assaad session
+on:
+  pull_request:
+    paths: ['server/**', 'extensions/**', 'protocol/**', 'compose.yaml', '.github/workflows/assaad-session.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  relay-and-extension:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.4.2'
+      - run: bun install --frozen-lockfile
+        working-directory: server
+      - run: bun run typecheck && bun test
+        working-directory: server
+      - run: npm ci
+        working-directory: extensions/assaad-reader-dev
+      - run: npm test && bun run integration
+        working-directory: extensions/assaad-reader-dev
+      - run: git diff --exit-code -- extensions/assaad-reader/content.bundle.js
+      - run: docker compose config --quiet && docker compose build relay
+      - name: Exercise the container runtime and SQLite
+        run: >-
+          docker compose run --rm --no-deps relay bun -e
+          'import {startServer} from "./src/index.ts"; const runtime=startServer({port:0}); const response=await fetch(`http://127.0.0.1:${runtime.server.port}/health`); if(!response.ok)throw Error("health failed"); runtime.stop();'
+      - name: Package unpacked extension
+        run: cd extensions/assaad-reader && zip -r "$RUNNER_TEMP/noti-assaad-extension.zip" .
+      - uses: actions/upload-artifact@v6
+        with:
+          name: noti-assaad-extension
+          path: ${{ runner.temp }}/noti-assaad-extension.zip
