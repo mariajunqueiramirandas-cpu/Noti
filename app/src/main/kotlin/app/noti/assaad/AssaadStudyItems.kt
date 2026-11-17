@@ -11,6 +11,8 @@ import app.noti.study.Verdict
 const val ASSAAD_ITEM_PREFIX = "assaad-"
 fun assaadItemId(questionId: String) = ASSAAD_ITEM_PREFIX + questionId
 fun assaadQuestionId(itemId: String): String? = itemId.takeIf { it.startsWith(ASSAAD_ITEM_PREFIX) }?.removePrefix(ASSAAD_ITEM_PREFIX)
+/** Every Assaad question says where it's from, on the card and diagonally across it. */
+const val ASSAAD_CREDIT = "Plataforma Assaad · Pedro Assaad"
 
 private val imageMark = Regex("\\s*\\[Imagem]\\s*")
 
@@ -32,6 +34,7 @@ fun AssaadQuestion.studyItem(createdAt: Long, correctChoice: Int = -1): StudyIte
     // An image Noti won't load keeps its place as a placeholder, so the next one doesn't take it.
     figures = images.map { it.url ?: "" },
     choiceFigures = alternatives.map { a -> a.images.map { it.url ?: "" } },
+    credit = ASSAAD_CREDIT,
 )
 
 /**

@@ -171,8 +171,8 @@ Open **Plataforma Assaad** from the library to receive questions on the canvas.
 Choose **This tablet** to sign into the real site inside Noti, or pair the
 **Edge / Chrome** extension with a six-digit code. The tablet browser minimizes
 while you draw; it uses normal browser CORS and needs no relay or second device.
-Multiple sets and draft answers stay saved for later. Approved submissions queue
-until the selected browser is connected, then call Assaad from the user’s own
+Multiple sets and draft answers stay saved for later. Each answer is sent by its own
+tap, one at a time, only while the selected browser is connected, from the user’s own
 browser connection. The Noti backend never proxies those requests or stores Assaad tokens.
 For Dokploy, use branch **main**, Compose Path **`./server/compose.yml`**, and
 route **noti.vendua.com.br → relay:3000** with HTTPS enabled. No `.env` is needed.

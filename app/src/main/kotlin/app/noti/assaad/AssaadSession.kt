@@ -78,15 +78,6 @@ class AssaadSession(context: Context, private val library: LibraryStore, private
                 tabletVerified = result.optBoolean("ok") && result.optBoolean("corsVerified")
                 tabletNeedsLogin = !tabletVerified && result.optString("error") == "login_required"
                 tabletStatus = if (tabletVerified) "Connected on this tablet." else if (tabletNeedsLogin) "Sign in to Assaad to continue." else assaadOperationProblem(result)
-                if (tabletVerified) {
-                    val account = result.optString("accountRef")
-                    records = records.mapValues { (_, a) ->
-                        if (a.status == "blocked" && a.reason in listOf("login_required", "account_mismatch") && batches.find { it.id == a.batchId }?.accountRef == account)
-                            a.copy(commandId = UUID.randomUUID().toString(), status = "queued", reason = null, feedback = "Waiting to submit.") else a
-                    }
-                    if (records.values.none { it.status == "unknown" }) queuePaused = false
-                    save()
-                }
             } catch (e: CancellationException) { throw e }
             catch (_: Exception) { tabletVerified = false; tabletStatus = "Connection check failed. Open Assaad and try again." }
             finally {
@@ -168,7 +159,6 @@ class AssaadSession(context: Context, private val library: LibraryStore, private
     private var removedBatchIds = emptySet<String>()
     val answers get() = batch?.let { b -> b.questions.mapNotNull { q -> records[b.recordKey(q.id)]?.let { q.id to it } }.toMap() } ?: emptyMap()
     val drafts get() = batch?.let { b -> b.questions.mapNotNull { q -> choices[b.recordKey(q.id)]?.let { q.id to it } }.toMap() } ?: emptyMap()
-    val queuedCount get() = records.values.count { it.status in listOf("queued", "pending", "blocked") }
     val draftCount get() = choices.keys.count { records[it]?.status !in listOf("queued", "pending", "confirmed", "unknown") }
     val savedQuestionCount get() = batches.flatMap { b -> b.questions.map { b.recordKey(it.id) } }.distinct().size
     var queuePaused by mutableStateOf(false); private set
@@ -197,9 +187,12 @@ class AssaadSession(context: Context, private val library: LibraryStore, private
                 saved.optJSONObject("records")?.let { obj -> obj.keys().forEach { key -> oldRecords[key] = AssaadAnswer.parse(obj.getJSONObject(key)) } }
                 // Migrate the v1 single-batch session into the permanent library.
                 saved.optJSONObject("answers")?.let { obj -> restored.firstOrNull()?.let { b -> obj.keys().forEach { q -> oldRecords[b.recordKey(q)] = AssaadAnswer.parse(obj.getJSONObject(q)).copy(batchId = b.id) } } }
-                records = oldRecords.mapValues { (_, a) -> if (a.status == "pending") a.copy(status = "unknown", feedback = "Confirmation interrupted. Reconnect or check Assaad before another attempt.") else a } + records
                 val oldChoices = saved.optJSONObject("drafts")?.let { obj -> obj.keys().asSequence().associateWith { obj.getString(it) } } ?: emptyMap()
-                choices = oldChoices + choices
+                // Answers are sent one at a time, by hand. Anything an older version left waiting
+                // to send (queued, or not accepted) goes back to being a pick; nothing sends by itself.
+                val unsent = oldRecords.filterValues { it.status in listOf("queued", "blocked", "failed") }
+                records = (oldRecords - unsent.keys).mapValues { (_, a) -> if (a.status == "pending") a.copy(status = "unknown", feedback = "Confirmation interrupted. Reconnect or check Assaad before another attempt.") else a } + records
+                choices = unsent.mapValues { it.value.alternativeId } + oldChoices + choices
                 queuePaused = saved.optBoolean("queuePaused") || records.values.any { it.status == "unknown" }
             }.onFailure { problem = "Some saved session data could not be restored. Your canvas is saved separately." }
             archiveLoaded = true
@@ -250,7 +243,6 @@ class AssaadSession(context: Context, private val library: LibraryStore, private
             when (message.optString("type")) {
                 "session" -> {
                     val first = !connected
-                    val wasOnline = browserOnline; val wasReady = browserReady; val oldAccount = browserAccount
                     connected = true; backoff = 1000; paired = payload.optBoolean("paired"); browserOnline = payload.optBoolean("peerOnline")
                     val presence = payload.optJSONObject("presence")
                     platformActive = presence?.optBoolean("active") == true
@@ -259,23 +251,15 @@ class AssaadSession(context: Context, private val library: LibraryStore, private
                     browserAccount = presence?.optString("accountRef")?.takeIf { Regex("[a-f0-9]{64}").matches(it) }
                     if (paired) code = null
                     if (first) { removedBatchIds.forEach { send("forget-questions", JSONObject().put("batchId", it)) }; heartbeat?.cancel(); heartbeat = scope.launch { while (isActive) { delay(20_000); send("ping") } } }
-                    if (browserOnline && (!wasOnline || browserReady && (!wasReady || browserAccount != oldAccount))) {
-                        var resumed = false
-                        records = records.mapValues { (_, a) ->
-                            val sameAccount = batches.find { it.id == a.batchId }?.accountRef == browserAccount
-                            if (a.status == "blocked" && (a.reason == "browser_offline" || browserReady && sameAccount && a.reason in listOf("login_required", "account_mismatch"))) {
-                                resumed = true; a.copy(commandId = UUID.randomUUID().toString(), status = "queued", feedback = "Waiting to submit.", reason = null)
-                            } else a
-                        }
-                        if (resumed && records.values.none { it.status == "unknown" }) { queuePaused = false; save() }
-                    }
                     pump()
                 }
                 "questions" -> {
                     val incoming = AssaadBatch.parse(payload)
                     if (incoming.id !in removedBatchIds && batches.none { it.id == incoming.id }) {
                         if (batches.size >= 100) { problem = "The saved library is full. Remove a saved set before importing another."; return }
-                        batches = batches + incoming; selectedBatchId = incoming.id; currentIndex = 0; save(); saveImages()
+                        batches = batches + incoming; selectedBatchId = incoming.id; currentIndex = 0; save()
+                        // Pictures load when a card shows them, like a page would; not all at once on import.
+                        totalImages = imageUrls().size; savedImages = imageUrls().count(media::contains)
                         focus = incoming.questions.first().id
                     }
                 }
@@ -397,19 +381,30 @@ class AssaadSession(context: Context, private val library: LibraryStore, private
         if (records[key]?.status in listOf("failed", "blocked")) records = records - key
         save()
     }
-    fun confirm(alternativeId: String) {
+    /** Picks [alternativeId] for the current question and sends it, when an answer can go now. */
+    fun confirm(alternativeId: String): Boolean {
         saveDraft(alternativeId)
-        val b = batch ?: return; val q = current ?: return
-        enqueue(b, q.id); queuePaused = false; save(); pump()
+        val q = current ?: return false
+        return submit(q.id)
     }
-    private fun enqueue(b: AssaadBatch, qid: String) {
-        val key = b.recordKey(qid); val alternative = choices[key] ?: return
-        if (records[key]?.status in listOf("pending", "queued", "unknown", "confirmed")) return
-        records = records + (key to AssaadAnswer(UUID.randomUUID().toString(), alternative, "queued", "Waiting for the Assaad connection.", batchId = b.id))
-    }
-    fun submitSavedAnswers() {
-        batches.forEach { b -> b.questions.forEach { q -> enqueue(b, q.id) } }
+    /**
+     * An answer can go now: Assaad is connected and nothing else is on its way. Answers are
+     * sent one at a time, each by its own tap, never queued up to go later in a run.
+     */
+    val canSendAnswer get() = archiveLoaded && canSubmit() && !hasAnswerOnItsWay
+    val hasAnswerOnItsWay get() = records.values.any { it.status == "pending" || it.status == "queued" }
+    private fun sendAnswer(b: AssaadBatch, qid: String): Boolean {
+        val key = b.recordKey(qid); val alternative = choices[key] ?: return false
+        if (records[key]?.status in listOf("pending", "queued", "unknown", "confirmed")) return false
+        if (!foreground || !canSendAnswer) {
+            problem = if (records.values.any { it.status == "pending" || it.status == "queued" }) "Wait for the answer on its way to Assaad."
+                else "Connect Assaad to send this answer. Your pick is kept."
+            return false
+        }
+        problem = null
+        records = records + (key to AssaadAnswer(UUID.randomUUID().toString(), alternative, "queued", "Sending to Assaad…", batchId = b.id))
         queuePaused = false; save(); pump()
+        return true
     }
     // ---- by question, for the study board (the newest saved set holding it wins) ----
 
@@ -433,30 +428,23 @@ class AssaadSession(context: Context, private val library: LibraryStore, private
         if (records[key]?.status in listOf("failed", "blocked")) records = records - key
         save()
     }
-    fun submit(questionId: String) {
-        val (b, q) = holder(questionId) ?: return
-        enqueue(b, q.id); queuePaused = false; save(); pump()
+    /** Sends this one question's pick, now. False (with [problem] saying why) when it can't go. */
+    fun submit(questionId: String): Boolean {
+        val (b, q) = holder(questionId) ?: return false
+        return sendAnswer(b, q.id)
     }
+    /** Unknown: the person checked Assaad, so allow another attempt. Not accepted: try this one again. */
     fun retry(questionId: String) {
         val (b, q) = holder(questionId) ?: return
         val key = b.recordKey(q.id)
         when (records[key]?.status) {
             "unknown" -> { choices = choices + (key to records.getValue(key).alternativeId); records = records - key; save() }
-            "blocked", "failed" -> resumeQueue()
+            "blocked", "failed" -> { choices = choices + (key to records.getValue(key).alternativeId); records = records - key; save(); sendAnswer(b, q.id) }
         }
     }
     /** Ask the study board to open on what's next. */
     fun studyNext() { focus = "" }
 
-    fun pauseQueue() { queuePaused = true; save() }
-    fun resumeQueue() {
-        records = records.mapValues { (_, a) -> if (a.status in listOf("blocked", "failed")) a.copy(commandId = UUID.randomUUID().toString(), status = "queued", feedback = "Waiting to submit.", reason = null) else a }
-        queuePaused = false; save(); pump()
-    }
-    fun cancelQueue() {
-        records = records.filterValues { it.status !in listOf("queued", "blocked") }
-        queuePaused = true; save()
-    }
     fun allowRetry(questionId: String) {
         val b = batch ?: return; val key = b.recordKey(questionId)
         if (records[key]?.status != "unknown") return
@@ -480,7 +468,8 @@ class AssaadSession(context: Context, private val library: LibraryStore, private
                 records = records + (entry.key to pending.copy(status = "failed", feedback = "Couldn't save the submission. Nothing was sent.")); queuePaused = true; return@launch
             }
             if (!foreground || !canSubmit() || queuePaused) {
-                records = records + (entry.key to pending.copy(status = "queued", feedback = "Waiting for the Assaad connection.")); save(); return@launch
+                // Nothing was sent: it goes back to being a pick, to send by hand later.
+                records = records - entry.key; problem = "The connection dropped before sending. Your pick is kept."; save(); return@launch
             }
             if (useTabletBrowser) {
                 val command = JSONObject().put("commandId", pending.commandId).put("batchId", b.id).put("questionId", q.id).put("alternativeId", pending.alternativeId)

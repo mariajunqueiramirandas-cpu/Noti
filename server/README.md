@@ -67,10 +67,10 @@ and single-instance requirements above apply to both deployment modes.
 ## Single-tablet mode
 
 Noti also offers **Plataforma Assaad → This tablet**. Sign into the real site in
-its Android WebView, choose **Save questions**, then **Canvas** to minimize it.
-The same saved library and approved queue run locally, without this relay, an
+its Android WebView, run a search, then **Study on canvas**.
+The same saved library and one-at-a-time answers work locally, without this relay, an
 extension, or another device. Ordinary browser CORS is enforced. A read-only
-metadata request checks the authenticated connection before queued submissions;
+metadata request checks the authenticated connection before any answer is sent;
 there is no native HTTP or relay fallback if CORS fails. Live Assaad WebView
 login/CORS behavior has not been verified on a physical tablet.
 
@@ -92,9 +92,9 @@ network connection and the same fixed pacing as the extension.
    through the question-bank API. Official grading returns to Noti. Pin questions on the board to write
    around them and include them in PDF exports.
 
-Imported questions are not graded locally and no answer key is guessed. Multiple sets and draft choices persist on device. Approve one answer or use
-**Saved sets → Submit saved answers**; the queue waits for Edge and runs while Noti
-is foregrounded. It supports pause/resume/cancel. A valid Assaad login in Edge is
+Imported questions are not graded locally and no answer key is guessed. Multiple sets and draft choices persist on device. Approve one answer at a time
+with **Check with Assaad**, while Edge is connected and Noti is foregrounded. Nothing
+queues up to send later or in a run. A valid Assaad login in Edge is
 required, but the exact question page need not stay open for API-backed imports.
 The extension reuses a tab or opens one background tab for an approved command.
 Old DOM-only imports retain their original-tab requirement.

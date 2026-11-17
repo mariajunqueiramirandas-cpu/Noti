@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { harness, imported, snapshot, command, official, aid, bid, qid, source } from "./api-fixture.mjs";
+import { harness, imported, snapshot, command, official, observedPage, aid, bid, qid, source } from "./api-fixture.mjs";
 test("imports only the requested IDs, strips solutions and credentials, and translates the website's filter names", async () => {
   const h = harness(); const value = await h.run({ operation: "import", batch: snapshot() });
   assert.equal(value.ok, true); assert.equal(value.batch.transport, "api-v1");
@@ -15,16 +15,19 @@ test("submits using stable IDs from a normal Assaad tab and accepts only verifie
   const batch = await imported(); const h = harness((_url, options) => options.method === "PATCH" ? new Response(JSON.stringify(official())) : null);
   const result = await h.run({ operation: "answer", batch, command: command() });
   assert.equal(result.status, "confirmed"); assert.equal(result.correct, true);
+  // Like clicking an option on the website: the session, then the answer. No search first.
+  assert.deepEqual(h.calls.map(c => c.method === "PATCH" ? "PATCH" : c.url), ["/api/auth/session", "PATCH"]);
   const writes = h.calls.filter(c => c.method === "PATCH"); assert.equal(writes.length, 1);
   assert.equal(writes[0].url, "https://api.plataformaassaad.com.br/v1/question/answer");
   assert.deepEqual(JSON.parse(writes[0].body), { question_id: qid, alternative_id: aid });
   assert.doesNotMatch(JSON.stringify(result), /BROWSER_SECRET|SECRET_SOLUTION/);
 });
-test("content changes or a different account block the write", async () => {
+test("content changes the page has loaded, or a different account, block the write", async () => {
   const batch = await imported(); const changed = structuredClone(batch); changed.questions[0].alternatives[0].text = "Old option";
   for (const expected of [changed, { ...batch, accountRef: "a".repeat(64) }]) {
-    const h = harness(); const result = await h.run({ operation: "answer", batch: expected, command: command() });
+    const h = harness(() => null, undefined, observedPage()); const result = await h.run({ operation: "answer", batch: expected, command: command() });
     assert.equal(result.status, "blocked"); assert.equal(h.calls.some(c => c.method === "PATCH"), false);
+    assert.equal(h.calls.length, 0, "the website's own session and search are reused, nothing is asked again");
   }
 });
 test("expired login and read rate limits stop without automatic retries", async () => {
@@ -35,12 +38,29 @@ test("expired login and read rate limits stop without automatic retries", async 
     assert.equal(h.calls.length, 1);
   }
 });
-test("a missing original page uses one bounded search then matches the exact question ID", async () => {
+test("on a page where the website already loaded its session, an answer is a single request", async () => {
   const batch = await imported();
-  const h = harness((url, options) => options.method === "PATCH" ? new Response(JSON.stringify(official())) : url.includes("/question?") && !url.includes("search=") ? new Response('{"data":[]}') : null);
+  const h = harness((_url, options) => options.method === "PATCH" ? new Response(JSON.stringify(official())) : null, undefined, observedPage({ questions: [] }));
   assert.equal((await h.run({ operation: "answer", batch, command: command() })).status, "confirmed");
-  assert.equal(h.calls.filter(c => c.url.includes("/question?")).length, 2);
-  assert.ok(h.calls.some(c => c.url.includes("search=Which+river")));
+  assert.deepEqual(h.calls.map(c => c.method), ["PATCH"]);
+  assert.equal(h.calls.some(c => String(c.url).includes("/question?")), false);
+});
+test("a login Assaad refuses on the answer is not a write: it's blocked and the session is forgotten", async () => {
+  const batch = await imported(); const observed = observedPage();
+  const h = harness((_url, options) => options.method === "PATCH" ? new Response("{}", { status: 401 }) : null, undefined, observed);
+  const result = await h.run({ operation: "answer", batch, command: command() });
+  assert.equal(result.status, "blocked"); assert.equal(result.reason, "login_required");
+  assert.equal(observed.forgotten.length, 1); assert.equal(h.calls.filter(c => c.method === "PATCH").length, 1);
+});
+test("importing what the page shows reuses the website's own search", async () => {
+  const h = harness(() => null, undefined, observedPage());
+  const value = await h.run({ operation: "import", batch: snapshot() });
+  assert.equal(value.ok, true); assert.equal(value.batch.questions[0].prompt, "Which river flows through Egypt?");
+  assert.equal(h.calls.length, 0);
+  // When the page's search isn't available, the same search is asked once.
+  const missing = harness(() => null, undefined, observedPage({ questions: [] }));
+  assert.equal((await missing.run({ operation: "import", batch: snapshot() })).ok, true);
+  assert.deepEqual(missing.calls.map(c => String(c.url).includes("/question?")), [true]);
 });
 test("an interrupted write or malformed confirmation remains unknown and is never retried", async () => {
   const batch = await imported();
@@ -92,6 +112,11 @@ test("fair-use pacing separates requests and a read-only verification never subm
 });
 
 
+test("a page where the website already reached its API connects without any request", async () => {
+  const h = harness(() => null, undefined, observedPage());
+  const result = await h.run({ operation: "connect" });
+  assert.equal(result.ok, true); assert.equal(result.corsVerified, true); assert.equal(h.calls.length, 0);
+});
 test("connection preflight proves the authenticated metadata request shape without submitting", async () => {
   const h = harness(url => url.endsWith("/question/metadata") ? new Response('{"tags":[],"category_groups":[]}') : null);
   const result = await h.run({ operation: "connect" });

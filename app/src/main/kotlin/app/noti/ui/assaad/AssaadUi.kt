@@ -117,7 +117,7 @@ fun AssaadPairingDialog(session: AssaadSession, onOpenBoard: (String) -> Unit) {
                 session.focus = session.batches.find { it.id == id }?.questions?.firstOrNull()?.id ?: ""
                 goToBoard()
             }
-            AssaadQueueControls(session)
+            OfflineImages(session)
         } else if (session.useTabletBrowser) {
             Text("Open Assaad, search the question bank and tap Study on canvas. The questions open on your study board, ready to work through.")
         }
@@ -169,21 +169,7 @@ private fun SavedAssaadSets(session: AssaadSession, onStudy: (String) -> Unit) {
 }
 
 @Composable
-private fun AssaadQueueControls(session: AssaadSession) {
-    if (session.draftCount > 0) NotiTonalButton(onClick = session::submitSavedAnswers, modifier = Modifier.fillMaxWidth()) {
-        Text("Send ${session.draftCount} picked ${if (session.draftCount == 1) "answer" else "answers"}")
-    }
-    if (session.queuedCount > 0) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Icon(Icons.Outlined.Schedule, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp))
-            Text("${session.queuedCount} in queue" + if (session.queuePaused) " · paused" else if (session.useTabletBrowser) " · waiting for Assaad" else " · waiting for Edge",
-                Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
-        }
-        Row {
-            NotiTextButton(onClick = { if (session.queuePaused) session.resumeQueue() else session.pauseQueue() }) { Text(if (session.queuePaused) "Resume queue" else "Pause queue") }
-            NotiTextButton(onClick = session::cancelQueue, destructive = true) { Text("Cancel queued answers") }
-        }
-    }
+private fun OfflineImages(session: AssaadSession) {
     if (session.totalImages > 0 && session.savedImages < session.totalImages) Row(verticalAlignment = Alignment.CenterVertically) {
         Text("Images offline: ${session.savedImages}/${session.totalImages}", Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
         NotiTextButton(onClick = session::saveImages, enabled = !session.savingImages) { Text(if (session.savingImages) "Saving…" else "Save images") }

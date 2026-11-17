@@ -28,9 +28,10 @@ question. Tapping an option saves it as a draft (shown in lilac, without right o
 wrong); **Check with Assaad** sends it. Assaad's verdict comes back onto the card
 like any other checked choice (mint for the right option, peach for a wrong pick)
 and schedules the question for review. Print pins it to the board, pictures
-included. The sheet's menu opens Assaad and the saved sets; you can also send
-every saved draft from there (**Send picked answers**). Pause/resume/cancel are
-available. Assaad questions stay out of practice exams, since their answers are
+included. The sheet's menu opens Assaad and the saved sets. Answers go one at a
+time: each is sent by its own tap, only while Assaad is connected, and only when no
+other answer is on its way. While Assaad isn't connected, picks stay picks; nothing
+queues up to send later or in a run. Assaad questions stay out of practice exams, since their answers are
 real submissions. Drawings stay local; anonymous image copies are saved when
 possible, with an offline image count.
 

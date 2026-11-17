@@ -41,16 +41,20 @@ class AssaadTest {
         val context = RuntimeEnvironment.getApplication()
         context.getSharedPreferences("platform_keys", 0).edit().clear().commit()
         val scope = MainScope()
-        val session = AssaadSession(context, LibraryStore(context), scope)
+        val session = AssaadSession(context, LibraryStore(context), scope) { true }
         session.receive(JSONObject().put("type", "questions").put("payload", fixture()).toString())
         val first = session.batch
         session.receive(JSONObject().put("type", "questions").put("payload", fixture()).toString())
         assertSame(first, session.batch)
         session.receive("""{"type":"session","payload":{"paired":true,"peerOnline":true,"presence":{"active":true,"path":"/banco-de-questoes/explorar"}}}""")
         assertTrue(session.platformActive)
-        // No socket in this test: explicit submissions wait durably for Edge.
-        session.confirm("a-1")
-        assertEquals("queued", session.answers["q-1"]?.status)
+        // The saved library loads in the background; answers can't go before it has.
+        var waits = 0
+        while (!session.libraryLoaded && waits++ < 300) { org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle(); Thread.sleep(5) }
+        assertTrue(session.libraryLoaded)
+        session.start()
+        assertTrue(session.confirm("a-1"))
+        assertTrue(session.answers["q-1"]?.status in listOf("queued", "pending"))
         assertNull(session.answers["q-1"]?.correct)
         val command = session.answers.getValue("q-1").commandId
         session.receive("""{"type":"answer-result","payload":{"commandId":"$command","status":"confirmed","correct":true,"correctAlternativeId":"a-1","feedback":"Resposta correta."}}""")
