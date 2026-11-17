@@ -48,7 +48,10 @@ class AssaadTest {
         assertSame(first, session.batch)
         session.receive("""{"type":"session","payload":{"paired":true,"peerOnline":true,"presence":{"active":true,"path":"/banco-de-questoes/explorar"}}}""")
         assertTrue(session.platformActive)
-        org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
+        // The saved library loads in the background; answers can't go before it has.
+        var waits = 0
+        while (!session.libraryLoaded && waits++ < 300) { org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle(); Thread.sleep(5) }
+        assertTrue(session.libraryLoaded)
         session.start()
         assertTrue(session.confirm("a-1"))
         assertTrue(session.answers["q-1"]?.status in listOf("queued", "pending"))
