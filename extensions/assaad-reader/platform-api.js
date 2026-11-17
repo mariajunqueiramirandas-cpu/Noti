@@ -4,6 +4,9 @@ export async function runAssaadOperation(input) {
   const api = "https://api.plataformaassaad.com.br/v1";
   const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   let writing = false, lastRequestAt = 0, stage = "session";
+  // What the website itself already loaded on this page (page-observer.js), so Noti
+  // doesn't ask Assaad again for a session or a search the site just made.
+  const observed = globalThis.__notiAssaad || null;
   // Fixed, visible pacing for fair use; no timing randomization or detection bypass.
   async function politeFetch(url, options) {
     const remaining = 2000 - (Date.now() - lastRequestAt);
@@ -81,8 +84,7 @@ export async function runAssaadOperation(input) {
   const fingerprint = q => JSON.stringify({ prompt: q.prompt, images: q.images, alternatives: [...q.alternatives].sort((a, b) => a.id.localeCompare(b.id)).map(a => ({ id: a.id, text: a.text, images: a.images })) });
   try {
     if (location.origin !== origin || !["session", "connect", "import", "verify", "answer"].includes(input.operation)) stop("invalid_operation");
-    const sessionBody = await json(await politeFetch("/api/auth/session", { credentials: "include", cache: "no-store", redirect: "error", signal: AbortSignal.timeout(10000) }));
-    const session = sessionBody.session;
+    const session = observed?.session() || (await json(await politeFetch("/api/auth/session", { credentials: "include", cache: "no-store", redirect: "error", signal: AbortSignal.timeout(10000) }))).session;
     // The website's cookie session is flat: {id,email,access_token,...}.
     // A nested Supabase-style user object is not the production response contract.
     if (!session?.access_token) stop("login_required");
@@ -94,6 +96,8 @@ export async function runAssaadOperation(input) {
       return json(await politeFetch(api + path, { method: body ? "PATCH" : "GET", headers: { Authorization: "Bearer " + session.access_token, ...(body ? { "Content-Type": "application/json" } : {}) }, ...(body ? { body: JSON.stringify(body) } : {}), cache: "no-store", redirect: "error", signal: AbortSignal.timeout(30000) }));
     }
     if (input.operation === "connect") {
+      // The website's own API calls on this page already prove the authenticated connection.
+      if (observed?.apiReachable()) return { ok: true, accountRef, corsVerified: true };
       stage = "metadata";
       const metadata = await request("/question/metadata");
       if (!Array.isArray(metadata.tags) && !Array.isArray(metadata.category_groups)) stop("invalid_response");
@@ -103,10 +107,17 @@ export async function runAssaadOperation(input) {
     if (input.operation === "import") {
       stage = "questions";
       if (!input.batch || !Array.isArray(input.batch.questions) || input.batch.questions.length < 1 || input.batch.questions.length > 100) stop("invalid_batch");
-      const response = await request(query(source));
-      if (!Array.isArray(response.data)) stop("invalid_response");
-      const questions = input.batch.questions.map(expected => {
-        const raw = response.data.find(q => q.id === expected.id);
+      const search = query(source);
+      // The page just showed these questions: the website's own search response has them.
+      // Only when it can't be found (an older page, another tab) is the same search asked again.
+      let rows = input.batch.questions.map(expected => observed?.question(expected.id));
+      if (rows.some(raw => !raw)) {
+        const response = await request(search);
+        if (!Array.isArray(response.data)) stop("invalid_response");
+        rows = input.batch.questions.map(expected => response.data.find(q => q.id === expected.id));
+      }
+      const questions = input.batch.questions.map((expected, i) => {
+        const raw = rows[i];
         if (!raw) stop("question_not_found");
         const q = normalize(raw);
         if (q.alternatives.length !== expected.alternatives.length || q.alternatives.some(a => !expected.alternatives.some(e => e.id === a.id))) stop("question_changed");
@@ -119,17 +130,25 @@ export async function runAssaadOperation(input) {
     const expected = input.batch.questions.find(q => q.id === command.questionId);
     if (!uuid.test(command.commandId) || !uuid.test(command.questionId) || !uuid.test(command.alternativeId) || command.batchId !== input.batch.batchId || !expected?.alternatives.some(a => a.id === command.alternativeId)) stop("invalid_command");
     stage = "questions";
-    let response = await request(query(source));
-    if (!Array.isArray(response.data)) stop("invalid_response");
-    let raw = response.data.find(q => q.id === command.questionId);
-    if (!raw && expected.prompt.length >= 12) {
-      response = await request(query(source, clean(expected.prompt).replace(/\s+/g, " ").slice(0, 100)));
+    const search = query(source);
+    if (input.operation === "verify") {
+      // An explicit read-only check: look the question up again.
+      let response = await request(search);
       if (!Array.isArray(response.data)) stop("invalid_response");
-      raw = response.data.find(q => q.id === command.questionId);
+      let raw = response.data.find(q => q.id === command.questionId);
+      if (!raw && expected.prompt.length >= 12) {
+        response = await request(query(source, clean(expected.prompt).replace(/\s+/g, " ").slice(0, 100)));
+        if (!Array.isArray(response.data)) stop("invalid_response");
+        raw = response.data.find(q => q.id === command.questionId);
+      }
+      if (!raw) stop("question_not_found");
+      if (fingerprint(normalize(raw)) !== fingerprint(expected)) stop("question_changed");
+      return { ok: true, matched: true, accountRef };
     }
-    if (!raw) stop("question_not_found");
-    if (fingerprint(normalize(raw)) !== fingerprint(expected)) stop("question_changed");
-    if (input.operation === "verify") return { ok: true, matched: true, accountRef };
+    // An answer is just the answer, as when you click an option on the website. When the
+    // page has the question loaded, a changed question is still caught, without asking again.
+    const seen = observed?.question(command.questionId);
+    if (seen && fingerprint(normalize(seen)) !== fingerprint(expected)) stop("question_changed");
     writing = true; stage = "confirmation";
     const answer = await request("/question/answer", { question_id: command.questionId, alternative_id: command.alternativeId });
     if (answer.created?.confirmed !== true || answer.created.alternative_id !== command.alternativeId || (answer.created.question_id !== undefined && answer.created.question_id !== command.questionId) || typeof answer.correct !== "boolean") stop("confirmation_unverified");
@@ -140,6 +159,9 @@ export async function runAssaadOperation(input) {
     const code = error.message;
     if (input.operation !== "answer") return { ok: false, stage, ...(error.retryAfterMs ? { retryAfterMs: error.retryAfterMs } : {}), error: ["login_required", "rate_limited", "access_denied", "question_changed", "question_not_found", "invalid_session", "invalid_response"].includes(code) ? code : error.name === "TimeoutError" ? "timeout" : "platform_unavailable" };
     // Once a write starts, any failure is uncertain. It is never replayed automatically.
+    // A refused login (401) is the one exception: Assaad turned it away before doing anything.
+    if (code === "login_required") observed?.forgetSession();
+    if (writing && code === "login_required") writing = false;
     return { ...(error.retryAfterMs ? { retryAfterMs: error.retryAfterMs } : {}), ...result(writing ? "unknown" : "blocked", writing ? "Confira a resposta na Assaad antes de tentar novamente." : code === "login_required" ? "Entre na Assaad no navegador para continuar." : code === "account_mismatch" ? "Abra a mesma conta Assaad usada para salvar estas questões." : code === "rate_limited" ? "A Assaad pediu uma pausa. Aguarde e retome a fila." : "A questão não pôde ser verificada. Atualize o conjunto antes de enviar."), reason: ["login_required", "account_mismatch", "rate_limited", "question_changed", "question_not_found", "access_denied"].includes(code) ? code : "platform_unavailable" };
   }
 }

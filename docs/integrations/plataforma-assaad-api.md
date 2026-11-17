@@ -34,6 +34,27 @@ an unchanged page. HTTP 429 honors Retry-After, with at least a sixty-second pau
 persisted in browser storage. User resume cannot bypass that deadline. These fixed
 limits reduce traffic; no user-agent/IP spoofing or detection bypass is used.
 
+### Only what the website itself would send
+
+`page-observer.js` runs in the Assaad page's MAIN world at document start (a
+document-start script in the tablet WebView, a `world: "MAIN"` content script in the
+extension). It remembers the website's own responses to `GET /api/auth/session`,
+`POST /api/auth/refresh` and `GET /v1/question?…` for ten minutes, and whether the
+website reached its API. It never sends a request or changes one. Noti reuses
+what it saw instead of asking Assaad again:
+
+| Action | Requests Noti sends |
+| --- | --- |
+| Connection check | none when the page already reached the API; otherwise the session and `GET /question/metadata` (what the question bank loads) |
+| Study on canvas (import) | none when the page's own search has the displayed questions; otherwise that same search, once |
+| Answer | `PATCH /question/answer` only, when the page has a fresh session; otherwise `GET /api/auth/session` first |
+| Pictures | each one when its card is shown, never all of a set at once |
+
+An answer never re-searches the question bank. When the page has the question
+loaded, a changed question still blocks the write, at no cost. A 401 on the answer
+means Assaad refused the login before doing anything, so it's reported as a blocked
+login, not an uncertain write, and the remembered session is dropped.
+
 ## Reconnection behavior
 
 Imports wait for the relay's authenticated session acknowledgement, rather than
@@ -104,7 +125,7 @@ The client expects `{data: Question[], meta: {currentPage,lastPage,next,prev,tot
 
 Client rendering uses `Question.id`, `text` (HTML/LaTeX), optional `image`, `alternatives[].{id,label,text,image}`, institution/category/subcategory names, year, difficulty, and `tag_links[].tag.name`. Additional fields can exist. The adapter constructs a new allowlisted object and omits explanations, correctness flags, answer keys, profile data, and unknown fields.
 
-**There is no source-confirmed student `GET /question/{id}` in the inspected bundles. Do not invent that route or use `/question/admin/{id}`.** Saved-answer lookup repeats the original bounded search page, then (only if needed) performs one `search` request using a short prefix of the saved prompt. It accepts only an exact UUID match and unchanged prompt, images, alternative IDs, and alternative contents. Reordering alternatives does not change the selected ID. A missing or changed question pauses for review; there is no pagination crawl.
+**There is no source-confirmed student `GET /question/{id}` in the inspected bundles. Do not invent that route or use `/question/admin/{id}`.** Answers don't look the question up again (see the table above). Only the explicit read-only `verify` operation repeats the original bounded search page, then (only if needed) performs one `search` request using a short prefix of the saved prompt. It accepts only an exact UUID match and unchanged prompt, images, alternative IDs, and alternative contents. Reordering alternatives does not change the selected ID. A missing or changed question pauses for review; there is no pagination crawl.
 
 ## Question-bank submission
 
@@ -205,11 +226,11 @@ All REST paths below are relative to the `/v1` base except `/api/auth/*`, which 
 ## Implemented Noti flow
 
 1. Pair the app and extension once using the relay’s six-digit code. This pairing does not replace Assaad’s own login.
-2. Click **Enviar questões ao Noti**. Read rendered question UUIDs, load the corresponding ordinary API search page once, and share only those exact displayed questions.
+2. Click **Enviar questões ao Noti** (or **Study on canvas** on the tablet). Read rendered question UUIDs, take them from the website's own search response (or load that same search once if it isn't available), and share only those exact displayed questions.
 3. Keep multiple sets on the tablet. Draft choices save immediately and remain scoped to the account, question UUID, and content revision. Drawings use the existing native canvas store. Anonymous HTTPS images are copied locally when possible; the UI shows the offline image count and allows retrying missing assets.
 4. Explicitly approve one answer with **Check with Assaad**. Answers go one at a time: each is sent by its own tap, only while Assaad is connected, and only when no other answer is on its way. Nothing queues up to send later or in a run. Drafts saved offline stay drafts. The tablet persists `pending` durably before each outgoing command. Only one command is outstanding.
 5. When Edge and Noti are available, reuse an Assaad tab or open one background tab. The original question page is unnecessary for API-backed saved sets. Assaad login must still be valid. Edge is not launched by the relay when closed.
-6. Recheck the account reference, locate and compare the saved question, then issue one answer PATCH. Return only confirmed grading fields.
+6. Recheck the account reference (from the page's own session when fresh), compare the saved question if the page has it loaded, then issue one answer PATCH. Return only confirmed grading fields.
 7. Restore saved sets into a renewed pairing as needed. Forgetting a set also removes its server archive entry, unless it has an unresolved submission. Neither revocation nor relay expiry deletes the device’s question library.
 
 Local limits: 100 sets; at most 100 questions per import, 12 alternatives and 16 images per question; bounded protocol messages. Media copies are limited to 4 MiB each and 64 MiB total, with no Assaad cookies or relay credentials. Failed/protected/oversized images stay marked as needing connectivity. Answers are sent only while Noti is foregrounded; restarting the app converts an interrupted pending item to unknown.

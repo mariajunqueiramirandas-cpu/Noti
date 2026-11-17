@@ -42,6 +42,11 @@ class AssaadTabletBrowser(
     private val operations = Mutex()
     private val api = context.assets.open("platform-api.js").bufferedReader().use { it.readText() }.replace("export async function", "async function")
     private val reader = context.assets.open("reader.js").bufferedReader().use { it.readText() }.replace("export function", "function")
+    /** Remembers what the website itself loads, so Noti reuses it instead of asking Assaad again. */
+    private val observer = context.assets.open("page-observer.js").bufferedReader().use { it.readText() }
+    private val observerAtDocumentStart = runCatching {
+        androidx.webkit.WebViewFeature.isFeatureSupported(androidx.webkit.WebViewFeature.DOCUMENT_START_SCRIPT)
+    }.getOrDefault(false)
     private var activeExchange: (() -> Unit)? = null
     private var alive = true
     var loaded = false; private set
@@ -72,6 +77,8 @@ class AssaadTabletBrowser(
             }
             override fun onPageStarted(view: WebView, url: String, favicon: android.graphics.Bitmap?) {
                 activeExchange?.invoke(); activeExchange = null
+                // Without document-start scripts, as early as this WebView allows.
+                if (!observerAtDocumentStart && trustedAssaadPage(url)) view.evaluateJavascript(observer, null)
                 loaded = false; state(false, url, null)
             }
             override fun onPageFinished(view: WebView, url: String) {
@@ -83,6 +90,9 @@ class AssaadTabletBrowser(
             override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
                 loaded = false; state(false, view.url ?: ASSAAD_WEBSITE, "The browser stopped. Reopen it to continue."); destroy(); return true
             }
+        }
+        if (observerAtDocumentStart) runCatching {
+            androidx.webkit.WebViewCompat.addDocumentStartJavaScript(view, observer, setOf(ASSAAD_WEBSITE))
         }
         view.loadUrl(QUESTION_BANK)
     }

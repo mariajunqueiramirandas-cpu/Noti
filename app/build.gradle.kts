@@ -136,12 +136,14 @@ dependencies {
     // WorkDatabase_Impl's constructor, crashing every release launch in InitializationProvider.
     // The latest work-runtime ships Room rules that keep it. Noti itself never uses WorkManager.
     implementation("androidx.work:work-runtime:2.12.0")
+    // Document-start scripts: the Assaad page observer must load before the website's own code.
+    implementation("androidx.webkit:webkit:1.14.0")
 }
 
 
 // The embedded browser and extension execute the same audited, packaged page adapter.
 val packageAssaadBrowserAssets by tasks.registering(Sync::class) {
-    from(rootProject.file("extensions/assaad-reader")) { include("platform-api.js", "reader.js") }
+    from(rootProject.file("extensions/assaad-reader")) { include("platform-api.js", "reader.js", "page-observer.js") }
     into(layout.buildDirectory.dir("generated/assaadAssets"))
 }
 tasks.named("preBuild").configure { dependsOn(packageAssaadBrowserAssets) }

@@ -8,7 +8,14 @@ export const rawQuestion = () => ({ id: qid, text: "<p>Which river flows through
   explanation: "SECRET_SOLUTION", alternatives: [{ id: aid, label: "A", text: "Nile", correct: true }, { id: bid, label: "B", text: "Amazon", correct: false }] });
 export const source = { url: "https://app.plataformaassaad.com.br/banco-de-questoes/explorar?category_id=567&subcategory_id=719&tag_ids=422", page: "1" };
 export const snapshot = () => ({ batchId: "00000000-0000-4000-8000-000000000010", capturedAt: "2026-11-16T00:00:00.000Z", source, questions: [{ id: qid, alternatives: [{ id: aid }, { id: bid }] }] });
-export function harness(handler = () => null, url = "https://app.plataformaassaad.com.br/") {
+/** What page-observer.js would have seen the website load: its session and searches. */
+export function observedPage({ session = true, questions = [rawQuestion()], apiReachable = true } = {}) {
+  const value = JSON.parse(readFileSync(new URL("../../protocol/fixtures/assaad-session.json", import.meta.url), "utf8")).session;
+  let current = session ? value : null; const forgotten = [];
+  return { session: () => current, apiReachable: () => apiReachable, question: id => questions.find(q => q.id === id) || null,
+    forgetSession: () => { current = null; forgotten.push(true); }, forgotten };
+}
+export function harness(handler = () => null, url = "https://app.plataformaassaad.com.br/", observed = undefined) {
   const window = new Window({ url }); const calls = [], delays = [];
   const fetch = async (url, options = {}) => {
     calls.push({ url, ...options });
@@ -16,7 +23,7 @@ export function harness(handler = () => null, url = "https://app.plataformaassaa
     if (override) return override;
     return new Response(JSON.stringify(url === "/api/auth/session" ? JSON.parse(readFileSync(new URL("../../protocol/fixtures/assaad-session.json", import.meta.url), "utf8")) : { data: [rawQuestion()], meta: { total: 1 } }), { headers: { "Content-Type": "application/json" } });
   };
-  const run = vm.runInNewContext(code + ";runAssaadOperation", { fetch, location: new URL(url), URL, URLSearchParams, DOMParser: window.DOMParser, TextEncoder, TextDecoder, crypto: webcrypto, AbortSignal, setTimeout: (fn, ms) => { delays.push(ms); queueMicrotask(fn); return 0; } });
+  const run = vm.runInNewContext(code + ";runAssaadOperation", { fetch, ...(observed ? { __notiAssaad: observed } : {}), location: new URL(url), URL, URLSearchParams, DOMParser: window.DOMParser, TextEncoder, TextDecoder, crypto: webcrypto, AbortSignal, setTimeout: (fn, ms) => { delays.push(ms); queueMicrotask(fn); return 0; } });
   return { run: async input => JSON.parse(JSON.stringify(await run(input))), calls, delays };
 }
 export async function imported() { return (await harness().run({ operation: "import", batch: snapshot() })).batch; }

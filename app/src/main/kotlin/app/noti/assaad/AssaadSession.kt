@@ -257,7 +257,9 @@ class AssaadSession(context: Context, private val library: LibraryStore, private
                     val incoming = AssaadBatch.parse(payload)
                     if (incoming.id !in removedBatchIds && batches.none { it.id == incoming.id }) {
                         if (batches.size >= 100) { problem = "The saved library is full. Remove a saved set before importing another."; return }
-                        batches = batches + incoming; selectedBatchId = incoming.id; currentIndex = 0; save(); saveImages()
+                        batches = batches + incoming; selectedBatchId = incoming.id; currentIndex = 0; save()
+                        // Pictures load when a card shows them, like a page would; not all at once on import.
+                        totalImages = imageUrls().size; savedImages = imageUrls().count(media::contains)
                         focus = incoming.questions.first().id
                     }
                 }
