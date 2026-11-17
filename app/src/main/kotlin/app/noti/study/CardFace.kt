@@ -1,5 +1,6 @@
 package app.noti.study
 
+import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.DashPathEffect
 import android.graphics.Paint
@@ -35,6 +36,10 @@ class CardFace private constructor(
 
     companion object {
         const val PAD = 18f
+        /** In a prompt, where the next of the item's [StudyItem.figures] goes. */
+        const val FIGURE = '\uFFFC'
+        private const val FIGURE_MAX = 260f
+        private const val CHOICE_FIGURE_MAX = 150f
         private const val INK = 0xFF2A2830.toInt()
         private const val MUTED = 0xFF6C6873.toInt()
         private const val PLUM = 0xFF5C4A87.toInt()
@@ -58,8 +63,13 @@ class CardFace private constructor(
          * [number] is the item's place in the deck (1-based) or 0 to leave it out; [source]
          * names the PDF the item came from.
          */
+        /**
+         * [picked] is an option chosen but not yet checked (checked elsewhere, as Plataforma
+         * Assaad questions are): it shows as chosen, without right or wrong. [figure] turns
+         * an image URL into its picture, or null while it's not available.
+         */
         fun layout(item: StudyItem, progress: Progress, widthDp: Float, fonts: Fonts, mode: Mode,
-            number: Int = 0, source: String? = null): CardFace {
+            number: Int = 0, source: String? = null, picked: Int = -1, figure: ((String) -> Bitmap?)? = null): CardFace {
             val w = max(widthDp, 160f)
             val inner = w - 2 * PAD
             val ops = ArrayList<(Canvas) -> Unit>()
@@ -102,33 +112,69 @@ class CardFace private constructor(
             }
             y += 28f
 
-            // The question.
-            val prompt = math(item.prompt, if (item.kind == ItemKind.Flash) 19f else 17f, INK)
-            val promptY = y
-            ops += { prompt.draw(it, PAD, promptY) }
-            y += prompt.height + 12f
+            /** A picture [room] wide at most, at (x, y); a quiet placeholder while it loads. */
+            fun picture(url: String, x: Float, top: Float, room: Float, maxH: Float): Float {
+                val bitmap = figure?.invoke(url)?.takeIf { !it.isRecycled && it.width > 0 && it.height > 0 }
+                if (bitmap == null) {
+                    val r = RectF(x, top, x + room, top + 56f)
+                    val bg = fill(0xFFF3F1EE.toInt())
+                    val p = text(fonts.medium, 12.5f, MUTED).apply { textAlign = Paint.Align.CENTER }
+                    ops += { it.drawRoundRect(r, 10f, 10f, bg); it.drawText("Image", r.centerX(), r.centerY() + 4.5f, p) }
+                    return r.height()
+                }
+                val scale = minOf(room / bitmap.width, maxH / bitmap.height, 2f)
+                val w = bitmap.width * scale; val h = bitmap.height * scale
+                val r = RectF(x + (room - w) / 2, top, x + (room - w) / 2 + w, top + h)
+                val p = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
+                ops += { it.drawBitmap(bitmap, null, r, p) }
+                return h
+            }
+
+            // The question, with its pictures where the prompt puts them.
+            val promptSize = if (item.kind == ItemKind.Flash) 19f else 17f
+            val parts = if (item.figures.isEmpty()) listOf(item.prompt) else item.prompt.split(FIGURE)
+            var nextFigure = 0
+            parts.forEachIndexed { i, part ->
+                if (part.isNotBlank()) {
+                    val prompt = math(part.trim(), promptSize, INK)
+                    val promptY = y
+                    ops += { prompt.draw(it, PAD, promptY) }
+                    y += prompt.height + 12f
+                }
+                if (i < parts.lastIndex && nextFigure < item.figures.size) {
+                    y += picture(item.figures[nextFigure++], PAD, y, inner, FIGURE_MAX) + 12f
+                }
+            }
+            while (nextFigure < item.figures.size) y += picture(item.figures[nextFigure++], PAD, y, inner, FIGURE_MAX) + 12f
 
             // Multiple choice options.
             if (item.kind == ItemKind.Choice) {
                 item.choices.forEachIndexed { i, choice ->
                     val body = math(choice, 16f, INK, inner - 44f)
-                    val h = max(36f, body.height + 14f)
+                    val pictures = item.choiceFigures.getOrNull(i).orEmpty()
+                    // Pictures go under the option's text; measured in place, drawn after the frame.
+                    val frameAt = ops.size
+                    var pictureY = y + body.height + 14f
+                    pictures.forEach { url -> pictureY += picture(url, PAD + 40f, pictureY, inner - 52f, CHOICE_FIGURE_MAX) + 8f }
+                    val pictureOps = ops.subList(frameAt, ops.size).toList()
+                    repeat(pictureOps.size) { ops.removeAt(ops.lastIndex) }
+                    val h = max(36f, if (pictures.isEmpty()) body.height + 14f else pictureY - y)
                     val r = RectF(PAD, y, w - PAD, y + h)
                     options += RectF(r)
-                    val chosen = progress.chosen == i
                     val answered = progress.chosen >= 0 && !exam
+                    val chosen = progress.chosen == i || (!answered && picked == i)
                     val bg = when {
                         answered && i == item.correctChoice -> MINT
                         answered && chosen -> PEACH
-                        exam && chosen -> LILAC
+                        chosen -> LILAC
                         else -> 0
                     }
                     val border = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 1f; color = if (chosen) PLUM else LINE }
                     val bgPaint = fill(bg)
                     val circle = fill(if (chosen) PLUM else 0xFFF0EEEB.toInt())
                     val letter = text(fonts.bold, 13f, if (chosen) 0xFFFFFFFF.toInt() else INK).apply { textAlign = Paint.Align.CENTER }
-                    val cx = r.left + 20f; val cy = r.top + h / 2
-                    val by = r.top + (h - body.height) / 2
+                    val cx = r.left + 20f; val cy = if (pictures.isEmpty()) r.top + h / 2 else r.top + 7f + max(body.height, 24f) / 2
+                    val by = if (pictures.isEmpty()) r.top + (h - body.height) / 2 else r.top + 7f
                     ops += {
                         if (bg != 0) it.drawRoundRect(r, 12f, 12f, bgPaint)
                         it.drawRoundRect(r, 12f, 12f, border)
@@ -136,6 +182,7 @@ class CardFace private constructor(
                         it.drawText(('A' + i).toString(), cx, cy + 4.5f, letter)
                         body.draw(it, r.left + 40f, by)
                     }
+                    ops += pictureOps
                     y += h + 8f
                 }
                 y += 4f

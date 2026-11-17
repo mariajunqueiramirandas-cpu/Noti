@@ -72,10 +72,24 @@ class StudyController(
     /** The board's drawing layer (heights of printed cards), set by the editor. */
     var board: BoardLayer? = null
 
+    /** Items checked elsewhere (Plataforma Assaad on its board), set by the editor. */
+    var remote by mutableStateOf<RemoteChoices?>(null)
+
+    fun isRemote(id: String?) = id != null && remote?.owns(id) == true
+
     /** Something on the board that was tapped, and where (editor px). */
     var menu by mutableStateOf<Pair<BoardLayer.Hit, IntOffset>?>(null)
 
     // ------------------------------------------------------------------------------
+
+    /** Opens the sheet on [id] (when it's on the board), else on what's next. */
+    fun showItem(id: String?) {
+        if (id == null || data.item(id) == null) { show(); return }
+        refreshOrder()
+        select(id)
+        collapsed = false
+        open = true
+    }
 
     /** Opens the sheet on what to study next: what's due, else what's new, else where you were. */
     fun show() {
@@ -137,6 +151,10 @@ class StudyController(
     fun choose(index: Int) {
         val item = current ?: return
         if (item.kind != ItemKind.Choice) return
+        remote?.takeIf { it.owns(item.id) }?.let { r ->
+            if (r.state(item.id)?.locked != true) r.pick(item.id, index)
+            return
+        }
         val e = exam
         progress(item.id) { p ->
             if (e == null && p.chosen >= 0) return@progress p
@@ -254,7 +272,8 @@ class StudyController(
 
     fun startExam(count: Int, minutes: Int, topics: Set<String>) {
         val d = data
-        val pool = d.studyOrder(now()).filter { topics.isEmpty() || it.topic in topics }.filter { it.kind != ItemKind.Flash }
+        // Remotely checked items answer for real when submitted, so they stay out of practice exams.
+        val pool = d.studyOrder(now()).filter { topics.isEmpty() || it.topic in topics }.filter { it.kind != ItemKind.Flash && !isRemote(it.id) }
         if (pool.isEmpty()) { toast("No questions to make an exam from yet."); return }
         val picked = (pool.take(count * 2).shuffled().take(count)).map { it.id }
         // Start each from scratch, keeping the review schedule.

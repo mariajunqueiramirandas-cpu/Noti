@@ -242,7 +242,7 @@ private fun EditorContent(notebook: Notebook, library: LibraryStore, settings: S
                 app.noti.ui.study.StudyOverlay(study, layer, { pages.placement }, loopSerial, maxWidth, maxHeight,
                     hidden = settingsOpen, onSettings = { settingsOpen = true })
             }
-            if (!settingsOpen) app.noti.ui.assaad.AssaadOverlay(notebook.id, study?.controller) { pages.placement }
+            app.noti.ui.assaad.AssaadStudyBridge(notebook.id, study?.controller)
             if (pagesOpen && !fullScreen && !notebook.isCanvas) {
                 androidx.compose.ui.window.Popup(alignment = Alignment.TopStart,
                     offset = with(androidx.compose.ui.platform.LocalDensity.current) { androidx.compose.ui.unit.IntOffset(2.dp.roundToPx(), 62.dp.roundToPx()) },

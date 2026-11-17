@@ -135,13 +135,24 @@ data class StudyItem(
     /** 1 review · 2 exam · 3 hard. */
     val difficulty: Int = 2,
     val createdAt: Long = 0L,
+    /**
+     * Pictures in the prompt, as image URLs. Each [CardFace.FIGURE] in [prompt] marks where
+     * the next one goes; any left over follow the prompt.
+     */
+    val figures: List<String> = emptyList(),
+    /** Pictures under each multiple choice option, in option order. */
+    val choiceFigures: List<List<String>> = emptyList(),
 ) {
     fun json(): JSONObject = JSONObject()
         .put("id", id).put("kind", kind.wire).put("topic", topic).put("prompt", prompt)
         .put("choices", JSONArray(choices)).put("correctChoice", correctChoice)
         .put("answer", answer).put("solution", JSONArray(solution)).put("hints", JSONArray(hints))
         .put("pages", JSONArray(pages)).put("excerpt", excerpt).put("difficulty", difficulty).put("createdAt", createdAt)
-        .apply { sourceId?.let { put("sourceId", it) } }
+        .apply {
+            sourceId?.let { put("sourceId", it) }
+            if (figures.isNotEmpty()) put("figures", JSONArray(figures))
+            if (choiceFigures.any { it.isNotEmpty() }) put("choiceFigures", JSONArray(choiceFigures.map { JSONArray(it) }))
+        }
 
     companion object {
         fun from(o: JSONObject) = StudyItem(
@@ -159,6 +170,8 @@ data class StudyItem(
             excerpt = o.optString("excerpt"),
             difficulty = o.optInt("difficulty", 2).coerceIn(1, 3),
             createdAt = o.optLong("createdAt"),
+            figures = o.optJSONArray("figures").strings(),
+            choiceFigures = o.optJSONArray("choiceFigures")?.let { a -> (0 until a.length()).map { a.optJSONArray(it).strings() } } ?: emptyList(),
         )
     }
 }

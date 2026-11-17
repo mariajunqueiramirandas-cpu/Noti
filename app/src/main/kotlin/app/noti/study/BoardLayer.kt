@@ -16,7 +16,9 @@ import java.io.Closeable
  * is page 0's placement): they move and zoom with the ink. Main thread.
  */
 class BoardLayer(private val store: StudyStore, private val library: LibraryStore, private val fonts: CardFace.Fonts) : Closeable {
-    private data class FaceKey(val item: StudyItem, val progress: Progress, val widthDp: Float, val number: Int, val source: String?)
+    private data class FaceKey(val item: StudyItem, val progress: Progress, val widthDp: Float, val number: Int, val source: String?, val pictures: Int)
+    /** Pictures for items that have them (see [StudyItem.figures]), set by the editor. */
+    var figure: ((String) -> android.graphics.Bitmap?)? = null
     private val faces = HashMap<String, Pair<FaceKey, CardFace>>()
     private val pdfs = HashMap<String, PdfDocument?>()
     private val labelPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.LINEAR_TEXT_FLAG).apply { typeface = fonts.bold; color = 0xFF5C4A87.toInt() }
@@ -35,9 +37,11 @@ class BoardLayer(private val store: StudyStore, private val library: LibraryStor
     /** The face of a printed card, laid out once per change. */
     fun face(card: PinnedCard, data: BoardStudy = store.data): CardFace? {
         val item = data.item(card.itemId) ?: return null
-        val key = FaceKey(item, data.progressOf(item.id), card.widthDp, data.items.indexOf(item) + 1, data.source(item.sourceId)?.name)
+        val resolve = figure
+        val pictures = if (resolve == null) 0 else (item.figures + item.choiceFigures.flatten()).count { resolve(it) != null }
+        val key = FaceKey(item, data.progressOf(item.id), card.widthDp, data.items.indexOf(item) + 1, data.source(item.sourceId)?.name, pictures)
         faces[card.id]?.let { (k, f) -> if (k == key) return f }
-        val f = CardFace.layout(item, key.progress, card.widthDp, fonts, CardFace.Mode.Board, key.number, key.source)
+        val f = CardFace.layout(item, key.progress, card.widthDp, fonts, CardFace.Mode.Board, key.number, key.source, figure = resolve)
         faces[card.id] = key to f
         return f
     }
