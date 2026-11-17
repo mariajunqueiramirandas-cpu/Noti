@@ -51,6 +51,8 @@ class CardFace private constructor(
         private const val BUTTER_INK = 0xFF7A5A0E.toInt()
         private const val PEACH = 0xFFF8DDD4.toInt()
         private const val PEACH_INK = 0xFF9A3A22.toInt()
+        /** Plum at 12%: present on every copy, quiet enough to read through. */
+        private const val WATERMARK = 0x1F5C4A87
 
         fun statusColors(v: Verdict?): Pair<Int, Int>? = when (v) {
             Verdict.Correct -> MINT to MINT_INK
@@ -278,7 +280,39 @@ class CardFace private constructor(
                 ops += { it.drawText(shown, PAD, fy, p) }
                 y += 18f
             }
+
+            // Whose question it is, in words at the foot of the card.
+            val credit = item.credit.trim()
+            if (credit.isNotEmpty()) {
+                val p = text(fonts.bold, 11.5f, PLUM).apply { letterSpacing = 0.04f }
+                val shown = ellipsize(credit, p, inner)
+                val fy = y + 10f
+                ops += { it.drawText(shown, PAD, fy, p) }
+                y += 18f
+            }
             val height = y + PAD - 6f
+
+            // And faintly across the whole card, diagonally, so it stays with every copy: on the
+            // sheet, printed on the board and in exported PDFs.
+            if (credit.isNotEmpty()) {
+                val mark = text(fonts.bold, 13f, WATERMARK).apply { letterSpacing = 0.12f; textAlign = Paint.Align.CENTER }
+                val label = credit.uppercase()
+                val step = mark.measureText(label) + 56f
+                val reach = kotlin.math.hypot(w, height)
+                val bounds = RectF(0f, 0f, w, height)
+                ops += { c ->
+                    val s = c.save()
+                    c.clipRect(bounds)
+                    c.rotate(-30f, w / 2, height / 2)
+                    var row = -reach / 2; var line = 0
+                    while (row < reach / 2 + 40f) {
+                        var x = -reach / 2 + if (line % 2 == 1) step / 2 else 0f
+                        while (x < reach / 2 + step) { c.drawText(label, w / 2 + x, height / 2 + row, mark); x += step }
+                        row += 64f; line++
+                    }
+                    c.restoreToCount(s)
+                }
+            }
 
             if (mode == Mode.Board) {
                 // A card resting on the board: white, rounded, a soft shadow and the status edge.

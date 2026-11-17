@@ -31,6 +31,8 @@ class AssaadStudyItemsTest {
         assertEquals(listOf("https://cdn.plataformaassaad.com.br/mapa.png"), item.figures)
         assertTrue("the picture keeps its place in the prompt", item.prompt.contains(CardFace.FIGURE))
         assertTrue(board.isNew(item.id))
+        assertEquals("every Assaad question credits where it's from", ASSAAD_CREDIT, item.credit)
+        assertEquals(ASSAAD_CREDIT, StudyItem.from(item.json()).credit)
     }
 
     @Test fun assaadsCheckSetsTheChoiceAndTheRightOptionOnce() {
