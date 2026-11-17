@@ -1,0 +1,22 @@
+# Local/CI proxy fixture only. Dokploy supplies its own Traefik in production.
+services:
+  traefik:
+    image: traefik:v3.6
+    command:
+      - --providers.file.filename=/etc/traefik/noti.yml
+      - --entrypoints.web.address=:8080
+      - --ping=true
+      - --ping.entrypoint=web
+      - --log.level=ERROR
+    ports:
+      - "127.0.0.1::8080"
+    volumes:
+      - ./test/traefik.yml:/etc/traefik/noti.yml:ro
+    healthcheck:
+      test: ["CMD", "traefik", "healthcheck", "--ping", "--entrypoints.web.address=:8080", "--ping.entrypoint=web"]
+      interval: 2s
+      timeout: 2s
+      retries: 15
+    depends_on:
+      relay:
+        condition: service_healthy

@@ -6,7 +6,8 @@
     "start": "bun run src/index.ts",
     "dev": "bun --watch src/index.ts",
     "test": "bun test",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "check:deployment": "bun run test/dokploy-smoke.ts"
   },
   "dependencies": {
     "hono": "^4.13.19",

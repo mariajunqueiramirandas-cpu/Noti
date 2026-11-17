@@ -4,26 +4,65 @@ Bun + Hono, native Bun WebSockets, and SQLite. Clients default to
 `https://noti.vendua.com.br`. One relay instance connects one Noti app and one
 Edge/Chrome extension per paired session. No Assaad API credentials are needed.
 
-## Deploy with Docker Compose
+## Deploy with Dokploy
 
-Point the domain's A record at your server (and AAAA only if IPv6 works), allow
-inbound TCP 80/443, then run from the repository root:
+Use **Docker Compose**, the GitHub repository, branch **main**, and Compose Path
+**`./server/compose.yml`**. Leave the Environment section empty: **no `.env`, API
+keys, JWT secret, database password, or Assaad credentials are required**. Pairing
+tokens are generated securely at runtime and stored as hashes in SQLite.
+
+1. Save the GitHub source settings. **On Push** is supported. Optional watch paths:
+   `server/**`; leave them empty to redeploy on every main-branch update.
+2. In **Domains → Add Domain**, set host **`noti.vendua.com.br`**, service **`relay`**,
+   container port **`3000`**, path **`/`**, and enable **HTTPS / Let's Encrypt**.
+   The upstream container uses **HTTP**; Dokploy terminates public TLS.
+3. Point the domain's DNS A record at the Dokploy server (AAAA only if IPv6 works).
+4. Enable **Isolated Deployments** if available. Dokploy adds the service network
+   and connects its Traefik proxy automatically when the domain is configured.
+5. Use **Preview Compose** to confirm the relay has the generated domain labels
+   and network, then **Deploy**. Domain changes require another deployment.
+6. Open `https://noti.vendua.com.br/health`; expect
+   `{"ok":true,"service":"noti-assaad-relay","protocol":1}`.
+
+The relay exposes port 3000 only inside Docker; no host port is published. Dokploy
+handles HTTPS certificates and WebSocket upgrades. There is no second Caddy or
+Traefik container in the production Compose file, no hardcoded container/network
+name, and no repository bind mount to break across deployments. Use **one relay
+instance**: the live WebSocket registry is process-local. Docker Stack/Swarm
+replicas are not supported by this SQLite deployment.
+
+The non-root container has a read-only root filesystem, bounded temporary storage,
+a 256 MiB memory limit, rotated logs, and a health check. The `noti-relay` named
+volume persists `/data/noti.sqlite` and its WAL files across container replacement.
+Keep the Dokploy application/project name and volume to preserve pairings and
+saved sets. Configure volume backups; use SQLite's backup API or stop the relay
+before making a filesystem backup. Never delete the volume during redeployment.
+
+`NODE_ENV=production`, `PORT=3000`, `DATABASE_PATH=/data/noti.sqlite`, and
+`TRUST_PROXY=true` are already set in Compose. Proxy trust uses Traefik's sanitized
+`X-Real-IP` for pairing rate limits; keep the relay private and Traefik's
+`forwardedHeaders.insecure` disabled. If another trusted CDN/proxy sits in front
+of Dokploy, configure its trusted IP ranges in Dokploy/Traefik rather than trusting
+arbitrary client-supplied headers. No Assaad request is sent through this relay.
+
+Official references: [Dokploy Compose domains](https://docs.dokploy.com/docs/core/docker-compose/domains),
+[isolated deployments](https://docs.dokploy.com/docs/core/docker-compose/utilities),
+and [environment handling](https://docs.dokploy.com/docs/core/docker-compose).
+
+## Standalone hosting without Dokploy
+
+The root **`compose.yaml`** is only for a dedicated server where Caddy can bind
+ports 80/443. Do not select that file in Dokploy. For standalone hosting, point DNS
+at the server, allow ports 80/443, then run from the repository root:
 
 ```sh
-docker compose up -d --build
+docker compose -f compose.yaml up -d --build
 curl https://noti.vendua.com.br/health
 ```
 
-Caddy obtains/renews HTTPS certificates and proxies WebSockets. Port 3000 is private
-to the Compose network. Caddy overwrites `X-Real-IP`; `TRUST_PROXY=true` relies on
-that private connection. With another proxy, terminate TLS, forward WebSocket
-upgrades, and overwrite that header or disable proxy trust. Run a single relay
-instance: the socket registry is local to its process.
-
-The `noti-relay` named volume keeps SQLite, including token hashes, saved question-set archives, the latest
-import, and recent submission results. Rebuilding/restarting preserves
-pairing. Caddy certificate state uses separate volumes. Back up SQLite while the
-service is stopped or through SQLite's backup API.
+Caddy obtains/renews HTTPS certificates, forwards WebSockets, and overwrites
+`X-Real-IP`. Its certificate state uses separate volumes. The SQLite retention
+and single-instance requirements above apply to both deployment modes.
 
 ## Single-tablet mode
 
@@ -135,6 +174,13 @@ bun run typecheck
 bun test
 bun run dev
 ```
+
+With Docker running, `bun run check:deployment` tests the production Dokploy
+Compose through an isolated local Traefik fixture. It checks health, code pairing,
+origin rules, bidirectional WebSockets, non-root runtime, SQLite persistence across
+container replacement, and forwarded-IP spoofing/rate limits. Its random test
+project, loopback port and synthetic database are removed afterwards; no real
+Assaad requests or production volumes are used.
 
 Tests use isolated SQLite databases and loopback WebSockets. Production clients
 keep the fixed HTTPS domain. Coverage includes code expiry/reuse, role boundaries,

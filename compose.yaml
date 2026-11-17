@@ -1,3 +1,4 @@
+# Standalone Caddy hosting only. In Dokploy use ./server/compose.yml instead.
 services:
   relay:
     build: ./server

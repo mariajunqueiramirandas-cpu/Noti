@@ -1,0 +1,34 @@
+# Dokploy: main branch, Compose path ./server/compose.yml.
+# Add the domain in Dokploy: noti.vendua.com.br -> relay:3000, HTTPS enabled.
+# Dokploy supplies Traefik routing and networking. No .env or API keys required.
+services:
+  relay:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    init: true
+    stop_grace_period: 15s
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      DATABASE_PATH: /data/noti.sqlite
+      TRUST_PROXY: "true"
+    volumes:
+      - noti-relay:/data
+    expose:
+      - "3000"
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 256m
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  noti-relay:

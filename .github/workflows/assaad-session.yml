@@ -1,5 +1,8 @@
 name: Assaad session
 on:
+  push:
+    branches: [main]
+    paths: ['server/**', 'extensions/**', 'protocol/**', 'compose.yaml', '.github/workflows/assaad-session.yml']
   pull_request:
     paths: ['server/**', 'extensions/**', 'protocol/**', 'compose.yaml', '.github/workflows/assaad-session.yml']
   workflow_dispatch:
@@ -23,11 +26,10 @@ jobs:
       - run: npm test && bun run integration
         working-directory: extensions/assaad-reader-dev
       - run: git diff --exit-code -- extensions/assaad-reader/content.bundle.js
-      - run: docker compose config --quiet && docker compose build relay
-      - name: Exercise the container runtime and SQLite
-        run: >-
-          docker compose run --rm --no-deps relay bun -e
-          'import {startServer} from "./src/index.ts"; const runtime=startServer({port:0}); const response=await fetch(`http://127.0.0.1:${runtime.server.port}/health`); if(!response.ok)throw Error("health failed"); runtime.stop();'
+      - run: docker compose config --quiet && docker compose -f server/compose.yml config --quiet
+      - name: Exercise Dokploy routing, persistence and proxy rate limits
+        run: bun run check:deployment
+        working-directory: server
       - name: Package unpacked extension
         run: cd extensions/assaad-reader && zip -r "$RUNNER_TEMP/noti-assaad-extension.zip" .
       - uses: actions/upload-artifact@v6

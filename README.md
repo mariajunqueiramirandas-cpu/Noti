@@ -174,6 +174,9 @@ while you draw; it uses normal browser CORS and needs no relay or second device.
 Multiple sets and draft answers stay saved for later. Approved submissions queue
 until the selected browser is connected, then call Assaad from the user’s own
 browser connection. The Noti backend never proxies those requests or stores Assaad tokens.
+For Dokploy, use branch **main**, Compose Path **`./server/compose.yml`**, and
+route **noti.vendua.com.br → relay:3000** with HTTPS enabled. No `.env` is needed.
+The root Compose file is for standalone Caddy hosting.
 See [the endpoint investigation](docs/integrations/plataforma-assaad-api.md),
 [deployment guide](server/README.md), and [study board guide](docs/STUDY_BOARD.md).
 

@@ -1,0 +1,12 @@
+# Equivalent HTTP service routing to a Dokploy domain targeting relay:3000.
+http:
+  routers:
+    noti:
+      rule: Host(`noti.vendua.com.br`)
+      entryPoints: [web]
+      service: noti
+  services:
+    noti:
+      loadBalancer:
+        servers:
+          - url: http://relay:3000

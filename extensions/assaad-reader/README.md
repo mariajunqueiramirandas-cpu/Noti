@@ -5,7 +5,9 @@ using Assaad’s white/gray cards and blue controls. Server: **https://noti.vend
 
 ## Install or update
 
-Deploy the root Compose file using [the server guide](../../server/README.md).
+Deploy `server/compose.yml` in Dokploy using [the server guide](../../server/README.md).
+Set the domain to `noti.vendua.com.br`, service `relay`, port `3000`, HTTPS enabled;
+no `.env` is required. The root Compose file is for standalone Caddy hosting.
 In `edge://extensions`, load unpacked `C:\Noti\extensions\assaad-reader`, or reload
 an existing installation. Version 3 adds `scripting` on the existing Assaad host;
 site access stays restricted to Assaad and the relay. Refresh the website afterwards.
