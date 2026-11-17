@@ -58,9 +58,7 @@ private class AssaadRemote(private val session: AssaadSession, private val figur
         val answer = session.answerFor(qid)
         return when (answer?.status) {
             "confirmed" -> RemoteState(RemoteState.Phase.Done, "")
-            "pending" -> RemoteState(RemoteState.Phase.Checking, "Checking with Assaad…")
-            "queued" -> RemoteState(RemoteState.Phase.Queued,
-                if (session.queuePaused) "Saved and queued. The queue is paused." else "Saved. It goes to Assaad once it's connected.")
+            "pending", "queued" -> RemoteState(RemoteState.Phase.Checking, "Checking with Assaad…")
             "blocked", "failed" -> RemoteState(RemoteState.Phase.Blocked, answer.feedback.ifBlank { "Assaad didn't accept this answer." })
             "unknown" -> RemoteState(RemoteState.Phase.Unknown, answer.feedback.ifBlank { "Assaad didn't confirm. Check it there before another attempt." })
             else -> session.draftFor(qid)?.let { RemoteState(RemoteState.Phase.Draft, "") }
@@ -81,6 +79,8 @@ private class AssaadRemote(private val session: AssaadSession, private val figur
 
     override fun submit(itemId: String) { assaadQuestionId(itemId)?.let(session::submit) }
     override fun retry(itemId: String) { assaadQuestionId(itemId)?.let(session::retry) }
+    override val canSubmit get() = session.canSendAnswer
+    override val sending get() = session.hasAnswerOnItsWay
 
     override fun openPlatform() { if (session.useTabletBrowser) session.openTabletBrowser() else session.dialogOpen = true }
     override fun openConnection() { session.dialogOpen = true }

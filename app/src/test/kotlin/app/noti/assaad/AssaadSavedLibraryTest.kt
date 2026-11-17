@@ -55,17 +55,22 @@ class AssaadSavedLibraryTest {
         restored.selectBatch(b.getString("batchId")); assertEquals("a-2", restored.drafts["q-1"])
         assertEquals(2, restored.draftCount)
     }
-    @Test fun queueWaitsForBrowserPersistsBeforeSendAndAcceptsOldSetFeedback() {
+    @Test fun answersGoOneAtATimeOnlyWhileConnectedAndPersistBeforeSending() {
         val messages = mutableListOf<JSONObject>()
         val first = session { raw ->
             val message = JSONObject(raw)
             if (message.getString("type") == "answer") assertTrue(saved.readText().contains("pending"))
             messages += message; true
         }
-        val a = fixture(); import(first, a); first.saveDraft("a-1"); first.confirm("a-1")
-        import(first, fixture("b"))
-        assertEquals(1, first.queuedCount); assertTrue(messages.isEmpty())
+        val a = fixture(); import(first, a); first.saveDraft("a-1")
+        // Offline: nothing is queued to go later; the pick just stays a pick.
+        assertFalse(first.confirm("a-1"))
+        assertNull(first.answers["q-1"]); assertEquals("a-1", first.drafts["q-1"]); assertTrue(messages.isEmpty())
         first.start(); online(first)
+        assertTrue(first.confirm("a-1"))
+        // While it's on its way, another answer can't go.
+        import(first, fixture("b")); first.saveDraft("a-2")
+        assertFalse(first.canSendAnswer); assertFalse(first.confirm("a-2"))
         waitUntil { messages.any { it.getString("type") == "answer" } }
         assertEquals(listOf("restore-questions", "answer"), messages.take(2).map { it.getString("type") })
         val command = messages.first { it.getString("type") == "answer" }.getJSONObject("payload")
@@ -78,7 +83,7 @@ class AssaadSavedLibraryTest {
     @Test fun anUncertainSubmissionIsNeverSentAgainAfterRestart() {
         val messages = mutableListOf<JSONObject>()
         val first = session { messages += JSONObject(it); true }
-        val a = fixture(); import(first, a); first.confirm("a-1"); first.start(); online(first)
+        val a = fixture(); import(first, a); first.start(); online(first); first.confirm("a-1")
         waitUntil { messages.any { it.getString("type") == "answer" } }
         runBlocking { first.awaitSaved() }; first.dispose(); sessions.remove(first)
         val nextMessages = mutableListOf<JSONObject>(); val restored = session { nextMessages += JSONObject(it); true }
@@ -87,18 +92,22 @@ class AssaadSavedLibraryTest {
         assertTrue(nextMessages.none { it.getString("type") == "answer" })
         restored.allowRetry("q-1"); assertNull(restored.answers["q-1"]); assertEquals("a-1", restored.drafts["q-1"])
     }
-    @Test fun pausedOrCancelledQueuedAnswersKeepTheirDrafts() {
-        val first = session(); import(first, fixture()); first.confirm("a-2"); first.pauseQueue()
-        assertEquals(1, first.queuedCount); assertTrue(first.queuePaused)
-        first.cancelQueue(); assertEquals(0, first.queuedCount); assertEquals("a-2", first.drafts["q-1"])
-        first.submitSavedAnswers(); assertEquals(1, first.queuedCount)
+    @Test fun answersAnOlderVersionLeftQueuedBecomePicksAndNeverSendThemselves() {
+        val a = fixture(); val batch = AssaadBatch.parse(a)
+        saved.writeText(JSONObject().put("version", 2).put("batches", org.json.JSONArray().put(a))
+            .put("records", JSONObject().put(batch.recordKey("q-1"), AssaadAnswer("old", "a-2", "queued", "Waiting", batchId = batch.id).json())).toString())
+        val messages = mutableListOf<JSONObject>()
+        val restored = session { messages += JSONObject(it); true }
+        assertNull(restored.answers["q-1"]); assertEquals("a-2", restored.drafts["q-1"])
+        restored.start(); online(restored); shadowOf(Looper.getMainLooper()).idle()
+        assertTrue(messages.none { it.getString("type") == "answer" })
     }
     @Test fun tabletModeRequiresReadOnlyConnectionCheckAndSubmitsWithoutTheRelay() {
         var answersSent = 0
         val first = session { error("Tablet mode must never send a relay frame") }
-        import(first, fixture()); first.useTablet(true)
-        first.confirm("a-1"); first.start()
-        assertEquals("queued", first.answers["q-1"]?.status)
+        import(first, fixture()); first.useTablet(true); first.start()
+        // Not connected yet: the answer doesn't go, and doesn't wait to go later either.
+        assertFalse(first.confirm("a-1")); assertNull(first.answers["q-1"])
         first.attachTabletBrowser(object : AssaadLocalBrowser {
             override suspend fun readQuestions() = JSONObject()
             override suspend fun operation(input: JSONObject): JSONObject = when (input.getString("operation")) {
@@ -111,6 +120,8 @@ class AssaadSavedLibraryTest {
             }
         })
         first.tabletPage(true, ASSAAD_WEBSITE, null)
+        waitUntil { first.canSendAnswer }
+        assertTrue(first.confirm("a-1"))
         waitUntil { first.answers["q-1"]?.status == "confirmed" }
         assertTrue(first.tabletVerified); assertEquals(1, answersSent)
     }

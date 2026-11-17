@@ -28,8 +28,7 @@ refresh Assaad after updating; install the updated Noti APK for the tablet fix.
 Click **Enviar questões ao Noti** to import only currently displayed question IDs
 through the ordinary search API. Noti keeps multiple saved sets and offline drafts.
 The questions open on Noti's study sheet: pick an option and use **Check with
-Assaad** for one answer, or **Saved sets and connection → Send picked answers**
-for the saved drafts. The queue supports pause/resume/cancel and runs while Noti is
+Assaad**. Answers go one at a time: each is sent by its own tap, only while Assaad is connected, and only when no other answer is on its way. Nothing queues up to send later or in a run. Answers are sent only while Noti is
 foregrounded. Ink stays in the native local canvas store.
 
 Edge must be running and logged into the original Assaad account. The extension

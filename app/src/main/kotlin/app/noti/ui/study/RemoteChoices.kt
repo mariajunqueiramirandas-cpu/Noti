@@ -25,13 +25,19 @@ interface RemoteChoices {
     fun picked(itemId: String): Int
 
     fun pick(itemId: String, index: Int)
+    /** Sends this one answer now. Answers go one at a time, each by its own tap; nothing queues up. */
     fun submit(itemId: String)
-    /** After an unknown outcome: the person checked, another attempt may go. */
+    /** Not accepted: try this one again. Unknown: the person checked, another attempt may go. */
     fun retry(itemId: String)
+
+    /** Connected right now, with no other answer on its way. */
+    val canSubmit: Boolean
+    /** Another answer is on its way. */
+    val sending: Boolean
 
     /** Somewhere to look when the answer can't go yet (the platform's own page). */
     fun openPlatform()
-    /** Saved sets, queue and connection. */
+    /** Saved sets and connection. */
     fun openConnection()
 
     /** A line about the connection when answers can't go right now, or null when all is well. */
@@ -45,8 +51,6 @@ data class RemoteState(val phase: Phase, val message: String) {
     enum class Phase {
         /** Picked, not sent. */
         Draft,
-        /** Waiting for the connection. */
-        Queued,
         /** Sent, waiting for the result. */
         Checking,
         /** Checked: the card shows right or wrong. */
@@ -57,5 +61,5 @@ data class RemoteState(val phase: Phase, val message: String) {
         Unknown,
     }
 
-    val locked get() = phase == Phase.Queued || phase == Phase.Checking || phase == Phase.Done || phase == Phase.Unknown
+    val locked get() = phase == Phase.Checking || phase == Phase.Done || phase == Phase.Unknown
 }

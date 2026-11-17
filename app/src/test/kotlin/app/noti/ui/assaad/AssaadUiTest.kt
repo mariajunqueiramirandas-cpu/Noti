@@ -76,7 +76,7 @@ class AssaadUiTest {
         context.getSharedPreferences("platform_preferences", 0).edit().clear().commit()
         java.io.File(context.filesDir, "assaad_session.json").delete()
         val library = LibraryStore(context)
-        session = AssaadSession(context, library, scope)
+        session = AssaadSession(context, library, scope) { true }
         val id = session.openBoard()
         val notebook = library.notebook(id)!!
         val file = library.studyFile(notebook).apply { parentFile?.mkdirs(); delete() }
@@ -111,10 +111,16 @@ class AssaadUiTest {
         compose.onNodeWithText("Pick an option").assertIsNotEnabled()
         choose('A')
         compose.runOnIdle { assertEquals("a-1", session.draftFor("q-1")); assertEquals(-1, study.data.progressOf(assaadItemId("q-1")).chosen) }
+        // Not connected: nothing queues up to go later.
+        compose.onNodeWithText("Connect Assaad to check").assertIsDisplayed()
+        compose.runOnIdle {
+            session.start()
+            session.receive("""{"type":"session","payload":{"paired":true,"peerOnline":true,"presence":{"active":true,"path":"/"}}}""")
+        }
         screenshot("assaad-sheet-picked")
         compose.onNodeWithText("Check with Assaad").assertIsEnabled().performClick()
-        compose.onNodeWithText("Saved. It goes to Assaad once it's connected.").assertIsDisplayed()
-        compose.onNodeWithText("Queued").assertIsNotEnabled()
+        compose.onNodeWithText("Checking with Assaad…").assertIsDisplayed()
+        compose.onNodeWithText("Checking…").assertIsNotEnabled()
         // Assaad's answer comes back: the card is checked like any other.
         val command = compose.runOnIdle { session.answerFor("q-1")!!.commandId }
         session.receive("""{"type":"answer-result","payload":{"commandId":"$command","status":"confirmed","correct":false,"correctAlternativeId":"a-2","feedback":"Resposta incorreta."}}""")

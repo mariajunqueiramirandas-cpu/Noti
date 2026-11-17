@@ -270,11 +270,9 @@ private fun RemoteBanner(study: StudyController, remote: RemoteChoices?, itemId:
     val colors = MaterialTheme.colorScheme
     when (state.phase) {
         RemoteState.Phase.Checking -> Banner(state.message, null, colors.secondaryContainer, busy = true)
-        RemoteState.Phase.Queued -> Banner(state.message, Icons.Outlined.Schedule, colors.secondaryContainer) {
-            BannerAction("Open ${remote.name}") { remote.openPlatform() }
-        }
         RemoteState.Phase.Blocked -> Banner(state.message, Icons.Outlined.ErrorOutline, colors.errorContainer) {
             BannerAction("Open ${remote.name}") { remote.openPlatform() }
+            if (remote.canSubmit) BannerAction("Try again") { remote.retry(itemId) }
         }
         RemoteState.Phase.Unknown -> Banner(state.message, Icons.Outlined.HelpOutline, colors.errorContainer) {
             BannerAction("Open") { remote.openPlatform() }
@@ -333,10 +331,13 @@ private fun Actions(study: StudyController, item: StudyItem, serial: Long, exam:
                     RemoteState.Phase.Done -> if (study.position < study.order.lastIndex)
                         Pill(Icons.AutoMirrored.Outlined.KeyboardArrowRight, "Next question", primary = true) { study.step(1) }
                     RemoteState.Phase.Checking -> Pill(null, "Checking…", enabled = false, primary = true) {}
-                    RemoteState.Phase.Queued -> Pill(Icons.Outlined.Schedule, "Queued", enabled = false, primary = true) {}
                     RemoteState.Phase.Unknown -> Pill(Icons.Outlined.Replay, "Allow another attempt") { remote.retry(item.id) }
-                    else -> Pill(Icons.Outlined.Check, if (picked < 0) "Pick an option" else "Check with ${remote.name}",
-                        enabled = picked >= 0, primary = true) { remote.submit(item.id) }
+                    else -> when {
+                        picked < 0 -> Pill(Icons.Outlined.Check, "Pick an option", enabled = false, primary = true) {}
+                        remote.sending -> Pill(null, "Another answer is on its way…", enabled = false, primary = true) {}
+                        !remote.canSubmit -> Pill(Icons.Outlined.TravelExplore, "Connect ${remote.name} to check", primary = true) { remote.openPlatform() }
+                        else -> Pill(Icons.Outlined.Check, "Check with ${remote.name}", primary = true) { remote.submit(item.id) }
+                    }
                 }
                 Pill(Icons.Outlined.PushPin, "Print", primary = false) { onPrint() }
             }
