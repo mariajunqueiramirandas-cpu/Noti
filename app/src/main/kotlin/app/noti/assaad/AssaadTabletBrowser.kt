@@ -13,6 +13,11 @@ import java.util.UUID
 import kotlin.coroutines.resume
 
 const val ASSAAD_WEBSITE = "https://app.plataformaassaad.com.br"
+private const val QUESTION_BANK = "$ASSAAD_WEBSITE/banco-de-questoes/explorar"
+/** The question bank's search, where questions can be saved. */
+internal fun assaadQuestionBank(url: String?): Boolean = trustedAssaadPage(url) && runCatching {
+    URI(url!!).path.trimEnd('/') == "/banco-de-questoes/explorar"
+}.getOrDefault(false)
 internal fun trustedAssaadPage(url: String?): Boolean = runCatching {
     val uri = URI(url ?: "")
     uri.scheme == "https" && uri.host == "app.plataformaassaad.com.br" && uri.port == -1 && uri.userInfo == null
@@ -27,7 +32,11 @@ interface AssaadLocalBrowser {
 
 /** A real authenticated page: standard CORS, default browser identity, no native HTTP proxy. */
 @SuppressLint("SetJavaScriptEnabled")
-class AssaadTabletBrowser(context: Context, private val state: (Boolean, String, String?) -> Unit) : AssaadLocalBrowser {
+class AssaadTabletBrowser(
+    context: Context,
+    private val progress: (Int) -> Unit = {},
+    private val state: (Boolean, String, String?) -> Unit,
+) : AssaadLocalBrowser {
     val view = WebView(context)
     private val prefs = context.getSharedPreferences("assaad_browser_budget", Context.MODE_PRIVATE)
     private val operations = Mutex()
@@ -44,8 +53,23 @@ class AssaadTabletBrowser(context: Context, private val state: (Boolean, String,
             safeBrowsingEnabled = true; javaScriptCanOpenWindowsAutomatically = false
         }
         // No JavaScriptInterface, cookie export, shouldInterceptRequest, SSL bypass, or custom User-Agent.
+        view.webChromeClient = object : WebChromeClient() {
+            override fun onProgressChanged(view: WebView, newProgress: Int) { progress(newProgress) }
+        }
         view.webViewClient = object : WebViewClient() {
-            override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean = request.isForMainFrame && !trustedAssaadPage(request.url.toString())
+            override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
+                if (!request.isForMainFrame || trustedAssaadPage(request.url.toString())) return false
+                // Anything that isn't Assaad opens in the person's own browser, never in this one.
+                if (request.hasGesture() && request.url.scheme == "https") runCatching {
+                    view.context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, request.url)
+                        .addCategory(android.content.Intent.CATEGORY_BROWSABLE).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
+                }
+                return true
+            }
+            // Assaad is a single-page site: its own navigation (signing in, searching) changes the address only.
+            override fun doUpdateVisitedHistory(view: WebView, url: String, isReload: Boolean) {
+                if (loaded) { loaded = trustedAssaadPage(url); state(loaded, url, null) }
+            }
             override fun onPageStarted(view: WebView, url: String, favicon: android.graphics.Bitmap?) {
                 activeExchange?.invoke(); activeExchange = null
                 loaded = false; state(false, url, null)
@@ -60,8 +84,10 @@ class AssaadTabletBrowser(context: Context, private val state: (Boolean, String,
                 loaded = false; state(false, view.url ?: ASSAAD_WEBSITE, "The browser stopped. Reopen it to continue."); destroy(); return true
             }
         }
-        view.loadUrl(ASSAAD_WEBSITE + "/banco-de-questoes/explorar")
+        view.loadUrl(QUESTION_BANK)
     }
+    /** The question bank, where questions are found and saved. */
+    fun home() { if (alive) view.loadUrl(QUESTION_BANK) }
     override fun resume() { if (alive) view.onResume() }
     override fun pause() { if (alive) view.onPause() }
     fun back() { if (alive && view.canGoBack()) view.goBack() }

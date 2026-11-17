@@ -22,11 +22,17 @@ Open Plataforma Assaad in Noti’s library and pair its Edge extension with a
 six-digit code. The extension’s popup handles pairing only. Import the questions
 currently displayed on Assaad using Enviar questões ao Noti.
 
-On the native canvas, alternative selections save as drafts. Saved sets keeps
-multiple imports across app restarts. Explicitly approve one answer with Confirm
-in Assaad, or queue all eligible drafts using Saved sets → Submit saved answers.
-Pause/resume/cancel are available. Drawings stay local; anonymous image copies
-are saved when possible, with an offline image count.
+Saved questions open on the Assaad board's ordinary study sheet, as multiple
+choice cards with their pictures in place. A new set opens the sheet on its first
+question. Tapping an option saves it as a draft (shown in lilac, without right or
+wrong); **Check with Assaad** sends it. Assaad's verdict comes back onto the card
+like any other checked choice (mint for the right option, peach for a wrong pick)
+and schedules the question for review. Print pins it to the board, pictures
+included. The sheet's menu opens Assaad and the saved sets; you can also send
+every saved draft from there (**Send picked answers**). Pause/resume/cancel are
+available. Assaad questions stay out of practice exams, since their answers are
+real submissions. Drawings stay local; anonymous image copies are saved when
+possible, with an offline image count.
 
 Approved answers wait for the selected browser and a valid Assaad login.
 The original question page need not stay open for API-backed imports. The

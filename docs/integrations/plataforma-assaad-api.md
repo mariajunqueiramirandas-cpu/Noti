@@ -47,10 +47,14 @@ clear obsolete connection errors when authoritative status recovers.
 
 ## Single-tablet browser mode
 
-Choose **Plataforma Assaad → This tablet**, sign into the real website, and use
-**Save questions** on a loaded question search. **Canvas** minimizes that same
-WebView while keeping its authenticated page alive during the foreground Noti
-session. Edge, the extension, code pairing, and the relay are unnecessary in this
+Choose **Plataforma Assaad → On this tablet → Open Assaad** and sign into the real
+website. Noti notices the login on its own (Assaad is a single-page site, so the
+check also runs when its address changes without a page load). On a loaded question
+search, **Study on canvas** saves that page's questions and opens them on the Assaad
+board's study sheet. **Canvas** or Close returns to Noti and keeps that same WebView
+parked, invisible, with its authenticated page alive during the foreground Noti
+session. Open, the browser is a full-screen dialog window, so editor chrome and the
+ink window can't cover it. Links that leave Assaad open in the system browser. Edge, the extension, code pairing, and the relay are unnecessary in this
 mode. Saved sets and the submission queue are shared with the Edge mode.
 
 The APK packages the same `platform-api.js` and DOM reader as the extension.

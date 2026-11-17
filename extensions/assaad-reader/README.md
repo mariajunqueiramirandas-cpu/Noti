@@ -27,7 +27,8 @@ refresh Assaad after updating; install the updated Noti APK for the tablet fix.
 
 Click **Enviar questões ao Noti** to import only currently displayed question IDs
 through the ordinary search API. Noti keeps multiple saved sets and offline drafts.
-Use **Confirm in Assaad** for one answer or **Saved sets → Submit saved answers**
+The questions open on Noti's study sheet: pick an option and use **Check with
+Assaad** for one answer, or **Saved sets and connection → Send picked answers**
 for the saved drafts. The queue supports pause/resume/cancel and runs while Noti is
 foregrounded. Ink stays in the native local canvas store.
 
@@ -40,7 +41,7 @@ re-pairing or disconnecting does not erase the tablet’s saved library.
 ## One tablet without Edge
 
 In Noti, choose **Plataforma Assaad → This tablet** to use its real embedded
-browser. Sign into the site, **Save questions**, then **Canvas** to minimize it.
+browser. Sign into the site, run a search, then **Study on canvas**.
 This mode needs neither the extension nor the relay. The shared adapter runs in
 the real site origin with standard CORS; a failed connection check blocks writes.
 Live Assaad WebView login/CORS behavior remains unverified on a physical device.

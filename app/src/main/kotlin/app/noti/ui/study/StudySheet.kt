@@ -194,11 +194,17 @@ private fun ExpandedSheet(
         val source = study.data.source(item.sourceId)?.name
         val widthDp = width.value
         val mode = if (exam != null && item.id in exam.itemIds) CardFace.Mode.Exam else CardFace.Mode.Sheet
-        val face = remember(item, progress, widthDp, mode, number, source) {
-            CardFace.layout(item, progress, widthDp, fonts, mode, number, source)
+        val remote = study.remote?.takeIf { it.owns(item.id) }
+        val remoteState = remote?.state(item.id)
+        val picked = remote?.picked(item.id) ?: -1
+        // Reading the pictures here recomposes the face as each one arrives.
+        val pictures = remote?.let { r -> (item.figures + item.choiceFigures.flatten()).count { r.figure(it) != null } } ?: 0
+        val face = remember(item, progress, widthDp, mode, number, source, picked, pictures) {
+            CardFace.layout(item, progress, widthDp, fonts, mode, number, source, picked, remote?.let { r -> r::figure })
         }
+        RemoteBanner(study, remote, item.id, remoteState)
         Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState())) {
-            val choose = if (item.kind == ItemKind.Choice && (mode == CardFace.Mode.Exam || progress.chosen < 0)) study::choose else null
+            val choose = if (item.kind == ItemKind.Choice && remoteState?.locked != true && (mode == CardFace.Mode.Exam || progress.chosen < 0)) study::choose else null
             Box(Modifier.size(face.widthDp.dp, face.heightDp.dp).onGloballyPositioned { geometry.face = it }) {
                 Canvas(Modifier.matchParentSize()) {
                     drawIntoCanvas { c ->
@@ -217,7 +223,7 @@ private fun ExpandedSheet(
                 }
             }
         }
-        Actions(study, item, serial, mode == CardFace.Mode.Exam) {
+        Actions(study, item, serial, mode == CardFace.Mode.Exam, remote, remoteState, picked) {
             val at = geometry.faceInEditor() ?: return@Actions
             val sheet = placement()?.visiblePages?.firstOrNull() ?: return@Actions
             study.print(at.x, at.y, face.widthDp, density.density, sheet)
@@ -250,6 +256,33 @@ private fun Banners(study: StudyController, onSettings: () -> Unit) {
             BannerAction("OK") { study.problem = null }
         }
     }
+    study.remote?.connectionNote?.let { note ->
+        Banner(note, Icons.Outlined.CloudOff, colors.surfaceContainerHigh) {
+            BannerAction("Open") { study.remote?.openPlatform() }
+        }
+    }
+}
+
+/** Where a remotely checked answer is: sending, queued, not accepted, or unconfirmed. */
+@Composable
+private fun RemoteBanner(study: StudyController, remote: RemoteChoices?, itemId: String, state: RemoteState?) {
+    if (remote == null || state == null) return
+    val colors = MaterialTheme.colorScheme
+    when (state.phase) {
+        RemoteState.Phase.Checking -> Banner(state.message, null, colors.secondaryContainer, busy = true)
+        RemoteState.Phase.Queued -> Banner(state.message, Icons.Outlined.Schedule, colors.secondaryContainer) {
+            BannerAction("Open ${remote.name}") { remote.openPlatform() }
+        }
+        RemoteState.Phase.Blocked -> Banner(state.message, Icons.Outlined.ErrorOutline, colors.errorContainer) {
+            BannerAction("Open ${remote.name}") { remote.openPlatform() }
+        }
+        RemoteState.Phase.Unknown -> Banner(state.message, Icons.Outlined.HelpOutline, colors.errorContainer) {
+            BannerAction("Open") { remote.openPlatform() }
+            BannerAction("Retry") { remote.retry(itemId) }
+        }
+        RemoteState.Phase.Done -> if (state.message.isNotBlank()) Banner(state.message, null, colors.surfaceContainerHigh)
+        RemoteState.Phase.Draft -> Unit
+    }
 }
 
 @Composable
@@ -277,18 +310,36 @@ private fun EmptyDeck(study: StudyController) {
         verticalArrangement = Arrangement.spacedBy(10.dp)) {
         DotiMascot(Modifier.size(72.dp))
         Text("Nothing to study yet", style = MaterialTheme.typography.titleMedium)
-        Text("Send questions from Plataforma Assaad to your canvas, or review material already saved on this board.",
-            style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        val remote = study.remote
+        Text(if (remote != null) "Open ${remote.name}, search the question bank and tap Study on canvas. The questions land here."
+            else "Send questions from Plataforma Assaad to your canvas, or review material already saved on this board.",
+            style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+        if (remote != null) Pill(Icons.Outlined.TravelExplore, "Open ${remote.name}", primary = true) { remote.openPlatform() }
 
     }
 }
 
 @Composable
-private fun Actions(study: StudyController, item: StudyItem, serial: Long, exam: Boolean, onPrint: () -> Unit) {
+private fun Actions(study: StudyController, item: StudyItem, serial: Long, exam: Boolean,
+    remote: RemoteChoices?, remoteState: RemoteState?, picked: Int, onPrint: () -> Unit) {
     val p = study.data.progressOf(item.id)
     FlowRow(Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, top = 6.dp, bottom = 12.dp),
         horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
         when {
+            remote != null -> {
+                val phase = remoteState?.phase
+                when (phase) {
+                    RemoteState.Phase.Done -> if (study.position < study.order.lastIndex)
+                        Pill(Icons.AutoMirrored.Outlined.KeyboardArrowRight, "Next question", primary = true) { study.step(1) }
+                    RemoteState.Phase.Checking -> Pill(null, "Checking…", enabled = false, primary = true) {}
+                    RemoteState.Phase.Queued -> Pill(Icons.Outlined.Schedule, "Queued", enabled = false, primary = true) {}
+                    RemoteState.Phase.Unknown -> Pill(Icons.Outlined.Replay, "Allow another attempt") { remote.retry(item.id) }
+                    else -> Pill(Icons.Outlined.Check, if (picked < 0) "Pick an option" else "Check with ${remote.name}",
+                        enabled = picked >= 0, primary = true) { remote.submit(item.id) }
+                }
+                Pill(Icons.Outlined.PushPin, "Print", primary = false) { onPrint() }
+            }
             exam -> {
                 if (item.kind != ItemKind.Choice) SelfAssessment(study)
                 Pill(Icons.Outlined.Flag, "Finish exam") { study.finishExam() }
@@ -353,7 +404,11 @@ private fun SheetMenu(study: StudyController, serial: Long) {
             if (study.exam == null) entry("Start an exam…", Icons.Outlined.Timer) { study.examSetupOpen = true }
             else entry("Finish the exam", Icons.Outlined.Flag) { study.finishExam() }
             entry("Arrange cards by topic", Icons.Outlined.ViewColumn, enabled = study.data.cards.isNotEmpty()) { study.arrangeByTopic() }
-            if (item != null && study.exam == null) entry("Try this one again", Icons.Outlined.Replay) { study.reset(item.id) }
+            if (item != null && study.exam == null && !study.isRemote(item.id)) entry("Try this one again", Icons.Outlined.Replay) { study.reset(item.id) }
+            study.remote?.let { r ->
+                entry("Open ${r.name}", Icons.Outlined.TravelExplore) { r.openPlatform() }
+                entry("Saved sets and connection", Icons.Outlined.Devices) { r.openConnection() }
+            }
         }
     }
 }

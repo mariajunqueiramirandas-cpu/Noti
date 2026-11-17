@@ -31,31 +31,53 @@ class AssaadSession(context: Context, private val library: LibraryStore, private
     var tabletBusy by mutableStateOf(false); private set
     var tabletStatus by mutableStateOf("Sign into Assaad on this tablet."); private set
     var tabletUrl by mutableStateOf(ASSAAD_WEBSITE); private set
+    /** Page load progress, 0–100. */
+    var tabletProgress by mutableIntStateOf(0); private set
+    /** Why the last save of a page didn't work, until the page changes. */
+    var tabletNotice by mutableStateOf<String?>(null); private set
+    /** The last check found no Assaad login on this tablet. */
+    var tabletNeedsLogin by mutableStateOf(false); private set
+    /** The tablet browser shows a question search that can be saved. */
+    val tabletOnQuestionBank get() = tabletPageLoaded && assaadQuestionBank(tabletUrl)
+    /** What the study board should open on next: a question id, or "" for wherever is next. Consumed by the board. */
+    var focus by mutableStateOf<String?>(null)
     private var tabletBrowser: AssaadLocalBrowser? = null
     val hasPendingAnswer get() = records.values.any { it.status == "pending" }
     fun attachTabletBrowser(browser: AssaadLocalBrowser?) { tabletBrowser = browser; if (foreground) browser?.resume() }
     fun tabletPage(loaded: Boolean, url: String, error: String?) {
+        if (url != tabletUrl) tabletNotice = null
         tabletPageLoaded = loaded; tabletUrl = url
-        if (!loaded) tabletVerified = false
+        if (!loaded) { tabletVerified = false; if (error == null) tabletStatus = "Loading Assaad…" }
         if (error != null) { tabletStatus = error; tabletVerified = false; queuePaused = true }
+        // Assaad is a single-page site: signing in changes the address without a new page load.
         else if (loaded && useTabletBrowser && !tabletVerified) checkTabletConnection()
     }
+    fun tabletLoading(progress: Int) { tabletProgress = progress.coerceIn(0, 100) }
     fun useTablet(enabled: Boolean) {
+        if (enabled == useTabletBrowser) return
         if (hasPendingAnswer) { problem = "Wait for the current submission before changing connection mode."; return }
         val resume = foreground; stop(); useTabletBrowser = enabled
         prefs.edit().putBoolean("tabletBrowser", enabled).apply()
-        if (enabled) { browserOpen = true; dialogOpen = false }
+        if (!enabled) browserOpen = false
         if (resume) start()
+    }
+    /** Shows the tablet browser (switching to it when Edge was in use). */
+    fun openTabletBrowser() {
+        if (!useTabletBrowser) useTablet(true)
+        if (useTabletBrowser) { dialogOpen = false; browserOpen = true }
     }
     fun checkTabletConnection() {
         val browser = tabletBrowser ?: return
         if (tabletBusy || !tabletPageLoaded || hasPendingAnswer) return
         tabletBusy = true
+        if (!tabletVerified) tabletStatus = "Checking your Assaad login…"
+        val checkedUrl = tabletUrl
         scope.launch {
             try {
                 val result = browser.operation(JSONObject().put("operation", "connect"))
                 tabletVerified = result.optBoolean("ok") && result.optBoolean("corsVerified")
-                tabletStatus = if (tabletVerified) "Connected on this tablet." else assaadOperationProblem(result)
+                tabletNeedsLogin = !tabletVerified && result.optString("error") == "login_required"
+                tabletStatus = if (tabletVerified) "Connected on this tablet." else if (tabletNeedsLogin) "Sign in to Assaad to continue." else assaadOperationProblem(result)
                 if (tabletVerified) {
                     val account = result.optString("accountRef")
                     records = records.mapValues { (_, a) ->
@@ -65,18 +87,27 @@ class AssaadSession(context: Context, private val library: LibraryStore, private
                     if (records.values.none { it.status == "unknown" }) queuePaused = false
                     save()
                 }
-            } catch (_: Exception) { tabletVerified = false; tabletStatus = "Connection check failed. Open Assaad and try again." }
-            finally { tabletBusy = false; pump() }
+            } catch (e: CancellationException) { throw e }
+            catch (_: Exception) { tabletVerified = false; tabletStatus = "Connection check failed. Open Assaad and try again." }
+            finally {
+                tabletBusy = false; pump()
+                // Signed in while this check ran: check the new page too.
+                if (!tabletVerified && tabletPageLoaded && tabletUrl != checkedUrl) checkTabletConnection()
+            }
         }
     }
-    fun importTabletQuestions() {
+    /** Saves the questions on the tablet browser's page, then [then] (to go study them). */
+    fun importTabletQuestions(then: (() -> Unit)? = null) {
         val browser = tabletBrowser ?: return
         if (tabletBusy || !tabletPageLoaded || hasPendingAnswer) return
         tabletBusy = true
+        tabletStatus = "Saving the questions on this page…"; tabletNotice = null
         scope.launch {
             try {
                 val read = browser.readQuestions()
-                check(read.optBoolean("ok") && read.optInt("skipped") == 0 && read.getJSONArray("questions").length() > 0) { "Open a loaded question search first." }
+                check(read.optBoolean("ok") && read.optInt("skipped") == 0 && read.optJSONArray("questions")?.length()?.let { it > 0 } == true) {
+                    "No questions found yet. Run a search in the question bank and wait for the results."
+                }
                 val batch = JSONObject().put("batchId", UUID.randomUUID().toString()).put("source", read.getJSONObject("source"))
                     .put("capturedAt", read.getString("capturedAt")).put("questions", read.getJSONArray("questions"))
                 val imported = browser.operation(JSONObject().put("operation", "import").put("batch", batch))
@@ -84,8 +115,11 @@ class AssaadSession(context: Context, private val library: LibraryStore, private
                 val value = imported.getJSONObject("batch")
                 AssaadBatch.parse(value)
                 receive(JSONObject().put("type", "questions").put("payload", value).toString())
-                tabletVerified = true; tabletStatus = "Saved " + value.getJSONArray("questions").length() + " questions on this tablet."
-            } catch (e: Exception) { tabletStatus = e.message ?: "Could not import this page." }
+                tabletVerified = true; tabletNeedsLogin = false
+                tabletStatus = "Saved " + value.getJSONArray("questions").length() + " questions on this tablet."
+                then?.invoke()
+            } catch (e: CancellationException) { throw e }
+            catch (e: Exception) { tabletStatus = e.message ?: "Could not import this page."; tabletNotice = tabletStatus }
             finally { tabletBusy = false; pump() }
         }
     }
@@ -117,7 +151,6 @@ class AssaadSession(context: Context, private val library: LibraryStore, private
     private var backoff = 1000L
 
     var dialogOpen by mutableStateOf(false)
-    var sheetOpen by mutableStateOf(true)
     var connected by mutableStateOf(false); private set
     var paired by mutableStateOf(false); private set
     var browserOnline by mutableStateOf(false); private set
@@ -139,7 +172,7 @@ class AssaadSession(context: Context, private val library: LibraryStore, private
     val draftCount get() = choices.keys.count { records[it]?.status !in listOf("queued", "pending", "confirmed", "unknown") }
     val savedQuestionCount get() = batches.flatMap { b -> b.questions.map { b.recordKey(it.id) } }.distinct().size
     var queuePaused by mutableStateOf(false); private set
-    private var archiveLoaded = false
+    private var archiveLoaded by mutableStateOf(false)
     internal val libraryLoaded get() = archiveLoaded
     private var dirty = false
     private var dispatchJob: Job? = null
@@ -242,7 +275,8 @@ class AssaadSession(context: Context, private val library: LibraryStore, private
                     val incoming = AssaadBatch.parse(payload)
                     if (incoming.id !in removedBatchIds && batches.none { it.id == incoming.id }) {
                         if (batches.size >= 100) { problem = "The saved library is full. Remove a saved set before importing another."; return }
-                        batches = batches + incoming; selectedBatchId = incoming.id; currentIndex = 0; sheetOpen = true; save(); saveImages()
+                        batches = batches + incoming; selectedBatchId = incoming.id; currentIndex = 0; save(); saveImages()
+                        focus = incoming.questions.first().id
                     }
                 }
                 "forgotten" -> {
@@ -338,7 +372,7 @@ class AssaadSession(context: Context, private val library: LibraryStore, private
     }
     fun selectBatch(id: String) {
         if (batches.none { it.id == id }) return
-        selectedBatchId = id; currentIndex = 0; sheetOpen = true; save()
+        selectedBatchId = id; currentIndex = 0; save()
     }
     fun removeBatch(id: String) {
         val b = batches.find { it.id == id } ?: return
@@ -377,6 +411,43 @@ class AssaadSession(context: Context, private val library: LibraryStore, private
         batches.forEach { b -> b.questions.forEach { q -> enqueue(b, q.id) } }
         queuePaused = false; save(); pump()
     }
+    // ---- by question, for the study board (the newest saved set holding it wins) ----
+
+    /** Every saved question once, oldest set first, each from the newest set that holds it. */
+    val studyQuestions: List<Pair<AssaadBatch, AssaadQuestion>> get() {
+        val seen = HashMap<String, Pair<AssaadBatch, AssaadQuestion>>()
+        val order = ArrayList<String>()
+        batches.forEach { b -> b.questions.forEach { q -> if (q.id !in seen) order += q.id; seen[q.id] = b to q } }
+        return order.map { seen.getValue(it) }
+    }
+    private fun holder(questionId: String): Pair<AssaadBatch, AssaadQuestion>? =
+        batches.asReversed().firstNotNullOfOrNull { b -> b.questions.find { it.id == questionId }?.let { b to it } }
+    fun question(questionId: String): AssaadQuestion? = holder(questionId)?.second
+    fun answerFor(questionId: String): AssaadAnswer? = holder(questionId)?.let { (b, q) -> records[b.recordKey(q.id)] }
+    fun draftFor(questionId: String): String? = holder(questionId)?.let { (b, q) -> choices[b.recordKey(q.id)] }
+    fun pick(questionId: String, alternativeId: String) {
+        val (b, q) = holder(questionId) ?: return
+        val key = b.recordKey(q.id)
+        if (q.alternatives.none { it.id == alternativeId } || records[key]?.status in listOf("pending", "queued", "unknown", "confirmed")) return
+        choices = choices + (key to alternativeId)
+        if (records[key]?.status in listOf("failed", "blocked")) records = records - key
+        save()
+    }
+    fun submit(questionId: String) {
+        val (b, q) = holder(questionId) ?: return
+        enqueue(b, q.id); queuePaused = false; save(); pump()
+    }
+    fun retry(questionId: String) {
+        val (b, q) = holder(questionId) ?: return
+        val key = b.recordKey(q.id)
+        when (records[key]?.status) {
+            "unknown" -> { choices = choices + (key to records.getValue(key).alternativeId); records = records - key; save() }
+            "blocked", "failed" -> resumeQueue()
+        }
+    }
+    /** Ask the study board to open on what's next. */
+    fun studyNext() { focus = "" }
+
     fun pauseQueue() { queuePaused = true; save() }
     fun resumeQueue() {
         records = records.mapValues { (_, a) -> if (a.status in listOf("blocked", "failed")) a.copy(commandId = UUID.randomUUID().toString(), status = "queued", feedback = "Waiting to submit.", reason = null) else a }
