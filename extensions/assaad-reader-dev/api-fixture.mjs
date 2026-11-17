@@ -14,7 +14,7 @@ export function harness(handler = () => null, url = "https://app.plataformaassaa
     calls.push({ url, ...options });
     const override = await handler(url, options);
     if (override) return override;
-    return new Response(JSON.stringify(url === "/api/auth/session" ? { session: { access_token: "BROWSER_SECRET", user: { id: "test-user" } } } : { data: [rawQuestion()], meta: { total: 1 } }), { headers: { "Content-Type": "application/json" } });
+    return new Response(JSON.stringify(url === "/api/auth/session" ? JSON.parse(readFileSync(new URL("../../protocol/fixtures/assaad-session.json", import.meta.url), "utf8")) : { data: [rawQuestion()], meta: { total: 1 } }), { headers: { "Content-Type": "application/json" } });
   };
   const run = vm.runInNewContext(code + ";runAssaadOperation", { fetch, location: new URL(url), URL, URLSearchParams, DOMParser: window.DOMParser, TextEncoder, TextDecoder, crypto: webcrypto, AbortSignal, setTimeout: (fn, ms) => { delays.push(ms); queueMicrotask(fn); return 0; } });
   return { run: async input => JSON.parse(JSON.stringify(await run(input))), calls, delays };

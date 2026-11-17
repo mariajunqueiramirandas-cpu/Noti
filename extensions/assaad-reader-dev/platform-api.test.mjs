@@ -44,9 +44,30 @@ test("a missing original page uses one bounded search then matches the exact que
 });
 test("an interrupted write or malformed confirmation remains unknown and is never retried", async () => {
   const batch = await imported();
-  for (const handler of [() => { throw new Error("network interrupted"); }, () => new Response(JSON.stringify({ ...official(), correctAnswer: null })), () => new Response(JSON.stringify({ ...official(), created: { ...official().created, question_id: bid } }))]) {
+  for (const handler of [() => { throw new Error("network interrupted"); }, () => new Response(JSON.stringify({ ...official(), correctAnswer: { id: bid } })), () => new Response(JSON.stringify({ ...official(), created: { ...official().created, question_id: bid } }))]) {
     const h = harness((_url, options) => options.method === "PATCH" ? handler() : null);
     assert.equal((await h.run({ operation: "answer", batch, command: command() })).status, "unknown");
+    assert.equal(h.calls.filter(c => c.method === "PATCH").length, 1);
+  }
+});
+
+test("the live flat cookie-session contract connects without a nested user object", async () => {
+  const result = await harness().run({ operation: "session" });
+  assert.equal(result.ok, true);
+  assert.equal(result.accountRef, createHash("sha256").update("assaad:test-user").digest("hex"));
+  assert.doesNotMatch(JSON.stringify(result), /BROWSER_SECRET|REFRESH_TOKEN|fixture@example/);
+  const malformed = harness(() => new Response('{"session":{"access_token":"BROWSER_SECRET"}}'));
+  const error = await malformed.run({ operation: "session" });
+  assert.equal(error.error, "invalid_session"); assert.equal(error.stage, "session");
+});
+
+test("verified feedback accepts optional response fields without guessing a hidden correct option", async () => {
+  const batch = await imported();
+  for (const correct of [true, false]) {
+    const h = harness((_url, options) => options.method === "PATCH" ? new Response(JSON.stringify({ created: { id: "answer", alternative_id: aid, confirmed: true }, correct })) : null);
+    const result = await h.run({ operation: "answer", batch, command: command() });
+    assert.equal(result.status, "confirmed"); assert.equal(result.correct, correct);
+    assert.equal(result.correctAlternativeId, correct ? aid : null);
     assert.equal(h.calls.filter(c => c.method === "PATCH").length, 1);
   }
 });

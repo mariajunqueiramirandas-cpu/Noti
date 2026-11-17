@@ -6,16 +6,18 @@ Investigated **2026-11-16** for Noti’s question library, offline drafts, and d
 
 These are **internal website contracts**, not a verified public integration API. Findings come from the production JavaScript loaded by the user’s signed-in Edge dashboard and question bank. The page displayed 20 questions out of 35 matching the supplied História / Idade Antiga / Egito search. Its question and alternative DOM IDs are UUIDs; the client passes those same identifiers to its answer API.
 
-Research used a normal navigation to the supplied question page and downloaded each observed first-party JavaScript asset once (71 assets, about 5.3 MB). There was no endpoint enumeration, guessed-route probing, authenticated API replay, OTP request, answer submission, bookmarking, account modification, or admin call. No browser cookies, live session tokens, HAR files, private profile data, or real question contents are included in this document or fixtures. Ordinary website traffic can be logged; this integration makes no invisibility claim.
+Initial source research used a normal navigation to the supplied question page and downloaded each observed first-party JavaScript asset once (71 assets, about 5.3 MB). That source investigation involved no endpoint enumeration, guessed-route probing, OTP request, answer submission, bookmarking, account modification, or admin call. No browser cookies, live session tokens, HAR files, private profile data, or real question contents are included in this document or fixtures. Ordinary website traffic can be logged; this integration makes no invisibility claim.
 
-**Confidence:** endpoint names, HTTP methods, filters, and call-site bodies below are source-confirmed. Server validation rules, undocumented fields, permissions, idempotency, and live success responses are unverified. Unit and loopback integration tests exercise sanitized fixtures; they are not a live Assaad-account test.
+**Follow-up live validation:** the user's signed-in Edge session returned HTTP 200 for `GET /api/auth/session`, `GET /question/metadata`, and the website-observed `GET /question?page=1&perPage=20&category_ids=567&is_published=true`. Question search returned 20 rows. The packaged DOM reader also read 20 cards with zero skipped cards. Only field names/types, counts, and status codes were inspected; credential values remained in the browser. No answer was submitted. The approved one-answer check was interrupted before execution when computer use was stopped.
+
+**Confidence:** endpoint names, HTTP methods, filters, and call-site bodies below are source-confirmed; those three read response shapes are now live-verified. Other response contracts, permissions, write behavior, and idempotency remain unverified. Unit and loopback integration tests exercise sanitized fixtures; they do not establish a live answer submission.
 
 ## Bases and authentication
 
 - Website: `https://app.plataformaassaad.com.br`.
 - REST: `https://api.plataformaassaad.com.br/v1`.
 - The website creates an Axios client with a 30-second timeout and adds `Authorization: Bearer <current access token>`.
-- Its same-origin `GET /api/auth/session` includes cookies and returns `{session}`; the source checks HTTP 401 with `error: "session_expired"`.
+- Its same-origin `GET /api/auth/session` includes cookies and returns `{session}`; the source checks HTTP 401 with `error: "session_expired"`. The live cookie session is flat: `{id,email,access_token,refresh_token,expires_in,token_type}`. Its account identifier is `session.id`, not `session.user.id`. A sanitized fixture reproduces this structure without production values. The old nested-user assumption caused the false tablet login error and has been removed.
 - Cookie refresh is `POST /api/auth/refresh`, with no JSON body shown. The client reads `{session}`, coordinates refreshes across tabs, and handles `Retry-After`. Noti leaves refresh and login to the website to avoid competing token rotations.
 - `POST /api/auth/session` accepts `{session}` and persists login; `DELETE /api/auth/session` logs out. The integration never calls either.
 - The adapter obtains a short-lived token inside the Assaad page context. Only sanitized question content, a SHA-256 account reference, and official submission feedback leave that context. The extension and relay never store Assaad tokens/cookies. In tablet mode, the real WebView keeps its own website cookies in Android app-private browser storage, excluded from backup and device transfer; native Noti code never exports them.
@@ -31,6 +33,17 @@ Background readiness probes are coalesced and reuse status for thirty seconds on
 an unchanged page. HTTP 429 honors Retry-After, with at least a sixty-second pause
 persisted in browser storage. User resume cannot bypass that deadline. These fixed
 limits reduce traffic; no user-agent/IP spoofing or detection bypass is used.
+
+## Reconnection behavior
+
+Imports wait for the relay's authenticated session acknowledgement, rather than
+assuming an open socket is ready. If the connection drops before a question-set
+acknowledgement arrives, only that immutable snapshot can be replayed using the
+same batch ID. Answer commands never use this replay path. Server publication
+errors include the batch ID and reach the UI immediately. A connection replaced
+by another instance stops retrying until the user explicitly reconnects, preventing
+two duplicate extensions from repeatedly disconnecting each other. Page notices
+clear obsolete connection errors when authoritative status recovers.
 
 ## Single-tablet browser mode
 
@@ -101,7 +114,7 @@ Content-Type: application/json
 
 This is the exact body assembled by the question-bank page’s `onAnswer` callback. The component uses `created.confirmed`, `created.id`, `created.alternative_id`, `created.answered_at`, top-level `correct`, `correctAnswer`, `explanation`, and `experience`. It renders grading only after `created.confirmed`.
 
-The adapter requires `created.confirmed === true`, matching `created.question_id` and `created.alternative_id`, boolean `correct`, and a correct-option ID belonging to the saved alternatives. The complete live response shape has not been captured: if any required confirmation field is absent or differs, the outcome is **unknown**, never silently treated as a failed write.
+The adapter requires `created.confirmed === true`, matching `created.alternative_id` from the already verified question, and boolean `correct`. If `created.question_id` is present, it must match too. If `correctAnswer.id` is supplied, it must belong to the saved alternatives and agree with `correct`. Missing optional fields do not invalidate an otherwise verified confirmation: a correct selection identifies itself; an incorrect selection without a supplied correct option stays confirmed without revealing or guessing another option. The complete live write response has not been captured. Missing or contradictory required confirmation fields produce **unknown**, never an automatic write retry.
 
 **Server idempotency is not established.** A Noti command UUID identifies one dispatch; it is not an Assaad-supported idempotency header. The tablet persists `pending` before sending, the extension persists its dispatch marker, and the relay deduplicates recent commands. Transport loss, timeout, or an unverified response after PATCH starts requires user review and never causes an automatic second PATCH.
 

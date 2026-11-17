@@ -3,7 +3,7 @@ export async function runAssaadOperation(input) {
   const origin = "https://app.plataformaassaad.com.br";
   const api = "https://api.plataformaassaad.com.br/v1";
   const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-  let writing = false, lastRequestAt = 0;
+  let writing = false, lastRequestAt = 0, stage = "session";
   // Fixed, visible pacing for fair use; no timing randomization or detection bypass.
   async function politeFetch(url, options) {
     const remaining = 2000 - (Date.now() - lastRequestAt);
@@ -83,19 +83,25 @@ export async function runAssaadOperation(input) {
     if (location.origin !== origin || !["session", "connect", "import", "verify", "answer"].includes(input.operation)) stop("invalid_operation");
     const sessionBody = await json(await politeFetch("/api/auth/session", { credentials: "include", cache: "no-store", redirect: "error", signal: AbortSignal.timeout(10000) }));
     const session = sessionBody.session;
-    if (!session?.access_token || typeof session.user?.id !== "string") stop("login_required");
-    const accountRef = await digest("assaad:" + session.user.id);
+    // The website's cookie session is flat: {id,email,access_token,...}.
+    // A nested Supabase-style user object is not the production response contract.
+    if (!session?.access_token) stop("login_required");
+    const accountId = session.id ?? session.user?.id;
+    if (typeof accountId !== "string" || !accountId.trim() || accountId.length > 200) stop("invalid_session");
+    const accountRef = await digest("assaad:" + accountId);
     if (input.operation === "session") return { ok: true, accountRef };
     async function request(path, body) {
       return json(await politeFetch(api + path, { method: body ? "PATCH" : "GET", headers: { Authorization: "Bearer " + session.access_token, ...(body ? { "Content-Type": "application/json" } : {}) }, ...(body ? { body: JSON.stringify(body) } : {}), cache: "no-store", redirect: "error", signal: AbortSignal.timeout(30000) }));
     }
     if (input.operation === "connect") {
+      stage = "metadata";
       const metadata = await request("/question/metadata");
       if (!Array.isArray(metadata.tags) && !Array.isArray(metadata.category_groups)) stop("invalid_response");
       return { ok: true, accountRef, corsVerified: true };
     }
     const source = input.batch?.source;
     if (input.operation === "import") {
+      stage = "questions";
       if (!input.batch || !Array.isArray(input.batch.questions) || input.batch.questions.length < 1 || input.batch.questions.length > 100) stop("invalid_batch");
       const response = await request(query(source));
       if (!Array.isArray(response.data)) stop("invalid_response");
@@ -112,6 +118,7 @@ export async function runAssaadOperation(input) {
     const command = input.command;
     const expected = input.batch.questions.find(q => q.id === command.questionId);
     if (!uuid.test(command.commandId) || !uuid.test(command.questionId) || !uuid.test(command.alternativeId) || command.batchId !== input.batch.batchId || !expected?.alternatives.some(a => a.id === command.alternativeId)) stop("invalid_command");
+    stage = "questions";
     let response = await request(query(source));
     if (!Array.isArray(response.data)) stop("invalid_response");
     let raw = response.data.find(q => q.id === command.questionId);
@@ -123,15 +130,15 @@ export async function runAssaadOperation(input) {
     if (!raw) stop("question_not_found");
     if (fingerprint(normalize(raw)) !== fingerprint(expected)) stop("question_changed");
     if (input.operation === "verify") return { ok: true, matched: true, accountRef };
-    writing = true;
+    writing = true; stage = "confirmation";
     const answer = await request("/question/answer", { question_id: command.questionId, alternative_id: command.alternativeId });
-    if (answer.created?.confirmed !== true || answer.created.alternative_id !== command.alternativeId || answer.created.question_id !== command.questionId || typeof answer.correct !== "boolean") stop("confirmation_unverified");
+    if (answer.created?.confirmed !== true || answer.created.alternative_id !== command.alternativeId || (answer.created.question_id !== undefined && answer.created.question_id !== command.questionId) || typeof answer.correct !== "boolean") stop("confirmation_unverified");
     const right = answer.correctAnswer?.id;
-    if (!right || !expected.alternatives.some(a => a.id === right) || answer.correct !== (right === command.alternativeId)) stop("confirmation_unverified");
+    if (right && (!expected.alternatives.some(a => a.id === right) || answer.correct !== (right === command.alternativeId))) stop("confirmation_unverified");
     return result("confirmed", answer.correct ? "Resposta correta." : "Resposta incorreta.", answer.correct, right || (answer.correct ? command.alternativeId : null));
   } catch (error) {
     const code = error.message;
-    if (input.operation !== "answer") return { ok: false, ...(error.retryAfterMs ? { retryAfterMs: error.retryAfterMs } : {}), error: ["login_required", "rate_limited", "access_denied", "question_changed", "question_not_found"].includes(code) ? code : "platform_unavailable" };
+    if (input.operation !== "answer") return { ok: false, stage, ...(error.retryAfterMs ? { retryAfterMs: error.retryAfterMs } : {}), error: ["login_required", "rate_limited", "access_denied", "question_changed", "question_not_found", "invalid_session", "invalid_response"].includes(code) ? code : error.name === "TimeoutError" ? "timeout" : "platform_unavailable" };
     // Once a write starts, any failure is uncertain. It is never replayed automatically.
     return { ...(error.retryAfterMs ? { retryAfterMs: error.retryAfterMs } : {}), ...result(writing ? "unknown" : "blocked", writing ? "Confira a resposta na Assaad antes de tentar novamente." : code === "login_required" ? "Entre na Assaad no navegador para continuar." : code === "account_mismatch" ? "Abra a mesma conta Assaad usada para salvar estas questões." : code === "rate_limited" ? "A Assaad pediu uma pausa. Aguarde e retome a fila." : "A questão não pôde ser verificada. Atualize o conjunto antes de enviar."), reason: ["login_required", "account_mismatch", "rate_limited", "question_changed", "question_not_found", "access_denied"].includes(code) ? code : "platform_unavailable" };
   }

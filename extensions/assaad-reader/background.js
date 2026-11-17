@@ -6,7 +6,7 @@ let probeInFlight = false, lastProbeUrl = "", lastProbeAt = 0;
 let availability = { ready: false, accountRef: null };
 let commands = {}, connection = "disconnected", session = {}, answering = Promise.resolve();
 const origin = "https://app.plataformaassaad.com.br";
-const status = () => ({ paired: !!pairing, connection, peerOnline: !!session.peerOnline, presence: session.presence });
+const status = () => ({ paired: !!pairing, connection, peerOnline: connection === "connected" && !!session.peerOnline, presence: session.presence, platformReady: availability.ready });
 async function restore() {
   await chrome.storage.local.setAccessLevel({ accessLevel: "TRUSTED_CONTEXTS" });
   ({ pairing, source, commands = {}, platformNextAt = 0, platformNextAnswerAt = 0, platformCooldownUntil = 0 } = await chrome.storage.local.get(["pairing", "source", "commands", "platformNextAt", "platformNextAnswerAt", "platformCooldownUntil"]));
@@ -119,6 +119,11 @@ async function handle(message, sender) {
   const fromSite = sender.tab && sender.url?.startsWith(origin + "/");
   if (!fromPopup && !fromSite) throw new Error("untrusted_sender");
   if (message.type === "NOTI_STATUS") return status();
+  if (message.type === "NOTI_RECONNECT") {
+    if (!pairing) throw new Error("not_paired");
+    client?.stop(); client = undefined; connection = "disconnected"; session = {}; connect();
+    await client.waitUntilConnected(); return status();
+  }
   if (message.type === "NOTI_PAIR" && fromPopup) {
     if (!/^\d{6}$/.test(message.code || "")) throw new Error("invalid_code");
     if (pairing) throw new Error("already_paired");
@@ -140,15 +145,20 @@ async function handle(message, sender) {
   if (message.type === "NOTI_PRESENCE" && fromSite) { await updatePresence(); return status(); }
   if (message.type === "NOTI_SEND_QUESTIONS" && fromSite) {
     const url = new URL(sender.url);
-    if (!/^\/banco-de-questoes\/explorar\/?$/.test(url.pathname) || !pairing || connection !== "connected") throw new Error("not_connected");
+    if (!/^\/banco-de-questoes\/explorar\/?$/.test(url.pathname) || !pairing) throw new Error("not_paired");
+    if (connection === "replaced") throw new Error("connection_replaced");
+    if (!client) connect();
+    const currentClient = client;
+    await currentClient.waitUntilConnected();
     let batch = message.batch;
     if (!Array.isArray(batch?.questions) || !batch.questions.length || batch.questions.length > 100 || JSON.stringify(batch).length > 1_000_000) throw new Error("invalid_questions");
     const imported = await operation(sender.tab, { operation: "import", batch });
     if (!imported.ok) throw new Error(imported.error);
     batch = imported.batch;
+    if (client !== currentClient || !pairing) throw new Error("session_expired");
     source = { ...batch, tabId: sender.tab.id }; await chrome.storage.local.set({ source });
     availability = { ready: true, accountRef: batch.accountRef }; await updatePresence();
-    return await client.publish(batch);
+    return await currentClient.publish(batch);
   }
   throw new Error("unsupported_message");
 }

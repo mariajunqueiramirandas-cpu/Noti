@@ -19,6 +19,7 @@ async function setup(initial = {}, apiHandler = null) {
     constructor(options) { client = this; this.options = options; }
     connect() { this.options.onState("connected", { peerOnline: true }); }
     send(type, payload) { sent.push({ type, payload }); return true; }
+    async waitUntilConnected() {}
     async publish(batch) { return { count: batch.questions.length }; }
     stop() {}
   }

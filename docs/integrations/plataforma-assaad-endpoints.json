@@ -2,7 +2,7 @@
   "investigatedAt": "2026-11-16",
   "apiBase": "https://api.plataformaassaad.com.br/v1",
   "appBase": "https://app.plataformaassaad.com.br",
-  "scope": "Published home/question-bank client assets, not an exhaustive backend inventory. Source-derived contracts; no live authenticated API replay or answer submission.",
+  "scope": "Published home/question-bank client assets, not an exhaustive backend inventory. Three read response shapes verified through signed-in Edge; no live answer submission.",
   "endpoints": [
     {
       "method": "GET",
@@ -10,11 +10,12 @@
       "origin": "app",
       "purpose": "Read the current website session",
       "request": "credentials: include; cache: no-store",
-      "response": "{session}; absence or HTTP 401 session_expired",
+      "response": "{session:{id,email,access_token,refresh_token,expires_in,token_type}}; account ID is session.id. Absence or HTTP 401 session_expired.",
       "evidence": "production-client-source",
       "source": "https://app.plataformaassaad.com.br/_next/static/chunks/32692-b6fc00a600634715.js",
       "integration": "used; token stays in page",
-      "liveReplayVerified": false
+      "liveReplayVerified": true,
+      "liveVerification": "Signed-in Edge read: HTTP 200; only field types/counts/status inspected, no credential values recorded."
     },
     {
       "method": "POST",
@@ -62,7 +63,8 @@
       "evidence": "production-client-source",
       "source": "https://app.plataformaassaad.com.br/_next/static/chunks/94405-da7c5f52bbcd030f.js",
       "integration": "used",
-      "liveReplayVerified": false
+      "liveReplayVerified": true,
+      "liveVerification": "Signed-in Edge read: HTTP 200; only field types/counts/status inspected, no credential values recorded."
     },
     {
       "method": "GET",
@@ -74,7 +76,8 @@
       "evidence": "production-client-source",
       "source": "https://app.plataformaassaad.com.br/_next/static/chunks/94405-da7c5f52bbcd030f.js",
       "integration": "tablet read-only connection check; standard browser CORS enforced",
-      "liveReplayVerified": false
+      "liveReplayVerified": true,
+      "liveVerification": "Signed-in Edge read: HTTP 200; only field types/counts/status inspected, no credential values recorded."
     },
     {
       "method": "PATCH",

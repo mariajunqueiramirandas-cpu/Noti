@@ -55,7 +55,7 @@ class AssaadSession(context: Context, private val library: LibraryStore, private
             try {
                 val result = browser.operation(JSONObject().put("operation", "connect"))
                 tabletVerified = result.optBoolean("ok") && result.optBoolean("corsVerified")
-                tabletStatus = if (tabletVerified) "Connected on this tablet." else "Sign in, then check the connection again. " + result.optString("error")
+                tabletStatus = if (tabletVerified) "Connected on this tablet." else assaadOperationProblem(result)
                 if (tabletVerified) {
                     val account = result.optString("accountRef")
                     records = records.mapValues { (_, a) ->
@@ -80,7 +80,7 @@ class AssaadSession(context: Context, private val library: LibraryStore, private
                 val batch = JSONObject().put("batchId", UUID.randomUUID().toString()).put("source", read.getJSONObject("source"))
                     .put("capturedAt", read.getString("capturedAt")).put("questions", read.getJSONArray("questions"))
                 val imported = browser.operation(JSONObject().put("operation", "import").put("batch", batch))
-                check(imported.optBoolean("ok")) { "Could not import questions: " + imported.optString("error") }
+                check(imported.optBoolean("ok")) { assaadOperationProblem(imported) }
                 val value = imported.getJSONObject("batch")
                 AssaadBatch.parse(value)
                 receive(JSONObject().put("type", "questions").put("payload", value).toString())

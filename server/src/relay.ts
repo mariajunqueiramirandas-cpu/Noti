@@ -84,7 +84,7 @@ export class Relay {
       }
       this.send(socket, "restored", { batchId: message.payload.batchId });
     } else if (message.type === "questions") {
-      if (!this.store.saveBatch(sessionId, message.payload)) { this.send(socket, "error", { error: "library_full_or_conflict" }); return; }
+      if (!this.store.saveBatch(sessionId, message.payload)) { this.send(socket, "error", { error: "library_full_or_conflict", batchId: message.payload.batchId }); return; }
       const app = this.peer(sessionId, "app");
       if (app) this.send(app, "questions", message.payload);
       this.send(socket, "accepted", { batchId: message.payload.batchId, count: message.payload.questions.length });

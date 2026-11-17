@@ -14,6 +14,15 @@ site access stays restricted to Assaad and the relay. Refresh the website afterw
 In Noti, open Plataforma Assaad and generate a pairing code. Enter it in the popup
 or via **Conectar ao Noti** on the dashboard. Codes expire in five minutes.
 
+## Version 3.0.1 fixes
+
+Reads the actual flat Assaad cookie session (`session.id`) instead of requiring a
+nested user object. This fixes false login-required errors in the tablet and
+extension. Imports wait for relay authentication, recover safe question snapshot
+publication across reconnects, and clear stale connection messages. Duplicate
+instances stop competing until explicitly reconnected. Reload the extension and
+refresh Assaad after updating; install the updated Noti APK for the tablet fix.
+
 ## Save and answer later
 
 Click **Enviar questões ao Noti** to import only currently displayed question IDs
@@ -61,12 +70,13 @@ Saved sets shows the offline image count. Protected or oversized images may need
 the browser. Text, formulas, drafts, and existing saved study material remain local.
 
 See [the endpoint investigation](../../docs/integrations/plataforma-assaad-api.md)
-for the source-confirmed contracts and unverified live behavior. Development tests
-do not submit answers to a real Assaad account.
+for the source-confirmed contracts and validation limits. Session, metadata, and
+question-search shapes have been checked through signed-in Edge. A real answer
+submission and updated physical-tablet behavior remain unverified.
 
 ## Build and check
 
 Run `bun install --frozen-lockfile`, `bun run typecheck`, and `bun test` in `server`.
 In `extensions/assaad-reader-dev`, run `npm ci`, `npm test`, `bun run integration`,
-and `./package.ps1`. The ZIP is `work/artifacts/assaad-reader-3.0.0.zip`.
+and `./package.ps1`. The ZIP is `work/artifacts/assaad-reader-3.0.1.zip`.
 Extract it before loading unpacked. Test dependencies are outside the runtime folder.

@@ -5,6 +5,15 @@ import org.json.JSONObject
 import java.net.URI
 
 const val ASSAAD_SERVER = "https://noti.vendua.com.br"
+internal fun assaadOperationProblem(result: JSONObject): String = when (result.optString("error")) {
+    "login_required" -> "Sign into Assaad, then check the connection again."
+    "invalid_session", "invalid_response" -> "Assaad returned an unsupported response. Update Noti and check the connection again."
+    "rate_limited" -> "Assaad requested a pause. Wait before trying again."
+    "access_denied" -> "Assaad denied this request. Check access in the website."
+    "question_not_found", "question_changed" -> "The question search changed. Reload it in Assaad before saving."
+    "timeout" -> "Assaad took too long to respond. Check the connection and try again."
+    else -> "Could not verify the Assaad connection. Check your network and try again."
+}
 private val safeId = Regex("[A-Za-z0-9_-]{1,100}")
 
 data class AssaadImage(val alt: String, val url: String?)
