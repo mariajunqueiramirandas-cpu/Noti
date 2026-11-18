@@ -26,6 +26,8 @@ interface GestureListener {
     /** Stop scrolling before the nib touches the page. */
     fun onPenDown() {}
 
+    fun onPenUp() {}
+
     /** End of one batch of events (everything one input event produced). */
     fun onGestureBatchEnd() {}
 }
@@ -69,6 +71,9 @@ internal class InkWindow(
     private val gestureOut: ByteBuffer = NotiInk.nativeGestureOut(handle).order(ByteOrder.nativeOrder())
     private var pending = 0
     private var touchPending = 0
+    private val touchIndices = IntArray(32) // Android pointer IDs are in 0..31.
+    private val touchIds = IntArray(32)
+    private val touchTools = ByteArray(32)
     private var params: WindowManager.LayoutParams? = null
     private val pxPerMm = context.resources.displayMetrics.let { m ->
         (if (m.xdpi > 100f) m.xdpi else m.densityDpi.toFloat()) / 25.4f
@@ -170,6 +175,11 @@ internal class InkWindow(
 
     override fun surfaceDestroyed(holder: SurfaceHolder) {
         NotiInk.nativeSurfaceDestroyed(handle)
+        drainGestures()
+        if (penId >= 0) {
+            if (penMode == PEN_DIAL) dial?.report(PenDialRelay.CANCEL, 0f, 0f)
+            endPen()
+        }
     }
 
     // ---- input (ink thread) ----
@@ -188,9 +198,12 @@ internal class InkWindow(
                 if (action == MotionEvent.ACTION_DOWN) {
                     requestUnbufferedDispatch(e)
                     // A new stream: forget a pen whose UP never came (the engine keeps its ink).
-                    if (penId >= 0 && penMode == PEN_DIAL) dial?.report(PenDialRelay.CANCEL, 0f, 0f)
-                    penId = -1
-                    penMode = PEN_INK
+                    if (penId >= 0 && penDevice == e.deviceId) {
+                        if (penMode == PEN_DIAL) dial?.report(PenDialRelay.CANCEL, 0f, 0f)
+                        put(e, ai, -1, NotiInk.ACTION_CANCEL, 0, recv)
+                        process(draw = false)
+                        endPen()
+                    }
                 }
                 if (isPen(e, ai)) {
                     if (penId < 0) {
@@ -207,10 +220,14 @@ internal class InkWindow(
                             }
                             else -> PEN_INK
                         }
+                        put(e, ai, -1, NotiInk.ACTION_DOWN, penFlags(e, ai, buttonState), recv)
+                        // Resolve tentative finger ink before a viewport change
+                        // can finish it. Dial contacts also inform palm rejection.
                         if (penMode == PEN_INK) {
-                            onFrame() // apply the final viewport before accepting this stroke
-                            put(e, ai, -1, NotiInk.ACTION_DOWN, penFlags(e, ai, buttonState), recv)
-                        }
+                            submitPen(pending, observe = true, draw = false)
+                            onFrame()
+                            process(observe = false)
+                        } else process(draw = false)
                     }
                 } else {
                     putTouch(e, ai, -1, NotiInk.TOUCH_DOWN, 0)
@@ -218,31 +235,31 @@ internal class InkWindow(
             }
             MotionEvent.ACTION_MOVE -> {
                 val pi = penIndex(e)
-                if (pi >= 0 && penMode == PEN_DIAL) {
-                    dial?.report(PenDialRelay.MOVE, e.getX(pi), e.getY(pi))
-                } else if (pi >= 0 && penMode == PEN_INK) {
-                    val flags = penFlags(e, pi, buttonState)
-                    for (h in 0 until e.historySize) {
-                        put(e, pi, h, NotiInk.ACTION_MOVE, flags or NotiInk.FLAG_HISTORICAL, recv)
+                if (pi >= 0) {
+                    val draw = penMode == PEN_INK
+                    if (draw) {
+                        val flags = penFlags(e, pi, buttonState)
+                        for (h in 0 until e.historySize) {
+                            put(e, pi, h, NotiInk.ACTION_MOVE, flags or NotiInk.FLAG_HISTORICAL, recv)
+                        }
+                        put(e, pi, -1, NotiInk.ACTION_MOVE, flags, recv)
+                    } else {
+                        if (penMode == PEN_DIAL) dial?.report(PenDialRelay.MOVE, e.getX(pi), e.getY(pi))
+                        put(e, pi, -1, NotiInk.ACTION_MOVE, 0, recv)
                     }
-                    put(e, pi, -1, NotiInk.ACTION_MOVE, flags, recv)
+                    process(draw = draw) // submit the pen before unpacking the other pointers
                 }
-                for (i in 0 until e.pointerCount) {
-                    if (i == pi || isPen(e, i)) continue
-                    for (h in 0 until e.historySize) putTouch(e, i, h, NotiInk.TOUCH_MOVE, NotiInk.TOUCH_FLAG_HISTORICAL)
-                    putTouch(e, i, -1, NotiInk.TOUCH_MOVE, 0)
-                }
+                stageTouchMoves(e, pi)
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_POINTER_UP -> {
                 val canceled = (e.flags and MotionEvent.FLAG_CANCELED) != 0  // API 33
                 if (penIndex(e) == ai) {
                     if (canceled) buttons.reset()
-                    when (penMode) {
-                        PEN_INK -> put(e, ai, -1, if (canceled) NotiInk.ACTION_CANCEL else NotiInk.ACTION_UP, penFlags(e, ai, buttonState), recv)
-                        PEN_DIAL -> dial?.report(if (canceled) PenDialRelay.CANCEL else PenDialRelay.UP, e.getX(ai), e.getY(ai))
-                    }
-                    penId = -1
-                    penMode = PEN_INK
+                    if (penMode == PEN_DIAL)
+                        dial?.report(if (canceled) PenDialRelay.CANCEL else PenDialRelay.UP, e.getX(ai), e.getY(ai))
+                    put(e, ai, -1, if (canceled) NotiInk.ACTION_CANCEL else NotiInk.ACTION_UP, penFlags(e, ai, buttonState), recv)
+                    process(draw = penMode == PEN_INK)
+                    endPen()
                 } else if (!isPen(e, ai)) {
                     putTouch(e, ai, -1, NotiInk.TOUCH_UP, if (canceled) NotiInk.TOUCH_FLAG_CANCELED else 0)
                 }
@@ -250,21 +267,19 @@ internal class InkWindow(
             MotionEvent.ACTION_CANCEL -> {
                 buttons.reset()
                 val pi = penIndex(e)
-                if (penId >= 0) {
-                    when (penMode) {
-                        PEN_INK -> put(e, if (pi >= 0) pi else 0, -1, NotiInk.ACTION_CANCEL, 0, recv)
-                        PEN_DIAL -> dial?.report(PenDialRelay.CANCEL, 0f, 0f)
-                    }
-                    penId = -1
-                    penMode = PEN_INK
+                val flags = if ((e.flags and MotionEvent.FLAG_CANCELED) != 0) NotiInk.TOUCH_FLAG_CANCELED else 0
+                if (penId >= 0 && penDevice == e.deviceId) {
+                    if (penMode == PEN_DIAL) dial?.report(PenDialRelay.CANCEL, 0f, 0f)
+                    put(e, if (pi >= 0) pi else 0, -1, NotiInk.ACTION_CANCEL, 0, recv)
+                    process(draw = penMode == PEN_INK)
+                    endPen()
                 }
                 for (i in 0 until e.pointerCount) {
-                    if (i != pi && !isPen(e, i)) putTouch(e, i, -1, NotiInk.TOUCH_CANCEL, 0)
+                    if (i != pi && !isPen(e, i)) putTouch(e, i, -1, NotiInk.TOUCH_CANCEL, flags)
                 }
             }
             else -> return true
         }
-        if (pending > 0) process()
         if (touchPending > 0) processTouch()
         return true
     }
@@ -299,6 +314,12 @@ internal class InkWindow(
     /** Index of the current stream's pen pointer in [e], or -1. */
     private fun penIndex(e: MotionEvent): Int =
         if (penId < 0 || e.deviceId != penDevice) -1 else e.findPointerIndex(penId)
+
+    private fun endPen() {
+        penId = -1
+        penMode = PEN_INK
+        gestures?.onPenUp()
+    }
 
     private fun penFlags(e: MotionEvent, i: Int, buttonState: Int): Int {
         var f = 0
@@ -338,12 +359,42 @@ internal class InkWindow(
         pending++
     }
 
+    private fun stageTouchMoves(e: MotionEvent, penIndex: Int) {
+        var count = 0
+        for (i in 0 until e.pointerCount) {
+            if (i == penIndex) continue
+            val tool = e.getToolType(i)
+            if (tool == MotionEvent.TOOL_TYPE_STYLUS || tool == MotionEvent.TOOL_TYPE_ERASER) continue
+            touchIndices[count] = i
+            touchIds[count] = touchId(e, i)
+            touchTools[count] = tool.toByte()
+            count++
+        }
+        if (count == 0) return
+        // Classify the contacts in sample-time order so a finger does not
+        // score against another contact many historical samples behind it.
+        val history = e.historySize
+        for (h in 0..history) {
+            val sample = if (h == history) -1 else h
+            val t = time(e, sample)
+            val flags = if (sample < 0) 0 else NotiInk.TOUCH_FLAG_HISTORICAL
+            for (k in 0 until count) {
+                putTouch(e, touchIndices[k], sample, NotiInk.TOUCH_MOVE, flags, t, touchIds[k], touchTools[k])
+            }
+        }
+    }
+
+    private fun touchId(e: MotionEvent, i: Int): Int = (e.deviceId shl 5) or (e.getPointerId(i) and 31)
+
     /** Writes one finger/palm contact sample of pointer [i] (noti::TouchSample); h = -1 for the current sample. */
-    private fun putTouch(e: MotionEvent, i: Int, h: Int, action: Byte, flags: Int) {
+    private fun putTouch(
+        e: MotionEvent, i: Int, h: Int, action: Byte, flags: Int,
+        t: Long = time(e, h), id: Int = touchId(e, i), tool: Byte = e.getToolType(i).toByte(),
+    ) {
         if (touchPending == NotiInk.TOUCH_STAGING) processTouch()
         val o = touchPending * NotiInk.TOUCH_BYTES
         val b = touchStaging
-        b.putLong(o, time(e, h))
+        b.putLong(o, t)
         if (h < 0) {
             b.putFloat(o + 8, e.getX(i))
             b.putFloat(o + 12, e.getY(i))
@@ -360,19 +411,23 @@ internal class InkWindow(
             b.putFloat(o + 28, e.getHistoricalPressure(i, h))
         }
         // Contact id: unique per (device, pointer).
-        b.putInt(o + 32, (e.deviceId shl 5) or (e.getPointerId(i) and 31))
+        b.putInt(o + 32, id)
         b.put(o + 36, action)
-        b.put(o + 37, e.getToolType(i).toByte())  // TOOL_TYPE_PALM (5) is passed through as such
+        b.put(o + 37, tool)
         b.put(o + 38, flags.toByte())
         b.put(o + 39, 0)
         touchPending++
     }
 
     /** Predict + draw everything staged, right now, on this thread. */
-    private fun process() {
+    private fun process(observe: Boolean = true, draw: Boolean = true) {
         val n = pending
         pending = 0
-        schedule(NotiInk.nativeProcess(handle, n))
+        submitPen(n, observe, draw)
+    }
+
+    private fun submitPen(n: Int, observe: Boolean, draw: Boolean) {
+        schedule(NotiInk.nativeProcess(handle, n, observe, draw))
         drainGestures()
     }
 

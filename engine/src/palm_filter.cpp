@@ -1,8 +1,11 @@
 #include "noti/palm_filter.h"
 
 #include <algorithm>
+#include <bit>
 #include <cmath>
 #include <cstring>
+#include <numeric>
+#include <utility>
 #include <vector>
 
 namespace noti {
@@ -52,8 +55,12 @@ constexpr float kEdgeMm = 5.0f, kEdge = 1.0f;
 constexpr float kClusterMm = 60.0f;
 constexpr int64_t kClusterNs = 400 * kMs;
 constexpr float kClusterPalm = 3.0f, kClusterCrowd = 2.0f, kTwoFinger = 1.5f;
+constexpr float kTwoFingerWithoutSize = 3.0f;
 constexpr int64_t kRecentPalmNs = 300 * kMs;
 constexpr float kLingerRevokeMm = 40.0f;
+constexpr float kFarFromPenMm = 90.0f;
+constexpr float kFingerRoundness = 0.7f;
+constexpr float kMinFingerSpreadMm = 15.0f;
 
 constexpr float kFingerPressure = 0.7f;
 
@@ -65,6 +72,9 @@ inline float wrap_pi(float a) {
 
 inline float clampf(float v, float lo, float hi) { return std::min(hi, std::max(lo, v)); }
 inline bool finite(float v) { return std::isfinite(v); }
+inline bool possible_fingertip(float major, float minor, float boundary) {
+  return major < boundary && (minor <= 0 || minor >= kFingerRoundness * major);
+}
 
 }  // namespace
 
@@ -155,14 +165,14 @@ float PalmFilter::grace_ms() const noexcept { return clampf(2.5f * gap_ms_, 300.
 float PalmFilter::size_boundary_mm() const noexcept { return clampf(0.5f * (finger_mm_ + palm_mm_), 10.0f, 18.0f); }
 
 PalmFilter::Contact* PalmFilter::find(uint32_t id) noexcept {
-  for (Contact& c : contacts_)
-    if (c.used && !c.up && c.id == id) return &c;
-  return nullptr;
+  return const_cast<Contact*>(std::as_const(*this).find(id));
 }
 
 const PalmFilter::Contact* PalmFilter::find(uint32_t id) const noexcept {
-  for (const Contact& c : contacts_)
-    if (c.used && !c.up && c.id == id) return &c;
+  for (uint32_t slots = occupied_; slots; slots &= slots - 1) {
+    const Contact& c = contacts_[std::countr_zero(slots)];
+    if (!c.up && c.id == id) return &c;
+  }
   return nullptr;
 }
 
@@ -177,9 +187,7 @@ float PalmFilter::score(uint32_t id) const noexcept {
 }
 
 uint32_t PalmFilter::live_contacts() const noexcept {
-  uint32_t n = 0;
-  for (const Contact& c : contacts_) n += c.used && !c.up;
-  return n;
+  return std::popcount(occupied_) - (ink_slot_ >= 0 && contacts_[ink_slot_].up);
 }
 
 // ---------------------------------------------------------------------------
@@ -200,6 +208,7 @@ void PalmFilter::observe_one_pen(const InkSample& s) noexcept {
   record_pen(s);
   const int64_t t = s.t_ns;
   last_time_ = std::max(last_time_, t);
+  expire_ink(t);
   const bool has_pos = s.action != Action::kHoverExit;
   if (has_pos) {
     pen_x_ = s.x;
@@ -224,7 +233,8 @@ void PalmFilter::observe_one_pen(const InkSample& s) noexcept {
       break;
     case Action::kHoverExit:
       t_pen_seen_ = t;
-      for (Contact& c : contacts_) c.nib_tracked = false;  // the nib is no longer known
+      for (uint32_t slots = occupied_; slots; slots &= slots - 1)
+        contacts_[std::countr_zero(slots)].nib_tracked = false;
       if (pen_ == PenState::kHover) {
         pen_ = PenState::kAway;
         t_pen_left_ = t;
@@ -238,8 +248,10 @@ void PalmFilter::observe_one_pen(const InkSample& s) noexcept {
       pen_ever_ = true;
       pen_ = PenState::kTouch;
       t_pen_seen_ = t;
-      for (Contact& c : contacts_)
-        if (c.used && !c.up && c.t_down < t && c.t_pen_down_during == 0) c.t_pen_down_during = t;
+      for (uint32_t slots = occupied_; slots; slots &= slots - 1) {
+        Contact& c = contacts_[std::countr_zero(slots)];
+        if (!c.up && c.t_down < t && c.t_pen_down_during == 0) c.t_pen_down_during = t;
+      }
       on_pen_active(t);
       break;
     }
@@ -269,13 +281,26 @@ void PalmFilter::observe_one_pen(const InkSample& s) noexcept {
 }
 
 void PalmFilter::on_pen_active(int64_t t) noexcept {
-  // The pen is coming in: a finger stroke in progress (or lingering) was the hand.
-  if (ink_slot_ >= 0) revoke_ink(t);
-  for (Contact& c : contacts_) {
-    if (!c.used || c.up || c.final_palm) continue;
+  if (ink_slot_ >= 0) {
+    Contact& c = contacts_[ink_slot_];
+    // A lifted finger on the far side of the screen can belong to the other
+    // hand. Preserve it if it is well outside the learned palm zone.
+    if (c.up && std::hypot(mm(c.x - pen_x_), mm(c.y - pen_y_)) > kFarFromPenMm &&
+        hand_llr(t, c.x, c.y) < kHandMin) {
+      commit_ink();
+    } else if (c.up) {
+      decide_palm(c, t, true);
+    }
+  }
+  for (uint32_t slots = occupied_; slots; slots &= slots - 1) {
+    Contact& c = contacts_[std::countr_zero(slots)];
+    if (c.up || c.final_palm) continue;
     c.pen_prior = std::max(c.pen_prior, kPenLateFactor * pen_prior(t, c.x, c.y));
   }
   rescore_all(t);
+  // The renderer has a single open stroke. Clear any still-tentative finger
+  // ink before passing pen samples along.
+  if (ink_slot_ >= 0) revoke_ink(t);
 }
 
 // ---------------------------------------------------------------------------
@@ -365,7 +390,7 @@ float PalmFilter::evaluate(Contact& c, int64_t now) noexcept {
   // L3: motion.
   const int64_t end = c.up ? c.t_up : std::max(now, c.t_last);
   const int64_t dur = std::max<int64_t>(0, end - c.t_down);
-  const float disp = std::hypot(mm(c.x - c.x0), mm(c.y - c.y0));
+  const float disp = c.disp_mm;
   if (disp > 3.0f) {
     const float straight = disp / std::max(c.path_mm, 1e-3f);
     const float speed = disp / std::max(1e-3f, float(dur) * 1e-9f);
@@ -394,21 +419,29 @@ float PalmFilter::evaluate(Contact& c, int64_t now) noexcept {
 
   // L4: clusters.
   int neighbours = 0;
-  bool palm_neighbour = false, two_finger = false;
+  bool palm_neighbour = false;
+  float pair_evidence = 0.0f;
   const float b = size_boundary_mm();
-  for (const Contact& o : contacts_) {
-    if (!o.used || &o == &c) continue;
-    const float d = std::hypot(mm(o.x - c.x), mm(o.y - c.y));
+  const bool finger_shape = possible_fingertip(c.peak_major_mm, c.minor_at_peak_mm, b);
+  for (uint32_t slots = occupied_ & ~(1u << slot_of(c)); slots; slots &= slots - 1) {
+    const Contact& o = contacts_[std::countr_zero(slots)];
     const int64_t dt = std::llabs(o.t_down - c.t_down);
-    if (d < kClusterMm && dt < kClusterNs) {
+    if (dt >= kClusterNs) continue;
+    const float dx = mm(o.x - c.x), dy = mm(o.y - c.y);
+    const float d2 = dx * dx + dy * dy;
+    if (d2 < kClusterMm * kClusterMm) {
       ++neighbours;
       if (o.verdict == Verdict::kPalm) palm_neighbour = true;
     }
-    // Two fingertips landing together a finger-spread apart. Needs sizes: without
-    // them a palm and its pinky look exactly the same.
-    if (!o.up && o.verdict != Verdict::kPalm && dt < 120 * kMs && d > 15.0f && d < 90.0f && o.size_seen &&
-        c.size_seen && o.peak_major_mm < b && c.peak_major_mm < b)
-      two_finger = true;
+    // Without sizes, require opposing motion outside the likely palm zone.
+    if (o.up || o.verdict == Verdict::kPalm || dt >= 120 * kMs ||
+        d2 <= kMinFingerSpreadMm * kMinFingerSpreadMm || d2 >= 90.0f * 90.0f ||
+        !finger_shape || !possible_fingertip(o.peak_major_mm, o.minor_at_peak_mm, b)) continue;
+    if (o.size_seen && c.size_seen) pair_evidence = std::max(pair_evidence, kTwoFinger);
+    else if (pen_ == PenState::kHover && std::min(c.hand_term, o.hand_term) <= -4.0f &&
+             std::max(c.hand_term, o.hand_term) <= -2.7f && disp > 2.5f && o.disp_mm > 2.5f &&
+             (c.x - c.x0) * (o.x - o.x0) + (c.y - c.y0) * (o.y - o.y0) < 0)
+      pair_evidence = kTwoFingerWithoutSize;
   }
   for (const RecentPalm& p : recent_palms_) {
     if (c.t_down - p.t < kRecentPalmNs && c.t_down >= p.t &&
@@ -417,13 +450,15 @@ float PalmFilter::evaluate(Contact& c, int64_t now) noexcept {
   }
   if (palm_neighbour) s += kClusterPalm;
   if (neighbours >= 2) s += kClusterCrowd;
-  else if (two_finger && neighbours <= 1 && pen_ != PenState::kTouch) s -= kTwoFinger;
+  else if (!palm_neighbour && pen_ != PenState::kTouch) s -= pair_evidence;
   return s;
 }
 
 void PalmFilter::rescore_all(int64_t now) noexcept {
-  for (Contact& c : contacts_)
-    if (c.used && !c.up) update(c, now);
+  for (uint32_t slots = occupied_; slots; slots &= slots - 1) {
+    Contact& c = contacts_[std::countr_zero(slots)];
+    if (!c.up) update(c, now);
+  }
 }
 
 void PalmFilter::update(Contact& c, int64_t now) noexcept {
@@ -466,8 +501,9 @@ void PalmFilter::decide_palm(Contact& c, int64_t now, bool final) noexcept {
   }
   if (ink_slot_ == slot_of(c)) revoke_ink(now);
   // L4: its neighbours are now probably the same hand.
-  for (Contact& o : contacts_) {
-    if (!o.used || o.up || &o == &c || o.final_palm) continue;
+  for (uint32_t slots = occupied_ & ~(1u << slot_of(c)); slots; slots &= slots - 1) {
+    Contact& o = contacts_[std::countr_zero(slots)];
+    if (o.up || o.final_palm) continue;
     if (std::hypot(mm(o.x - c.x), mm(o.y - c.y)) < kClusterMm && std::llabs(o.t_down - c.t_down) < kClusterNs)
       update(o, now);
   }
@@ -486,6 +522,7 @@ void PalmFilter::decide_palm(Contact& c, int64_t now, bool final) noexcept {
 
 void PalmFilter::emit_gesture(GestureAction a, const Contact& c, int64_t t, float x, float y) noexcept {
   if (n_gestures_ >= kMaxGestures) return;
+  if (n_gestures_ > 0 && t < gestures_[n_gestures_ - 1].t_ns) gestures_ordered_ = false;
   GestureEvent& e = gestures_[n_gestures_++];
   e = {};
   e.t_ns = t;
@@ -495,6 +532,24 @@ void PalmFilter::emit_gesture(GestureAction a, const Contact& c, int64_t t, floa
   e.action = a;
 }
 
+uint32_t PalmFilter::copy_gestures(GestureEvent* out, uint32_t capacity) const noexcept {
+  const uint32_t n = std::min(n_gestures_, capacity);
+  if (gestures_ordered_) {
+    std::copy_n(gestures_, n, out);
+    return n;
+  }
+  // Replays are emitted one contact at a time. Keep equal timestamps in
+  // emission order, including moves that share a down's millisecond.
+  uint16_t order[kMaxGestures];
+  std::iota(order, order + n_gestures_, 0);
+  std::sort(order, order + n_gestures_, [this](uint16_t a, uint16_t b) {
+    const int64_t t = gestures_[a].t_ns, u = gestures_[b].t_ns;
+    return t == u ? a < b : t < u;
+  });
+  for (uint32_t k = 0; k < n; ++k) out[k] = gestures_[order[k]];
+  return n;
+}
+
 void PalmFilter::replay_gesture(Contact& c) noexcept {
   if (c.gesture) return;
   c.gesture = true;
@@ -502,7 +557,7 @@ void PalmFilter::replay_gesture(Contact& c) noexcept {
   const uint32_t start = c.ring_head + kReplay - c.ring_n;
   for (uint32_t i = 0; i < c.ring_n; ++i) {
     const Pt& p = c.ring[(start + i) % kReplay];
-    if (p.t > c.first.t) emit_gesture(GestureAction::kMove, c, p.t, p.x, p.y);
+    emit_gesture(GestureAction::kMove, c, p.t, p.x, p.y);
   }
 }
 
@@ -520,13 +575,25 @@ void PalmFilter::emit_ink(Action a, int64_t t, float x, float y) noexcept {
 }
 
 void PalmFilter::maybe_start_ink(Contact& c, int64_t now) noexcept {
-  if (!cfg_.finger_ink || ink_slot_ >= 0 || c.ink != Ink::kNone || c.up) return;
+  if (!cfg_.finger_ink || c.ink != Ink::kNone) return;
   if (c.verdict == Verdict::kPalm || c.gesture) return;
   if (pen_ != PenState::kAway || pen_prior(now, c.x, c.y) >= 1.0f) return;  // the pen is in use
-  if (now - c.t_down > cfg_.ink_start_window_ns) return;  // too late: a gesture or a palm
+  if (!c.up && now - c.t_down > cfg_.ink_start_window_ns) return;
   if (c.score >= cfg_.ink_start_max) return;
-  for (const Contact& o : contacts_)
-    if (o.used && &o != &c && !o.up && o.verdict != Verdict::kPalm) return;  // more than one finger
+  if (ink_slot_ >= 0 && contacts_[ink_slot_].ink != Ink::kLinger) return;
+  for (uint32_t slots = occupied_ & ~(1u << slot_of(c)); slots; slots &= slots - 1) {
+    const Contact& o = contacts_[std::countr_zero(slots)];
+    if (!o.up && o.verdict != Verdict::kPalm) return;  // more than one finger
+  }
+  const float major = c.peak_major_mm, minor = c.minor_at_peak_mm;
+  const bool small = c.size_seen && major <= std::min(finger_mm_ + 2.0f, size_boundary_mm());
+  const bool rounded = minor >= kFingerRoundness * major;
+  const bool moved = c.disp_mm >= 3.0f && c.disp_mm >= 0.8f * c.path_mm &&
+                     c.disp_mm > 20.0f * float(c.t_last - c.t_down) * 1e-9f;
+  const bool tapped = c.up && c.t_up - c.t_down < 250 * kMs && c.max_disp_mm < 2.0f && c.score < kTapAccept;
+  if (c.size_seen && major >= size_boundary_mm()) return;
+  if (c.up ? !tapped : !(small && rounded) && !moved) return;
+  if (ink_slot_ >= 0) commit_ink();  // a new deliberate stroke after lift
   ink_slot_ = slot_of(c);
   c.ink = Ink::kTentative;
   // Draw everything since touch-down: no ink is lost to the decision.
@@ -534,33 +601,40 @@ void PalmFilter::maybe_start_ink(Contact& c, int64_t now) noexcept {
   const uint32_t start = c.ring_head + kReplay - c.ring_n;
   for (uint32_t i = 0; i < c.ring_n; ++i) {
     const Pt& p = c.ring[(start + i) % kReplay];
-    if (p.t > c.first.t) emit_ink(Action::kMove, p.t, p.x, p.y);
+    emit_ink(Action::kMove, p.t, p.x, p.y);
   }
 }
 
 void PalmFilter::revoke_ink(int64_t t) noexcept {
   if (ink_slot_ < 0) return;
   Contact& c = contacts_[ink_slot_];
+  const bool linger = c.ink == Ink::kLinger;
   emit_ink(Action::kCancel, t, c.x, c.y);
   c.ink = Ink::kRevoked;
   ink_slot_ = -1;
-  if (c.up) finish(c);
-  release_suppressed_gestures(t);
+  if (linger) finish(c);
+  release_suppressed_gestures();
 }
 
-void PalmFilter::commit_ink(int64_t t) noexcept {
+void PalmFilter::commit_ink() noexcept {
   if (ink_slot_ < 0) return;
   Contact& c = contacts_[ink_slot_];
-  emit_ink(Action::kUp, std::max(t, c.t_up), c.x, c.y);
+  emit_ink(Action::kUp, c.t_up, c.x, c.y);
   c.ink = Ink::kCommitted;
   ink_slot_ = -1;
   finish(c);
-  release_suppressed_gestures(t);
+  release_suppressed_gestures();
 }
 
-void PalmFilter::release_suppressed_gestures(int64_t) noexcept {
-  for (Contact& o : contacts_) {
-    if (!o.used || o.up || o.gesture || o.verdict != Verdict::kTouch) continue;
+void PalmFilter::expire_ink(int64_t now) noexcept {
+  if (ink_slot_ >= 0 && contacts_[ink_slot_].ink == Ink::kLinger && now >= t_linger_end_)
+    commit_ink();
+}
+
+void PalmFilter::release_suppressed_gestures() noexcept {
+  for (uint32_t slots = occupied_; slots; slots &= slots - 1) {
+    Contact& o = contacts_[std::countr_zero(slots)];
+    if (o.up || o.gesture || o.verdict != Verdict::kTouch) continue;
     // A revoked stroke was the hand (or became a two-finger gesture, which
     // replays itself); a running or kept one is ink, not a gesture.
     if (o.ink != Ink::kNone) continue;
@@ -577,6 +651,7 @@ void PalmFilter::process(const TouchSample* s, uint32_t n) noexcept {
     const TouchSample& t = s[i];
     record_touch(t);
     last_time_ = std::max(last_time_, t.t_ns);
+    expire_ink(t.t_ns);
     if (t.tool == ToolType::kStylus || t.tool == ToolType::kEraser) continue;  // the pen path owns these
     Contact* c = find(t.id);
     switch (t.action) {
@@ -598,29 +673,37 @@ void PalmFilter::process(const TouchSample* s, uint32_t n) noexcept {
   }
 }
 
+void PalmFilter::reset_input(int64_t now) noexcept {
+  if (ink_slot_ >= 0) {
+    const Contact& c = contacts_[ink_slot_];
+    emit_ink(Action::kCancel, now, c.x, c.y);
+    ink_slot_ = -1;
+  }
+  for (uint32_t slots = occupied_; slots; slots &= slots - 1) {
+    const Contact& c = contacts_[std::countr_zero(slots)];
+    if (c.gesture && !c.gesture_cancelled) emit_gesture(GestureAction::kCancel, c, now, c.x, c.y);
+  }
+  occupied_ = 0;
+  last_time_ = now;
+  pen_ = PenState::kAway;
+  pen_ever_ = false;
+  t_pen_up_ = 0;
+  for (RecentPalm& p : recent_palms_) p.t = INT64_MIN / 2;
+}
+
 void PalmFilter::on_down(const TouchSample& s) noexcept {
-  Contact* slot = nullptr;
-  for (Contact& c : contacts_)
-    if (!c.used) { slot = &c; break; }
-  if (!slot) return;  // more than 16 contacts: ignore (nothing deliberate looks like that)
-  Contact& c = *slot;
+  const uint32_t slot = std::countr_one(occupied_);
+  if (slot >= kMaxContacts) return;
+  occupied_ |= 1u << slot;
+  Contact& c = contacts_[slot];
   c = Contact{};
-  c.used = true;
   c.id = s.id;
   c.serial = next_serial_++;
   c.t_down = c.t_last = s.t_ns;
   c.x0 = c.x = s.x;
   c.y0 = c.y = s.y;
   c.first = {s.t_ns, s.x, s.y};
-  c.ring[0] = c.first;
-  c.ring_n = 1;
-  c.ring_head = 1;
-  if (s.major > 0.0f) {
-    c.size_seen = true;
-    c.major0_mm = c.peak_major_mm = mm(s.major);
-    c.minor_at_peak_mm = mm(s.minor);
-  }
-  c.system_palm = s.tool == ToolType::kPalm;
+  update_shape(c, s);
   c.pen_prior = pen_prior(s.t_ns, s.x, s.y);
   if (pen_ != PenState::kAway) {
     c.nib_tracked = true;
@@ -632,8 +715,11 @@ void PalmFilter::on_down(const TouchSample& s) noexcept {
   // gesture, not a stroke.
   if (ink_slot_ >= 0 && !c.system_palm) {
     Contact& owner = contacts_[ink_slot_];
+    const bool finger_shape = possible_fingertip(c.peak_major_mm, c.minor_at_peak_mm, size_boundary_mm());
     if (owner.ink == Ink::kTentative && s.t_ns - owner.t_down < cfg_.two_finger_window_ns &&
-        owner.max_disp_mm < 10.0f && evaluate(c, s.t_ns) < cfg_.decide_palm) {
+        owner.max_disp_mm < 10.0f && finger_shape &&
+        std::hypot(mm(c.x - owner.x), mm(c.y - owner.y)) >= kMinFingerSpreadMm &&
+        evaluate(c, s.t_ns) < cfg_.decide_palm) {
       revoke_ink(s.t_ns);
       if (owner.verdict == Verdict::kTouch && !owner.gesture) replay_gesture(owner);
     }
@@ -645,17 +731,13 @@ void PalmFilter::on_down(const TouchSample& s) noexcept {
   }
   update(c, s.t_ns);
   // New evidence for the neighbours (cluster terms changed).
-  for (Contact& o : contacts_)
-    if (o.used && !o.up && &o != &c) update(o, s.t_ns);
+  for (uint32_t slots = occupied_ & ~(1u << slot); slots; slots &= slots - 1) {
+    Contact& o = contacts_[std::countr_zero(slots)];
+    if (!o.up) update(o, s.t_ns);
+  }
 }
 
-void PalmFilter::on_move(Contact& c, const TouchSample& s) noexcept {
-  const float step = std::hypot(mm(s.x - c.x), mm(s.y - c.y));
-  c.path_mm += step;
-  c.x = s.x;
-  c.y = s.y;
-  c.t_last = std::max(c.t_last, s.t_ns);
-  c.max_disp_mm = std::max(c.max_disp_mm, std::hypot(mm(s.x - c.x0), mm(s.y - c.y0)));
+void PalmFilter::update_shape(Contact& c, const TouchSample& s) noexcept {
   if (s.major > 0.0f) {
     const float m = mm(s.major);
     if (!c.size_seen) {
@@ -668,11 +750,25 @@ void PalmFilter::on_move(Contact& c, const TouchSample& s) noexcept {
     }
   }
   if (s.tool == ToolType::kPalm) c.system_palm = true;
-  c.ring[c.ring_head % kReplay] = {s.t_ns, s.x, s.y};
+}
+
+void PalmFilter::on_move(Contact& c, const TouchSample& s) noexcept {
+  if (s.t_ns < c.t_last) return;
+  update_shape(c, s);
+  if (!c.final_palm) {
+    c.path_mm += std::hypot(mm(s.x - c.x), mm(s.y - c.y));
+    c.disp_mm = std::hypot(mm(s.x - c.x0), mm(s.y - c.y0));
+    c.max_disp_mm = std::max(c.max_disp_mm, c.disp_mm);
+  }
+  c.x = s.x;
+  c.y = s.y;
+  c.t_last = s.t_ns;
+  if (c.final_palm) return;
+
+  c.ring[c.ring_head] = {s.t_ns, s.x, s.y};
   c.ring_head = (c.ring_head + 1) % kReplay;
   c.ring_n = std::min(c.ring_n + 1, kReplay);
 
-  if (c.final_palm) return;
   // A stroke or gesture that starts on this sample replays it (it is in the
   // ring already); only one that was already running gets it as a live move.
   const bool was_ink = c.ink == Ink::kTentative && ink_slot_ == slot_of(c);
@@ -683,21 +779,29 @@ void PalmFilter::on_move(Contact& c, const TouchSample& s) noexcept {
 }
 
 void PalmFilter::on_up(Contact& c, const TouchSample& s, bool cancelled) noexcept {
-  if (s.action != TouchAction::kCancel && (s.x != c.x || s.y != c.y)) {
-    TouchSample m = s;
-    m.action = TouchAction::kMove;
-    on_move(c, m);
-  }
   const int64_t t = std::max(s.t_ns, c.t_last);
-  if (cancelled) {
-    // FLAG_CANCELED on a pointer: the platform says it was a palm. ACTION_CANCEL:
-    // the gesture was taken away (the stylus took over, or a system gesture).
-    if (s.action == TouchAction::kUp) c.system_palm = true;
+  if (s.action == TouchAction::kUp) update_shape(c, s);
+  if (c.system_palm || (s.flags & kTouchCanceled)) {
+    c.system_palm = true;  // explicit platform palm rejection
+    c.score = c.peak_score = 99.0f;
     if (!c.final_palm) decide_palm(c, t, true);
+  } else if (cancelled) {
+    // A stream can be cancelled when Android takes over a gesture. This
+    // carries no palm evidence for the model or nearby contacts.
+    if (!c.final_palm) {
+      c.verdict = Verdict::kUndecided;
+      if (c.gesture) {
+        emit_gesture(GestureAction::kCancel, c, t, c.x, c.y);
+        c.gesture_cancelled = true;
+      }
+      if (ink_slot_ == slot_of(c)) revoke_ink(t);
+    }
+  } else if (s.x != c.x || s.y != c.y) {
+    on_move(c, s);
   }
   c.up = true;
   c.t_up = t;
-  if (!c.final_palm) {
+  if (!cancelled && !c.final_palm) {
     update(c, t);
     if (c.verdict == Verdict::kUndecided) {
       // Out of time: decide on what we have. Ties go to "palm" for ink and
@@ -713,14 +817,13 @@ void PalmFilter::on_up(Contact& c, const TouchSample& s, bool cancelled) noexcep
   if (c.ink == Ink::kTentative && ink_slot_ == slot_of(c)) {
     c.ink = Ink::kLinger;
     t_linger_end_ = t + cfg_.ink_linger_ns;
-    if (cfg_.ink_linger_ns <= 0) commit_ink(t);
+    if (cfg_.ink_linger_ns <= 0) commit_ink();
     return;  // the slot stays alive until the stroke is committed or revoked
   }
   finish(c);
 }
 
 void PalmFilter::finish(Contact& c) noexcept {
-  if (!c.used) return;
   learn_from(c);
   if (c.verdict == Verdict::kPalm) {
     recent_palms_[recent_palm_next_++ % 8] = {c.t_up ? c.t_up : last_time_, c.x, c.y};
@@ -743,7 +846,7 @@ void PalmFilter::finish(Contact& c) noexcept {
   reports_[idx] = r;
   if (reports_n_ < kMaxReports) ++reports_n_;
   else reports_head_ = (reports_head_ + 1) % kMaxReports;
-  c.used = false;
+  occupied_ &= ~(1u << slot_of(c));
 }
 
 uint32_t PalmFilter::drain_reports(ContactReport* out, uint32_t max) noexcept {
@@ -762,9 +865,10 @@ uint32_t PalmFilter::drain_reports(ContactReport* out, uint32_t max) noexcept {
 
 int64_t PalmFilter::tick(int64_t now) noexcept {
   last_time_ = std::max(last_time_, now);
-  if (ink_slot_ >= 0 && contacts_[ink_slot_].ink == Ink::kLinger && now >= t_linger_end_) commit_ink(now);
-  for (Contact& c : contacts_) {
-    if (!c.used || c.up || c.final_palm) continue;
+  expire_ink(now);
+  for (uint32_t slots = occupied_; slots; slots &= slots - 1) {
+    Contact& c = contacts_[std::countr_zero(slots)];
+    if (c.up || c.final_palm) continue;
     if (now - c.t_eval >= cfg_.rescore_period_ns) update(c, now);
   }
   return next_deadline(now);
@@ -773,8 +877,9 @@ int64_t PalmFilter::tick(int64_t now) noexcept {
 int64_t PalmFilter::next_deadline(int64_t now) const noexcept {
   int64_t at = INT64_MAX;
   if (ink_slot_ >= 0 && contacts_[ink_slot_].ink == Ink::kLinger) at = t_linger_end_;
-  for (const Contact& c : contacts_) {
-    if (!c.used || c.up || c.final_palm) continue;
+  for (uint32_t slots = occupied_; slots; slots &= slots - 1) {
+    const Contact& c = contacts_[std::countr_zero(slots)];
+    if (c.up || c.final_palm) continue;
     at = std::min(at, c.t_eval + cfg_.rescore_period_ns);
   }
   if (at == INT64_MAX) return -1;

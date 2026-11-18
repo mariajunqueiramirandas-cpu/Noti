@@ -306,6 +306,7 @@ NOTI_INLINE void GlFrontBufferRenderer::scissor(const RectI& r) {
 }
 
 void GlFrontBufferRenderer::clear_rect(const Target& t, const RectI& r) {
+  if (&t == &backing_) backing_capsules_ = 0;
   if (r.empty()) return;
   bind_target(t);
   scissor(r);
@@ -538,6 +539,7 @@ void GlFrontBufferRenderer::destroy_surface_resources() {
   for (Target& t : wet_) destroy_target(t);
   for (Target& t : dry_) destroy_target(t);
   destroy_target(backing_);
+  backing_capsules_ = 0;
   destroy_target(scratch_);
   if (wet_sc_) ASurfaceControl_release(wet_sc_);
   {
@@ -729,6 +731,7 @@ void GlFrontBufferRenderer::render(const FrameUpdate& f) {
     scissor(f.ink_rect);
     bind_target(backing_);
     draw_capsules(ink_first, f.ink_count);
+    backing_capsules_ += f.ink_count;
     glFlush();  // runs on the GPU while we wait for the next sample
   }
   last_gpu_ns_ = now_ns();
@@ -760,7 +763,9 @@ void GlFrontBufferRenderer::batch_done(int64_t cpu_ns) { perf_.report(cpu_ns); }
 int64_t GlFrontBufferRenderer::idle() {
   if (!wet_sc_) return -1;
   host_watchdog(now_ns());
-  if (redraw_pending_ && store_) {
+  // A queued dry redraw clears the wet target. Hold it while live ink is
+  // visible so it cannot erase the beginning of a stroke between samples.
+  if (redraw_pending_ && store_ && backing_capsules_ == 0) {
     if (redraw_synced_ && host_usable()) {
       if (can_redraw_synced()) do_redraw_synced();
     } else if (tx_pending_.load(std::memory_order_acquire) == 0) {
@@ -778,26 +783,29 @@ int64_t GlFrontBufferRenderer::idle() {
 // Commit / cancel (pen-up path: off the per-sample hot path)
 // ---------------------------------------------------------------------------
 
-void GlFrontBufferRenderer::draw_stroke_into_dry(Target& dry, const StrokeStore& store, uint32_t id) {
+void GlFrontBufferRenderer::draw_stroke_into_dry(Target& dry, const StrokeStore& store, uint32_t id, bool use_backing) {
   const StrokeRecord& s = store.stroke(id);
   if (s.hidden || !s.on_screen || (page_ != UINT32_MAX && s.page != page_)) return;
   const RectI r = pixel_bounds(s.bounds, w_, h_);
   if (r.empty()) return;
-  // 1. Union-render the stroke on its own (MAX blend) into scratch.
   scissor(r);
-  bind_target(scratch_);
-  glClear(GL_COLOR_BUFFER_BIT);
-  glUseProgram(capsule_prog_);
-  glBindVertexArray(vao_);
-  glBlendEquation(GL_MAX);
-  set_color(s.color);
-  const Capsule* caps = store.capsules(id);
-  for (uint32_t done = 0; done < s.capsule_count;) {
-    const uint32_t n = std::min(s.capsule_count - done, kRingHalf);
-    draw_capsules(upload(caps + done, n), n);
-    done += n;
+  if (!use_backing) {
+    // Older strokes and strokes interrupted by a surface change need their
+    // union coverage rebuilt in scratch.
+    bind_target(scratch_);
+    glClear(GL_COLOR_BUFFER_BIT);
+    glUseProgram(capsule_prog_);
+    glBindVertexArray(vao_);
+    glBlendEquation(GL_MAX);
+    set_color(s.color);
+    const Capsule* caps = store.capsules(id);
+    for (uint32_t done = 0; done < s.capsule_count;) {
+      const uint32_t n = std::min(s.capsule_count - done, kRingHalf);
+      draw_capsules(upload(caps + done, n), n);
+      done += n;
+    }
   }
-  // 2. Composite it over the dry layer (premultiplied src-over), so
+  // Composite it over the dry layer (premultiplied src-over), so
   //    translucent ink looks identical wet and dry.
   bind_target(dry);
   glUseProgram(composite_prog_);
@@ -805,7 +813,7 @@ void GlFrontBufferRenderer::draw_stroke_into_dry(Target& dry, const StrokeStore&
   glBlendEquation(GL_FUNC_ADD);
   glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
   glActiveTexture(GL_TEXTURE0);
-  glBindTexture(GL_TEXTURE_2D, scratch_.tex);
+  glBindTexture(GL_TEXTURE_2D, use_backing ? backing_.tex : scratch_.tex);
   glUniform4f(u_comp_rect_, float(r.x0), float(r.y0), float(r.x1), float(r.y1));
   glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 }
@@ -832,7 +840,10 @@ void GlFrontBufferRenderer::commit(const StrokeStore& store, uint32_t id, const 
     nd.seq = 0;
     nd.epoch = epoch_;
   }
-  for (uint32_t s = nd.seq; s <= id; ++s) draw_stroke_into_dry(nd, store, s);
+  for (uint32_t s = nd.seq; s < id; ++s) draw_stroke_into_dry(nd, store, s);
+  // All real capsules have already been union-rendered into backing during
+  // the stroke. Sample it directly for this commit and leave prediction out.
+  if (nd.seq <= id) draw_stroke_into_dry(nd, store, id, backing_capsules_ == store.stroke(id).capsule_count);
   nd.seq = id + 1;
   clear_rect(backing_, wet_rect);
   redraw_pending_ = false;  // nd now holds the whole current page

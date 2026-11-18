@@ -27,8 +27,8 @@ probability ratio test: the shortest average wait for a given error rate.
 | L2 hand model | Where your palm rests relative to the nib: a two-component (right hand / left hand) Gaussian model of the palm's offset, learned online and rotated with the pen's azimuth when the pen reports one. Gives a palm zone before the pen is in hover range, and strong "not the writing hand" evidence (down to −4.5) for contacts the hand can't reach while the nib's position is known |
 | L2 coupling | The writing hand moves rigidly with the pen. A contact that travels on its own while the tracked nib stays put is not that hand (up to −2.5) |
 | L3 contact | Peak size against a learned fingertip/palm boundary. Palms roll on over ~25 ms, so small size only counts as touch evidence after that window. Also elongation, growth over the first 25 ms, purposeful versus resting motion, clean taps, and the bezel edge |
-| L4 clusters | Contacts landing together in a hand-sized area are one hand. A decided palm makes its neighbours (the pinky beside the heel of the hand) palms too. Two fingertips landing together a finger-spread apart look like a two-finger gesture (only when sizes are known: without sizes, a palm and its pinky look the same) |
-| L5 commitment | Gestures start only after a contact is confirmed, and the samples held back meanwhile are replayed, so a pan starts where the finger landed. Finger ink is drawn from the first sample and rolled back if the verdict flips, including for 80 ms after lift. A second finger within 150 ms turns a stroke into a two-finger gesture |
+| L4 clusters | A decided palm makes nearby contacts more likely to belong to the writing hand. Two fingertips landing close together are evidence of a gesture. When contact sizes are missing, opposing movement outside the likely palm zone can confirm a pinch while the pen hovers. |
+| L5 commitment | Confirmed gestures replay held samples in time order. Small, round contacts can draw immediately. Ambiguous contacts wait for deliberate motion or a tap, then draw from the landing position. Finger ink can roll back for 80 ms after lift. Starting another deliberate stroke during that window keeps the preceding stroke. |
 | L6 learning | Fingertip and palm sizes, the hand model, handedness and the grace window adapt from confident decisions only (with the hand-model term itself excluded, so it can't reinforce itself), inside fixed bounds. The model is saved between sessions |
 
 A contact still undecided when it lifts counts as a tap only with real evidence for it (score < −1). When in
@@ -53,13 +53,12 @@ Each runs × seeds × both hands × with and without contact-size reporting (the
 
 ```
 palm_bench --seeds 20
-  TOTAL (screen reports contact size)  palms 880  touches 560  strokes 80 | FA 0  FR 0  flash 40 | latency p50 33 ms  p95 33 ms
-  TOTAL (no contact size)              palms 880  touches 560  strokes 80 | FA 0  FR 0  flash 40 | latency p50 80 ms  p95 275 ms
-  cost: 80 ns per input event, harness included
+  TOTAL (screen reports contact size)  palms 880  touches 560  strokes 80 | FA 0  FR 0  flash 0 | latency p50 33 ms  p95 33 ms
+  TOTAL (no contact size)              palms 880  touches 560  strokes 80 | FA 0  FR 0  flash 0 | latency p50 70 ms  p95 90 ms
 ```
 
-FA = palms that became a gesture or kept ink. FR = deliberate touches or strokes that were lost. Flash = palms that
-drew tentative finger ink for ~25 ms before it was rolled back (finger ink only, no pen in use). `palm_bench --gate`
+FA = palms that became a gesture or kept ink. FR = deliberate touches or strokes that were lost. Flash counts palms
+that briefly drew tentative finger ink before rollback. `palm_bench --gate`
 runs in ctest and fails on any false accept, any false reject when sizes are reported, more than 5 % false rejects
 without sizes, or p95 confirmation above 60 ms.
 

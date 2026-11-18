@@ -12,7 +12,7 @@
 //
 // Per MotionEvent the ink thread writes N InkSample records (40 B, native byte
 // order) into a direct ByteBuffer that *is* native memory and calls
-// @CriticalNative nativeProcess(handle, N): a plain C call (no JNIEnv, no
+// @CriticalNative nativeProcess: a plain C call (no JNIEnv, no
 // marshalling, no pinning) that predicts and draws before returning.
 // All natives are bound with RegisterNatives (required for @CriticalNative).
 //
@@ -87,9 +87,7 @@ int64_t flush_palm(Instance* i) {
   int64_t d = -1;
   noti::PalmFilter& f = i->palm;
   if (f.ink_count()) d = i->engine.process(f.ink(), f.ink_count());
-  const uint32_t n = f.gesture_count();
-  for (uint32_t k = 0; k < n && i->out.count < int32_t(noti::PalmFilter::kMaxGestures); ++k)
-    i->out.events[i->out.count++] = f.gestures()[k];
+  i->out.count += f.copy_gestures(i->out.events + i->out.count, noti::PalmFilter::kMaxGestures - i->out.count);
   f.clear_outputs();
   noti::ContactReport r[8];
   for (uint32_t m; (m = f.drain_reports(r, 8)) > 0;) {
@@ -285,7 +283,11 @@ void nativeSurfaceChanged(JNIEnv* env, jclass, jlong h, jobject surface, jint w,
 }
 
 void nativeSurfaceDestroyed(JNIEnv*, jclass, jlong h) {
-  inst(h)->engine.execute(Command{CommandType::kSurfaceDestroyed});
+  Instance* i = inst(h);
+  i->out.count = 0;
+  i->palm.reset_input(noti::now_ns());
+  flush_palm(i);
+  i->engine.execute(Command{CommandType::kSurfaceDestroyed});
 }
 
 jlong nativeExportRecording(JNIEnv* env, jclass, jlong h, jstring path) {
@@ -318,15 +320,18 @@ void nativeStats(JNIEnv* env, jclass, jlong h, jlongArray out) {
 
 // ---- ink thread hot path (@CriticalNative: no JNIEnv / jclass) ----
 
-jlong nativeProcess(jlong h, jint count) {
+jlong nativeProcess(jlong h, jint count, jboolean observe, jboolean draw) {
   Instance* i = inst(h);
   const uint32_t n = count < 0 ? 0u : std::min(uint32_t(count), kStagingSamples);
   i->out.count = 0;
   // The pen is never filtered; it informs the filter first, which may roll back
   // a finger stroke (that cancel must reach the engine before the pen does).
-  i->palm.observe_pen(i->staging, n);
-  if (NOTI_UNLIKELY(i->palm.ink_count() || i->palm.gesture_count())) flush_palm(i);
-  const int64_t d = i->engine.process(i->staging, n);
+  int64_t d = -1;
+  if (observe) {
+    i->palm.observe_pen(i->staging, n);
+    if (NOTI_UNLIKELY(i->palm.ink_count() || i->palm.gesture_count())) d = flush_palm(i);
+  }
+  if (draw) d = min_deadline(d, i->engine.process(i->staging, n));
   i->out.deadline_ns = i->palm.next_deadline(noti::now_ns());
   return min_deadline(d, i->out.deadline_ns);
 }
@@ -437,7 +442,7 @@ const JNINativeMethod kMethods[] = {
     M(nativeSelectionInk, "(J)[F"),
     M(nativeReplaceStrokes, "(J[II[F[F[I)Z"),
     M(nativeTouch, "(JI)J"),
-    M(nativeProcess, "(JI)J"),
+    M(nativeProcess, "(JIZZ)J"),
     M(nativeIdle, "(J)J"),
     M(nativeVsync, "(JJJ)V"),
     M(nativeSetColor, "(JFFFF)V"),

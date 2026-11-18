@@ -157,7 +157,11 @@ class PageViewport(private val marginPx: Float, private val onChange: (PagePlace
         emit()
     }
 
-    fun end() { moving = false; emit() }
+    fun end() {
+        if (!moving) return
+        moving = false
+        emit()
+    }
     private fun ready() = canvasW > 0 && canvasH > 0 && aspects.isNotEmpty()
     private fun home() {
         zoom = 1f
