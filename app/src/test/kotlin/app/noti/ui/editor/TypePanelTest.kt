@@ -24,7 +24,7 @@ import app.noti.lines.TextAlign
 import app.noti.lines.TypeStyle
 import app.noti.lines.WriteLine
 import app.noti.pdf.PagePlacement
-import app.noti.transcribe.TextInk
+import app.noti.lines.TextInk
 import app.noti.ui.captureRenderedView
 import app.noti.ui.theme.NotiTheme
 import java.io.File

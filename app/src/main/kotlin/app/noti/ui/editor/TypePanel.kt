@@ -5,11 +5,6 @@ import app.noti.ui.common.NotiIconButton as IconButton
 import app.noti.ui.common.NotiFilterChip as FilterChip
 
 import android.view.WindowManager
-import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.gestures.awaitEachGesture
-import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -25,14 +20,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.StrokeJoin
-import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.key.*
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextRange
@@ -47,17 +35,10 @@ import app.noti.data.QuickFill
 import app.noti.data.SettingsStore
 import app.noti.lines.Overflow
 import app.noti.lines.TextAlign
-import app.noti.transcribe.HandwritingLanguages
-import app.noti.transcribe.HandwritingReader
-import app.noti.transcribe.InkLines
-import app.noti.transcribe.SelectedStroke
 import app.noti.ui.common.NotiButton
 import java.text.DateFormat
 import java.util.Date
 import kotlin.math.roundToInt
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 
 /**
  * The window flags of the Type panel: focusable, so the keyboard types into it, but not
@@ -200,7 +181,7 @@ internal fun TypePanelContent(
             }
         }
 
-        // Style: size, alignment, weight; and the pen pad.
+        // Style: size, alignment and weight.
         Row(Modifier.horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             val em = laid?.em ?: session.style.size
@@ -218,13 +199,9 @@ internal fun TypePanelContent(
             }, label = { Text("Centre") }, leadingIcon = { Icon(Icons.Outlined.FormatAlignCenter, null, Modifier.size(18.dp)) })
             FilterChip(selected = session.style.bold, onClick = { session.style = session.style.copy(bold = !session.style.bold) },
                 label = { Text("Bold") }, leadingIcon = { Icon(Icons.Outlined.FormatBold, null, Modifier.size(18.dp)) })
-            FilterChip(selected = session.penPad, onClick = { session.penPad = !session.penPad },
-                label = { Text("Write") }, leadingIcon = { Icon(Icons.Outlined.Draw, null, Modifier.size(18.dp)) })
         }
 
         QuickFillRow(settings.quickFills, field.label, ::insert)
-
-        if (session.penPad) HandwritingPad(settings.handwritingLanguage, onText = ::insert)
 
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
             Spacer(Modifier.weight(1f))
@@ -247,90 +224,5 @@ private fun QuickFillRow(fills: List<QuickFill>, label: String?, onInsert: (Stri
         for (c in chips) AssistChip(onClick = { onInsert(c.value) }, label = { Text(c.value, maxLines = 1) },
             leadingIcon = { if (c.label == "Date" && c.value == today) Icon(Icons.Outlined.Today, null, Modifier.size(16.dp)) },
             modifier = Modifier.semantics { contentDescription = "Insert ${c.label}: ${c.value}" })
-    }
-}
-
-/**
- * Write with the pen here instead of typing: what you write is read on the tablet (the
- * Transcribe tool's recognizer) and goes into the text, so it lands neatly on the lines.
- */
-@Composable
-private fun HandwritingPad(languageTag: String, onText: (String) -> Unit) {
-    val strokes = remember { mutableStateListOf<List<Offset>>() }
-    var live by remember { mutableStateOf<List<Offset>>(emptyList()) }
-    var status by remember { mutableStateOf<String?>(null) }
-    var lastStroke by remember { mutableLongStateOf(0L) }
-    val scope = rememberCoroutineScope()
-    val colors = MaterialTheme.colorScheme
-
-    fun read() {
-        if (strokes.isEmpty()) return
-        val pen = floatArrayOf(0f, 0f, 0f, 1f)
-        val ink = strokes.mapIndexed { i, s -> SelectedStroke(i, 0, pen, FloatArray(s.size * 2) { k -> if (k % 2 == 0) s[k / 2].x else s[k / 2].y }) }
-        strokes.clear()
-        scope.launch {
-            val reader = try { HandwritingReader(HandwritingLanguages.resolve(languageTag)) } catch (e: Exception) {
-                status = "Handwriting recognition isn't available on this device."; return@launch
-            }
-            try {
-                if (!reader.isDownloaded()) { status = "Getting handwriting ready (once, about 20 MB)…"; reader.download() }
-                status = "Reading…"
-                val text = reader.read(InkLines.group(ink)).joinToString(" ").trim()
-                status = null
-                if (text.isNotEmpty()) onText(text) else status = "Couldn't read that. Try again a little bigger."
-            } catch (e: Exception) {
-                if (e is CancellationException) throw e
-                status = "Couldn't read that handwriting. Check your connection the first time, or the language in Settings."
-            } finally { reader.close() }
-        }
-    }
-    // Read a moment after the pen stops.
-    LaunchedEffect(lastStroke) {
-        if (lastStroke == 0L) return@LaunchedEffect
-        delay(1200)
-        read()
-    }
-
-    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Box(Modifier.fillMaxWidth().height(110.dp)
-            .background(Color.White, RoundedCornerShape(12.dp))
-            .border(1.dp, colors.outlineVariant, RoundedCornerShape(12.dp))
-            .semantics { contentDescription = "Handwriting pad. Write here and it becomes text." }
-            .pointerInput(Unit) {
-                awaitEachGesture {
-                    val down = awaitFirstDown()
-                    val points = mutableListOf(down.position)
-                    live = points.toList()
-                    while (true) {
-                        val event = awaitPointerEvent()
-                        val change = event.changes.firstOrNull { it.id == down.id } ?: break
-                        if (!change.pressed) break
-                        points += change.position
-                        live = points.toList()
-                        change.consume()
-                    }
-                    if (points.size > 1) strokes += points.toList()
-                    live = emptyList()
-                    lastStroke = System.nanoTime()
-                }
-            }) {
-            Canvas(Modifier.matchParentSize()) {
-                for (s in strokes + listOf(live)) {
-                    if (s.size < 2) continue
-                    val path = Path().apply { moveTo(s[0].x, s[0].y); for (p in s.drop(1)) lineTo(p.x, p.y) }
-                    drawPath(path, Color(0xFF1E1F24), style = Stroke(2.2f * density, cap = StrokeCap.Round, join = StrokeJoin.Round))
-                }
-                // A baseline to write on.
-                drawLine(Color(0x553A5A8C), Offset(12f * density, size.height * 0.72f), Offset(size.width - 12f * density, size.height * 0.72f), 1f * density)
-            }
-            if (strokes.isEmpty() && live.isEmpty()) Text("Write here", Modifier.align(Alignment.Center),
-                color = colors.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
-        }
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(status ?: "Read on the tablet, then added at the cursor.", style = MaterialTheme.typography.bodySmall,
-                color = colors.onSurfaceVariant, modifier = Modifier.weight(1f))
-            TextButton(onClick = { strokes.clear() }, enabled = strokes.isNotEmpty()) { Text("Clear") }
-            TextButton(onClick = ::read, enabled = strokes.isNotEmpty()) { Text("Read now") }
-        }
     }
 }

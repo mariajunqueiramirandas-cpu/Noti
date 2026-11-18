@@ -4,7 +4,6 @@ import android.util.AtomicFile
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
-import app.noti.transcribe.SelectedStroke
 import java.io.File
 import java.util.UUID
 import java.util.concurrent.Executors
@@ -53,7 +52,7 @@ data class TextBlock(
 }
 
 /** A block found on the page: its strokes' ids now, and how far it moved since it was placed. */
-class BlockMatch(val block: TextBlock, val ids: IntArray, val dx: Float, val dy: Float, val strokes: List<SelectedStroke>) {
+class BlockMatch(val block: TextBlock, val ids: IntArray, val dx: Float, val dy: Float, val strokes: List<PageStroke>) {
     /** The block's lines where its words are now. */
     val lines get() = block.lines.map { it.moved(dx, dy) }
     fun contains(x: Float, y: Float, margin: Float) = strokes.any {
@@ -118,7 +117,7 @@ object TextBlocksCodec {
 object BlockMatcher {
     private const val EPS = 0.05f
 
-    fun find(blocks: List<TextBlock>, page: Int, ink: List<SelectedStroke>): List<BlockMatch> {
+    fun find(blocks: List<TextBlock>, page: Int, ink: List<PageStroke>): List<BlockMatch> {
         val onPage = ink.filter { it.page == page }
         val byCount = onPage.groupBy { it.points.size / 2 - 1 }
         val out = ArrayList<BlockMatch>()
@@ -129,7 +128,7 @@ object BlockMatcher {
                 if (!sameColor(cand.color, b.color)) continue
                 val dx = cand.points[0] - first.x; val dy = cand.points[1] - first.y
                 val used = HashSet<Int>()
-                val found = ArrayList<SelectedStroke>()
+                val found = ArrayList<PageStroke>()
                 for (w in b.words) {
                     val s = byCount[w.capsules].orEmpty().firstOrNull { s ->
                         s.id !in used && sameColor(s.color, b.color) &&

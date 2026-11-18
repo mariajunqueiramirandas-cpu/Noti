@@ -97,6 +97,7 @@ class InkLayer(
             gestures?.onGesture(action, id, x, y, timeNanos)
         }
         override fun onPenDown() { gestures?.onPenDown() }
+        override fun onPenUp() { gestures?.onPenUp() }
         override fun onGestureBatchEnd() { gestures?.onGestureBatchEnd() }
     }
     private val initialModel = palmModel?.copyOf()
@@ -373,15 +374,6 @@ class InkLayer(
         ink.post {
             if (released) return@post
             val data = NotiInk.nativePageInk(handle, page)
-            main.post { if (!released) onResult(data) }
-        }
-    }
-
-    /** The selected strokes (see [NotiInk.nativeSelectionInk]), delivered on the main thread. */
-    fun selectionInk(onResult: (FloatArray) -> Unit) {
-        ink.post {
-            if (released) return@post
-            val data = NotiInk.nativeSelectionInk(handle)
             main.post { if (!released) onResult(data) }
         }
     }

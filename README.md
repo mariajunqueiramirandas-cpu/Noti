@@ -40,8 +40,9 @@
 ## ✏️ What is this?
 
 Noti is a handwriting, note-taking and PDF-annotating app built for the **Xiaomi Pad 7 + Xiaomi Focus Pen**,
-with one unreasonable goal: **it should feel like writing on paper.** Not "paper-like". Not "inspired by paper".
-Paper. The kind your ink lands on *right now*, not two frames from now after the UI thread finishes its coffee.
+and at home on **Samsung Galaxy Tab S tablets with the S Pen**, with one unreasonable goal: **it should feel like
+writing on paper.** Not "paper-like". Not "inspired by paper". Paper. The kind your ink lands on *right now*, not two
+frames from now after the UI thread finishes its coffee.
 
 To get there we wrote a native C++ ink engine, a pen-motion predictor, a palm-rejection system with
 actual statistics in it, and a cheerful lavender mascot. Priorities.
@@ -50,17 +51,16 @@ actual statistics in it, and a cheerful lavender mascot. Priorities.
 <tr>
 <td width="33%" align="center">⚡<br><b>Fast ink</b><br><sub>Front-buffer rendering, a tuned predictor, and a UI thread that is politely not invited.</sub></td>
 <td width="33%" align="center">✋<br><b>Your palm is not a pen</b><br><sub>A sequential probability test decides that, usually before you've noticed you put it down.</sub></td>
-<td width="33%" align="center">🍩<br><b>One dial to rule the tools</b><br><sub>Twelve segments. Every preset is one tap. The plum one is the boss.</sub></td>
+<td width="33%" align="center">🍩<br><b>One dial to rule the tools</b><br><sub>Eleven segments. Every preset is one tap. The plum one is the boss.</sub></td>
 </tr>
 <tr>
 <td align="center">📄<br><b>PDFs that keep up</b><br><sub>Tiled rendering, pinch from 25% to 600%, ink that stays glued to the page.</sub></td>
-<td align="center">🖊️<br><b>Pen buttons, reclaimed</b><br><sub>The Focus Pen's buttons do Noti things now (on Pad 7, Android 16, after a polite word with HyperOS).</sub></td>
+<td align="center">🖊️<br><b>Pen buttons, reclaimed</b><br><sub>The Focus Pen's buttons do Noti things now (on Pad 7, Android 16, after a polite word with HyperOS). So does the S Pen's.</sub></td>
 <td align="center">💾<br><b>Saves on its own</b><br><sub>Atomic, versioned, autosaved between strokes. Your notes are safe.</sub></td>
 </tr>
 <tr>
-<td align="center">🔤<br><b>Handwriting to text</b><br><sub>Loop it, read it, copy it or swap it for neat typed ink. On the tablet, offline, no account.</sub></td>
 <td align="center">⌨️<br><b>Type on lines</b><br><sub>Loop the lines on a PDF and type. The text sits on them, sized to fit, even on a crooked scan.</sub></td>
-<td align="center">🎓<br><b>Study boards</b><br><sub>Link a PDF, get math and physics questions on a floating sheet, work them on the board, loop to check, print the keepers.</sub></td>
+<td colspan="2" align="center">🎓<br><b>Study boards</b><br><sub>Write flash cards and practice questions, review them offline, and pin cards to the board.</sub></td>
 </tr>
 </table>
 
@@ -78,7 +78,7 @@ actual statistics in it, and a cheerful lavender mascot. Priorities.
 <br><br>
 
 <img src="docs/screenshots/radial-editor/tablet-light.png" alt="The editor with the radial tool dial in the upper left" width="540">
-<img src="docs/branding/screenshots/editor-phone.png" alt="The editor on a phone" width="138">
+<img src="docs/screenshots/radial-editor/phone-large-text.png" alt="The editor on a phone" width="138">
 <img src="docs/branding/screenshots/library-phone.png" alt="The library on a phone" width="138">
 
 <sub>The editor (with its one bold element, the dial) and the phone layouts, which are tested down to 360 dp with 1.5× text. Yes, really.</sub>
@@ -128,9 +128,9 @@ naps either. Your tablet may get warm. That's the ink being enthusiastic. Detail
 <img align="right" src="docs/screenshots/radial-editor/highlighter-light.png" alt="The radial dial with the highlighter selected" width="260">
 
 The editor is a full canvas with a small pill header and a persistent **radial tool dial** at the upper left.
-Twelve rounded segments, three groups, read clockwise:
+Eleven rounded segments, three groups, read clockwise:
 
-- **Top:** pen, highlighter, stroke eraser, lasso, transcribe, type
+- **Top:** pen, highlighter, stroke eraser, lasso, type
 - **Right:** your three saved colors
 - **Left:** three width presets
 
@@ -144,20 +144,6 @@ centered where it was. The chosen tool stays active while collapsed. More → Co
 
 <br clear="right">
 
-### 🔤 Handwriting to text
-
-Pick **Transcribe** (the **Tt** segment) and draw a loop around some handwriting. Noti reads it and opens a panel with the text,
-where you can fix anything it misread, then:
-
-- **Copy** it, to paste anywhere.
-- **Replace on page**, which swaps the handwriting for tidy typed ink in Nunito, in your ink's color, line by line where you wrote
-  it. It's still ink: erase it, lasso it, move it. **Undo** brings your handwriting back.
-
-Reading happens on the tablet with Google's ML Kit digital ink recognizer. The first time, it downloads the language's model
-(about 20 MB); after that it works offline and your notes never leave the device. It follows the device language; pick another
-in **Settings → Writing → Handwriting language**. Highlighter strokes in the loop are left out, and the lines are worked out from
-the ink itself, so dots, accents and descenders stay on the line they belong to.
-
 ### ⌨️ Type on lines
 
 Got a PDF with lines on it? A worksheet, a form, an exam with answer lines, a crooked phone scan? Pick **Type** (the
@@ -168,7 +154,6 @@ line's end, and tilted along with a tilted scan.
 - **Tap a line** to leave it out or bring it back. Too much text? **Shrink to fit** or **Keep going** below.
 - **More → Fill this page** turns every blank into a field; **Tab** through them like a web form.
 - **Quick fills** (Settings → Writing) put your name, student number or today's date on the line in one tap.
-- **Write** with the pen in the panel instead, and it's read on the tablet and lands as tidy text.
 - **Tap typed text** to edit it later, even after you've moved it. With any other tool it's just ink.
 
 Table cells, boxes, combs (one character per box), dotted leaders and Noti's own lined paper work too. Exported PDFs
@@ -176,23 +161,28 @@ keep the words searchable. All on the tablet, offline. Details in [docs/TYPE_ON_
 
 ### 🎓 Study boards
 
-**New → Study board** makes an endless canvas that studies a PDF with you. Link one from the library, and Mistral
-Large 4 turns it (or a page range, or notes you loop on the board) into **math and physics** questions, multiple
-choice, problems and flash cards. They stream onto a **floating sheet** over the board:
+**New → Study board** opens an endless canvas with a floating study sheet. Use **Add flash card** or
+**Add question** to build a deck. The sheet shows reviews that are due and new items.
 
-- **Work it on the board**, then **Check**: loop your work and get a red-pen verdict, feedback and a ✓ or ✗ per step.
-- **Multiple choice** is checked on the tablet. **Flash cards** flip and get rated.
-- **Hints** come one at a time. **Answer** shows the worked solution. **Source** shows the cited page and can lay
-  it on the board.
-- **Print** pins the item to the board exactly where, and as big as, the sheet showed it. The sheet steps aside
-  until **Study** in the top bar brings it back on what's due.
+- **Flash cards** show the answer when you ask. Rate your recall to schedule the next review.
+- **Multiple choice** checks the option against the answer you saved.
+- **Written questions** let you work on the board, reveal the answer, and rate how you did.
+- **Print** pins an item to the board. Exporting the board as PDF includes pinned cards and pages.
 
-Reviews are spaced with FSRS. There are timed exams with a printable score card, and a button that arranges
-printed cards in columns by topic. Export PDF includes the cards.
+The deck, reviews, and timed exams stay on your device. [Study board guide](docs/STUDY_BOARD.md).
 
-It uses **your own Mistral API key** (Settings → Study), encrypted on the tablet. Nothing leaves the tablet unless
-you ask, and uploaded PDFs are deleted from Mistral once the questions are made. Details are in
-[docs/STUDY_BOARD.md](docs/STUDY_BOARD.md).
+Open **Plataforma Assaad** from the library to receive questions on the canvas.
+Choose **This tablet** to sign into the real site inside Noti, or pair the
+**Edge / Chrome** extension with a six-digit code. The tablet browser minimizes
+while you draw; it uses normal browser CORS and needs no relay or second device.
+Multiple sets and draft answers stay saved for later. Each answer is sent by its own
+tap, one at a time, only while the selected browser is connected, from the user’s own
+browser connection. The Noti backend never proxies those requests or stores Assaad tokens.
+For Dokploy, use branch **main**, Compose Path **`./server/compose.yml`**, and
+route **noti.vendua.com.br → relay:3000** with HTTPS enabled. No `.env` is needed.
+The root Compose file is for standalone Caddy hosting.
+See [the endpoint investigation](docs/integrations/plataforma-assaad-api.md),
+[deployment guide](server/README.md), and [study board guide](docs/STUDY_BOARD.md).
 
 <details>
 <summary><b>🔧 How the floating bits stay out of the ink's way</b></summary>
@@ -223,8 +213,12 @@ The Focus Pen has buttons. Noti uses them.
 | **Two-finger tap** | Undo (configurable). |
 | **Two-finger double-tap** | Exit full screen. |
 
-Holding can erase temporarily instead, if that's more your style. The dial stays hidden otherwise (More → Show tools,
-or keep it on the page in settings).
+On a **Samsung Galaxy Tab with the S Pen**, the S Pen's side button is the writing button: click it while hovering to
+toggle the eraser, hold it and touch the page for the dial. One UI only tells apps about it through the pen's own
+events, so Noti reads it there; Air actions (presses with the pen away from the screen) stay with One UI.
+
+Holding can erase temporarily instead. Tap **Show tools** in the editor's bottom bar when the dial is hidden, or keep it
+on the page in settings.
 
 On Pad 7 with Android 16, Noti stops the writing button from launching Mi Canvas, using a verified window workaround.
 We asked nicely first. Screenshot-button holds stay with HyperOS, and the Focus/Spotlight button stays with the system
@@ -245,7 +239,8 @@ two-finger double tap, no matter how confident it looks. [Read the whole thing](
 ## 📄 Pages & PDFs
 
 Notebooks and imported PDFs scroll vertically as one continuous document. Drag to scroll, **pinch from 25% to 600%**,
-drag the slim scroll indicator on the right, or jump with the pages panel. Tap the zoom percentage to fit width.
+drag the scroll indicator on the right, or use the arrows by the page count. Tap the count for thumbnails or use
+**More → Go to page** to enter a page number. Paged documents reopen at the last page you visited. Tap the zoom percentage to fit width.
 Momentum stops the instant the pen touches down, because you clearly meant to write.
 
 <details>
@@ -291,6 +286,8 @@ No save button. You won't need one.
 On tablets, the library and settings put navigation on the desk and content on a rounded sheet; notebooks are drawn as
 their own first page with a colored spine and, for favorites, a honey bookmark. Phone windows, including the **Poco X8 Pro**,
 get a navigation drawer, a full-width search field, a compact selection menu and an adaptive notebook grid.
+Use **View options** to switch between covers and a list or change the sort order. Search matches document names, types and folders.
+Each document has an options menu, and a long press starts selection for bulk actions. Import can pick several PDFs at once.
 
 Settings use a section menu and stack the pen/palm/button test canvas below the controls when space is narrow. Paper choices
 wrap, and dialogs scroll on short screens or with larger text. Layouts follow Android's available dp size rather than physical
@@ -409,13 +406,15 @@ screenshots.
 </details>
 
 > [!NOTE]
-> Host tests do not replace a real device. Validate Focus Pen button mappings, front-buffer rendering, SurfaceFlinger behaviour
+> Host tests do not replace a real device. Validate Focus Pen and S Pen button mappings, front-buffer rendering, SurfaceFlinger behaviour
 > and visual appearance on an arm64 Android 13+ tablet. Robolectric cannot feel your handwriting.
 
 ## 🙋 FAQ
 
 **Will it work on my device?**
-If it's arm64 and Android 13+, it'll run. If it's a Xiaomi Pad 7 with a Focus Pen, it'll *sing*. Everything else is a
+If it's arm64 and Android 13+, it'll run. If it's a Xiaomi Pad 7 with a Focus Pen, it'll *sing*. A Samsung Galaxy Tab S
+with its S Pen hums along too: its side button clicks and holds, and hover, pressure and palm rejection use standard
+Android events (see [the S Pen notes](docs/PEN_BUTTONS.md#samsung-galaxy-tab-and-the-s-pen)). Everything else is a
 supporting role, which we love you for anyway.
 
 **Why does my tablet get warm while I write?**

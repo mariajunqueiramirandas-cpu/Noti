@@ -49,7 +49,7 @@ class EditorToolbarTest {
     private var exports = 0
     private var papers = 0
     private var precision = 0
-    private val tools = listOf("Pen", "Highlighter", "Eraser", "Lasso", "Transcribe")
+    private val tools = listOf("Pen", "Highlighter", "Eraser", "Lasso")
     private val controls = listOf("Undo", "Redo", "Back to library", "Pages", "More",
         "Document scroll", "Zoom 175 percent. Reset to fit width")
     private val quickSlots = listOf("Brush options", "Collapse tools") + (1..3).map { "Quick color $it" } +
@@ -117,16 +117,14 @@ class EditorToolbarTest {
     }
 
     @Test fun everySegmentMapsToItsOwnSlot() {
-        assertEquals(12, DialSegments); assertEquals(6, DialColors); assertEquals(9, DialWidths)
-        val sweep = 360f / 12
-        // Six tools across the top, centred on straight up: the eraser and lasso either side of it.
-        assertEquals(2, segmentAt(-90f - sweep / 2)); assertEquals(3, segmentAt(-90f + sweep / 2))
-        assertEquals(0, segmentAt(-90f - 2.5f * sweep)); assertEquals(5, segmentAt(-90f + 2.5f * sweep))
-        assertEquals(6, segmentAt(-90f + 3.5f * sweep)); assertEquals(8, segmentAt(-90f + 5.5f * sweep))
-        assertEquals(9, segmentAt(-90f + 6.5f * sweep)); assertEquals(11, segmentAt(-90f + 8.5f * sweep))
+        assertEquals(11, DialSegments); assertEquals(5, DialColors); assertEquals(8, DialWidths)
+        val sweep = 360f / 11
+        // Five tools across the top, the middle one (the eraser) straight up. Colors and widths follow clockwise.
+        assertEquals(2, segmentAt(-90f)); assertEquals(0, segmentAt(-90f - 2 * sweep)); assertEquals(4, segmentAt(-90f + 2 * sweep))
+        assertEquals(DialColors, segmentAt(-90f + 3 * sweep)); assertEquals(DialWidths, segmentAt(-90f + 6 * sweep))
         // Each segment owns half a sweep either side of its centre, wrapping at ±180°.
         (0 until DialSegments).forEach { i ->
-            val centre = -90f + (i - 2.5f) * sweep
+            val centre = -90f + (i - (DialColors - 1) / 2f) * sweep
             assertEquals(i, segmentAt(centre - sweep / 2 + 0.5f)); assertEquals(i, segmentAt(centre + sweep / 2 - 0.5f))
             assertEquals(i, segmentAt(centre + 360f)); assertEquals(i, segmentAt(centre - 360f))
         }
@@ -162,16 +160,31 @@ class EditorToolbarTest {
         screenshot("radial-narrow")
     }
 
-    @Test fun overflowKeepsSaveStatusAndPageActionsAccessible() {
+    @Test fun saveStatusAndDirectPageActionsStayAccessible() {
         render(360, ThemeMode.Light)
         compose.onNodeWithText("Autosave on").assertDoesNotExist()
         compose.onNodeWithContentDescription("More").performClick()
         compose.onNodeWithText("Autosave on").assertIsDisplayed()
-        compose.onNodeWithText("Next page").performClick()
+        compose.onNodeWithText("Go to page…").assertIsDisplayed()
+        compose.onNodeWithText("Go to page…").performClick()
+        compose.onNodeWithContentDescription("Next page").performClick()
         compose.runOnIdle { assertEquals(3, requestedPage) }
-        compose.onNodeWithContentDescription("More").performClick()
-        compose.onNodeWithText("Previous page").performClick()
+        compose.onNodeWithContentDescription("Previous page").performClick()
         compose.runOnIdle { assertEquals(1, requestedPage) }
+    }
+
+    @Test fun jumpDialogValidatesPageNumbersAndUsesOneBasedInput() {
+        compose.setContent {
+            NotiTheme(ThemeMode.Light) {
+                JumpToPageDialog(1, 14, onDismiss = {}) { requestedPage = it }
+            }
+        }
+        compose.onNodeWithText("Go", substring = false).assertIsNotEnabled()
+        compose.onNode(hasSetTextAction()).performTextInput("15")
+        compose.onNodeWithText("Go", substring = false).assertIsNotEnabled()
+        compose.onNode(hasSetTextAction()).performTextReplacement("14")
+        compose.onNodeWithText("Go", substring = false).assertIsEnabled().performClick()
+        compose.runOnIdle { assertEquals(13, requestedPage) }
     }
 
     @Test fun toolsCanBeCollapsedAndExpandedFromMore() {
@@ -248,20 +261,82 @@ class EditorToolbarTest {
     @Test fun dialCanBeMovedInsideCanvas() = assertDrag(floating = false)
     @Test fun realPopupDragTracksScreenCoordinatesWithoutDrift() = assertDrag(floating = true)
 
+    @Test fun dialWindowStaysVisibleAndMovesBeforeThePointerLifts() {
+        render(800, ThemeMode.Light, floating = true)
+        val hub = compose.onNodeWithContentDescription("Brush options")
+        val node = hub.fetchSemanticsNode()
+        val window = (node.root as View).rootView
+        val height = compose.runOnIdle { window.height }
+
+        fun windowPosition() = compose.runOnIdle {
+            assertTrue(window.isShown)
+            assertEquals(228, window.width)
+            assertEquals(height, window.height)
+            val bitmap = Bitmap.createBitmap(window.width, window.height, Bitmap.Config.ARGB_8888)
+            try {
+                window.draw(android.graphics.Canvas(bitmap))
+                assertEquals(255, android.graphics.Color.alpha(bitmap.getPixel(114, 114)))
+            } finally {
+                bitmap.recycle()
+            }
+            val location = IntArray(2)
+            window.getLocationOnScreen(location)
+            Offset(location[0].toFloat(), location[1].toFloat())
+        }
+
+        var expected = windowPosition()
+        val first = Offset(32f, 16f)
+        hub.performTouchInput { down(center); moveBy(first) }
+        expected += first
+        assertEquals(expected, windowPosition())
+
+        for (step in listOf(Offset(12f, 8f), Offset(18f, 11f), Offset(-8f, 14f))) {
+            // Each injection uses the current popup coordinates. The pointer is still on the hub's center.
+            hub.performTouchInput { moveTo(center + step) }
+            expected += step
+            assertEquals(expected, windowPosition())
+        }
+
+        hub.performTouchInput { up() }
+        assertSame(node.root, hub.fetchSemanticsNode().root)
+        assertEquals(expected, windowPosition())
+    }
+
     private fun assertDrag(floating: Boolean) {
         render(800, ThemeMode.Light, floating = floating)
         val before = compose.onNodeWithContentDescription("Brush options").fetchSemanticsNode().positionOnScreen
-        compose.onNodeWithContentDescription("Brush options").performTouchInput { swipe(center, center + Offset(220f, 150f), 600) }
+        val distance = Offset(220f, 150f)
+        val expected = before + distance
+        compose.onNodeWithContentDescription("Brush options").performTouchInput { swipe(center, center + distance, 600) }
         val after = compose.onNodeWithContentDescription("Brush options").fetchSemanticsNode().positionOnScreen
-        assertEquals(before.x + 220f, after.x, 32f)
-        assertEquals(before.y + 150f, after.y, 32f)
+        assertEquals(expected.x, after.x, 2f)
+        assertEquals(expected.y, after.y, 2f)
         compose.onNodeWithContentDescription("Pen").assertIsDisplayed()
         compose.onNodeWithContentDescription("Lasso").performClick()
         compose.runOnIdle { assertEquals(Tool.Lasso, settings.tool) }
-        // Large drags stop at the reserved header, footer and action gutter.
-        compose.onNodeWithContentDescription("Brush options").performTouchInput { swipe(center, center + Offset(2000f, 2000f), 600) }
-        val pen = compose.onNodeWithContentDescription("Pen").fetchSemanticsNode().positionOnScreen
-        assertTrue(pen.x < 800f - 48f && pen.y < 800f - 68f)
+        // Drag past both edges, then reverse without lifting.
+        val hub = compose.onNodeWithContentDescription("Brush options")
+        hub.performTouchInput {
+            down(center)
+            moveBy(Offset(500f, 500f))
+            moveBy(Offset(-40f, -60f))
+            up()
+        }
+        val reversed = hub.fetchSemanticsNode().positionOnScreen
+        assertEquals(before.x + (800f - 208f - 60f) - 40f, reversed.x, 2f)
+        assertEquals(before.y + (800f - 400f) - 60f, reversed.y, 2f)
+    }
+
+    @Test fun scrollThumbReversesWithoutLiftingAtTheEnd() {
+        render(800, ThemeMode.Light, floating = true)
+        compose.onNodeWithContentDescription("Document scroll").performTouchInput {
+            down(center)
+            moveBy(Offset(0f, 200f))
+            moveBy(Offset(0f, -35f))
+            up()
+        }
+        val trackTravel = (180f - 16f) * (1f - 0.15f)
+        compose.runOnIdle { assertEquals(1f - 35f / trackTravel, scrolled, 0.01f) }
     }
 
     @Test fun realPopupActionsExposeLiveIndicators() {
@@ -305,9 +380,9 @@ class EditorToolbarTest {
                             EditorToolbar(
                                 title = "Untitled notebook", settings = settings, pagesOpen = false,
                                 onBack = {}, onRename = {}, onTogglePages = {}, onPagePaper = { papers++ }, onFullScreen = {}, onSettings = { precision++ },
-                                pdfPage = 2 to 30, onPage = { requestedPage = it }, canUndo = true, canRedo = true, zoom = 1.75f,
+                                pdfPage = 2 to 30, onPage = { requestedPage = it }, canUndo = true, canRedo = true, zoom = { 1.75f },
                                 saveStatus = saveStatus, onSave = { saves++ }, onExport = { exports++ },
-                                scrollFraction = { 0.3f }, viewportFraction = 0.15f, onResetZoom = { resets++ }, onScroll = { scrolled = it },
+                                scrollFraction = { 0.3f }, viewportFraction = { 0.15f }, onResetZoom = { resets++ }, onScroll = { scrolled = it },
                                 onUndo = { undos++ }, onRedo = { redos++ }, floatingWindows = floating, dial = dial,
                             )
                         }
@@ -432,12 +507,10 @@ class EditorToolbarTest {
         compose.onNodeWithContentDescription("Pen").assertDoesNotExist()
     }
 
-    @Test fun showToolsOpensTheHiddenDialFromMore() {
+    @Test fun showToolsOpensTheHiddenDialFromTheDock() {
         val dial = PenDialState()
         render(360, ThemeMode.Light, dial = dial, alwaysVisible = false)
-        compose.onNodeWithContentDescription("More").performClick()
-        compose.onNodeWithText("Collapse tools").assertDoesNotExist()
-        compose.onNodeWithText("Show tools").performClick()
+        compose.onNodeWithContentDescription("Show tools").assertIsDisplayed().performClick()
         compose.onNodeWithContentDescription("Close tools").assertIsDisplayed()
         assertTargetsApart(tools + listOf("Close tools"))
         compose.runOnIdle { dial.dismiss() }

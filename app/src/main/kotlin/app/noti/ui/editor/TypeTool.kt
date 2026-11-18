@@ -29,8 +29,8 @@ import app.noti.lines.TextBlockStore
 import app.noti.lines.TypeStyle
 import app.noti.lines.WriteLine
 import app.noti.pdf.PagePlacement
-import app.noti.transcribe.InkLines
-import app.noti.transcribe.TextInk
+import app.noti.lines.TextInk
+import app.noti.lines.PageStroke
 import kotlin.coroutines.resume
 import kotlin.math.atan
 import kotlin.math.max
@@ -84,7 +84,6 @@ internal class TypeSession(
     var style by mutableStateOf(style)
     var color by mutableStateOf(color)
     var busy by mutableStateOf(false)
-    var penPad by mutableStateOf(false)
     val field get() = fields[current]
     /** Laid out on the current field, for the preview and the panel (set by [TypeTool]). */
     var laid by mutableStateOf<Laid?>(null)
@@ -189,7 +188,7 @@ internal class TypeState {
 
 /**
  * The Type tool's half outside the engine (docs/TYPE_ON_LINES.md): each loop or tap the
- * engine reports (document state [10]) becomes a [TypeSession] on the lines there, or
+ * engine reports (document state [9]) becomes a [TypeSession] on the lines there, or
  * reopens text typed there before; "Fill this page" makes one of the whole page. Placing
  * turns the text into ink (one undoable edit) and saves it as a [TextBlock].
  */
@@ -209,7 +208,7 @@ internal fun TypeTool(
     SideEffect { state.regular = regular; state.bold = bold }
     val inkRegular = remember { TextInk(regular) }
     val inkBold = remember { TextInk(bold) }
-    val serial = documentState.getOrNull(10)?.toLong() ?: 0L
+    val serial = documentState.getOrNull(9)?.toLong() ?: 0L
     var handled by remember(layer) { mutableLongStateOf(serial) }
     var handledFill by remember { mutableIntStateOf(state.fillRequest) }
     val lock = remember { Mutex() }
@@ -346,7 +345,7 @@ internal fun TypeTool(
         // Text typed here before reopens.
         val store = blocks
         if (store != null && store.blocks.any { it.page == page }) {
-            val ink = InkLines.parse(suspendCancellableCoroutine { c -> current.pageInk(page) { c.resume(it) } })
+            val ink = PageStroke.parse(suspendCancellableCoroutine { c -> current.pageInk(page) { c.resume(it) } })
             val matches = BlockMatcher.find(store.blocks, page, ink)
             val hit = if (tap) matches.firstOrNull { it.contains(tx, ty, it.block.em * 0.4f) }
                 else matches.firstOrNull { m -> m.strokes.count { s -> LinePicker.inside(loop, (s.x0 + s.x1) / 2, (s.y0 + s.y1) / 2) } * 2 > m.strokes.size }
@@ -387,7 +386,7 @@ internal fun TypeTool(
         val labels = src.labels(page, groups.map { it.first() })
         val matches = blocks?.let { store ->
             if (store.blocks.none { it.page == page }) emptyList()
-            else BlockMatcher.find(store.blocks, page, InkLines.parse(suspendCancellableCoroutine { c -> current.pageInk(page) { c.resume(it) } }))
+            else BlockMatcher.find(store.blocks, page, PageStroke.parse(suspendCancellableCoroutine { c -> current.pageInk(page) { c.resume(it) } }))
         }.orEmpty()
         val used = HashSet<BlockMatch>()
         val fields = groups.mapIndexed { i, lines ->

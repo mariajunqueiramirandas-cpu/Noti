@@ -12,7 +12,7 @@
 //
 // Per MotionEvent the ink thread writes N InkSample records (40 B, native byte
 // order) into a direct ByteBuffer that *is* native memory and calls
-// @CriticalNative nativeProcess(handle, N): a plain C call (no JNIEnv, no
+// @CriticalNative nativeProcess: a plain C call (no JNIEnv, no
 // marshalling, no pinning) that predicts and draws before returning.
 // All natives are bound with RegisterNatives (required for @CriticalNative).
 //
@@ -87,9 +87,7 @@ int64_t flush_palm(Instance* i) {
   int64_t d = -1;
   noti::PalmFilter& f = i->palm;
   if (f.ink_count()) d = i->engine.process(f.ink(), f.ink_count());
-  const uint32_t n = f.gesture_count();
-  for (uint32_t k = 0; k < n && i->out.count < int32_t(noti::PalmFilter::kMaxGestures); ++k)
-    i->out.events[i->out.count++] = f.gestures()[k];
+  i->out.count += f.copy_gestures(i->out.events + i->out.count, noti::PalmFilter::kMaxGestures - i->out.count);
   f.clear_outputs();
   noti::ContactReport r[8];
   for (uint32_t m; (m = f.drain_reports(r, 8)) > 0;) {
@@ -245,7 +243,6 @@ jboolean nativeDocumentAction(JNIEnv*, jclass, jlong h, jint action, jint page) 
   if (action == 0) e.undo();
   else if (action == 1) e.redo();
   else if (action == 5) e.finish_input();
-  else if (action == 6) e.clear_selection();
   else return e.edit_page(action - 2, uint32_t(page));
   return JNI_TRUE;
 }
@@ -254,8 +251,8 @@ jdoubleArray nativeDocumentState(JNIEnv* env, jclass, jlong h) {
   const auto b = e.selection_bounds();
   const jdouble values[] = {double(e.revision()), double(e.can_undo()), double(e.can_redo()), double(e.selection_count()),
     b.empty() ? 0.0 : b.x0, b.empty() ? 0.0 : b.y0, b.empty() ? 0.0 : b.x1, b.empty() ? 0.0 : b.y1, double(e.document_busy()),
-    double(e.transcribe_serial()), double(e.type_serial())};
-  auto out = env->NewDoubleArray(11); env->SetDoubleArrayRegion(out, 0, 11, values); return out;
+    double(e.type_serial())};
+  auto out = env->NewDoubleArray(10); env->SetDoubleArrayRegion(out, 0, 10, values); return out;
 }
 jfloatArray floats(JNIEnv* env, const std::vector<float>& data) {
   auto out = env->NewFloatArray(jsize(data.size()));
@@ -266,12 +263,6 @@ jfloatArray nativeTypeLoop(JNIEnv* env, jclass, jlong h) { return floats(env, in
 jfloatArray nativePageInk(JNIEnv* env, jclass, jlong h, jint page) {
   if (page < 0) return floats(env, {0.f});
   return floats(env, inst(h)->engine.page_ink(uint32_t(page)));
-}
-jfloatArray nativeSelectionInk(JNIEnv* env, jclass, jlong h) {
-  const auto data = inst(h)->engine.selection_ink();
-  auto out = env->NewFloatArray(jsize(data.size()));
-  if (out) env->SetFloatArrayRegion(out, 0, jsize(data.size()), data.data());
-  return out;
 }
 jboolean nativeReplaceStrokes(JNIEnv* env, jclass, jlong h, jintArray ids, jint page, jfloatArray color,
                               jfloatArray capsules, jintArray sizes) {
@@ -285,7 +276,6 @@ jboolean nativeReplaceStrokes(JNIEnv* env, jclass, jlong h, jintArray ids, jint 
   if (!caps.empty()) env->GetFloatArrayRegion(capsules, 0, jsize(caps.size() * 6), reinterpret_cast<float*>(caps.data()));
   return inst(h)->engine.replace_strokes(idv, uint32_t(page), rgba, caps, sizev) ? JNI_TRUE : JNI_FALSE;
 }
-
 void nativeSurfaceChanged(JNIEnv* env, jclass, jlong h, jobject surface, jint w, jint hh) {
   Command c{CommandType::kSurfaceChanged};
   c.ptr = surface ? ANativeWindow_fromSurface(env, surface) : nullptr;  // reference passed to the renderer
@@ -295,7 +285,11 @@ void nativeSurfaceChanged(JNIEnv* env, jclass, jlong h, jobject surface, jint w,
 }
 
 void nativeSurfaceDestroyed(JNIEnv*, jclass, jlong h) {
-  inst(h)->engine.execute(Command{CommandType::kSurfaceDestroyed});
+  Instance* i = inst(h);
+  i->out.count = 0;
+  i->palm.reset_input(noti::now_ns());
+  flush_palm(i);
+  i->engine.execute(Command{CommandType::kSurfaceDestroyed});
 }
 
 jlong nativeExportRecording(JNIEnv* env, jclass, jlong h, jstring path) {
@@ -328,15 +322,18 @@ void nativeStats(JNIEnv* env, jclass, jlong h, jlongArray out) {
 
 // ---- ink thread hot path (@CriticalNative: no JNIEnv / jclass) ----
 
-jlong nativeProcess(jlong h, jint count) {
+jlong nativeProcess(jlong h, jint count, jboolean observe, jboolean draw) {
   Instance* i = inst(h);
   const uint32_t n = count < 0 ? 0u : std::min(uint32_t(count), kStagingSamples);
   i->out.count = 0;
   // The pen is never filtered; it informs the filter first, which may roll back
   // a finger stroke (that cancel must reach the engine before the pen does).
-  i->palm.observe_pen(i->staging, n);
-  if (NOTI_UNLIKELY(i->palm.ink_count() || i->palm.gesture_count())) flush_palm(i);
-  const int64_t d = i->engine.process(i->staging, n);
+  int64_t d = -1;
+  if (observe) {
+    i->palm.observe_pen(i->staging, n);
+    if (NOTI_UNLIKELY(i->palm.ink_count() || i->palm.gesture_count())) d = flush_palm(i);
+  }
+  if (draw) d = min_deadline(d, i->engine.process(i->staging, n));
   i->out.deadline_ns = i->palm.next_deadline(noti::now_ns());
   return min_deadline(d, i->out.deadline_ns);
 }
@@ -444,12 +441,11 @@ const JNINativeMethod kMethods[] = {
     M(nativeRestore, "(J[B)Z"),
     M(nativeDocumentAction, "(JII)Z"),
     M(nativeDocumentState, "(J)[D"),
-    M(nativeSelectionInk, "(J)[F"),
     M(nativeTypeLoop, "(J)[F"),
     M(nativePageInk, "(JI)[F"),
     M(nativeReplaceStrokes, "(J[II[F[F[I)Z"),
     M(nativeTouch, "(JI)J"),
-    M(nativeProcess, "(JI)J"),
+    M(nativeProcess, "(JIZZ)J"),
     M(nativeIdle, "(J)J"),
     M(nativeVsync, "(JJJ)V"),
     M(nativeSetColor, "(JFFFF)V"),

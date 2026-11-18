@@ -92,11 +92,9 @@ internal object NotiInk {
     @JvmStatic external fun nativeRestore(handle: Long, data: ByteArray): Boolean
     @JvmStatic external fun nativeDocumentAction(handle: Long, action: Int, page: Int): Boolean
     @JvmStatic external fun nativeDocumentState(handle: Long): DoubleArray
-    /** The selected strokes in page units (see InkEngine::selection_ink). */
-    @JvmStatic external fun nativeSelectionInk(handle: Long): FloatArray
     /** The Type tool's last loop or tap: [page, then x y per point] in page units (InkEngine::type_loop). */
     @JvmStatic external fun nativeTypeLoop(handle: Long): FloatArray
-    /** Every visible stroke of a page, in the selection-ink format (InkEngine::page_ink). */
+    /** Every visible stroke of a page, as [count, then per stroke: id, page, rgba, n, n capsules] (InkEngine::page_ink). */
     @JvmStatic external fun nativePageInk(handle: Long, page: Int): FloatArray
     /** Hides [ids] and adds strokes on [page], as one undoable edit (InkEngine::replace_strokes). */
     @JvmStatic external fun nativeReplaceStrokes(handle: Long, ids: IntArray, page: Int, color: FloatArray,
@@ -113,7 +111,7 @@ internal object NotiInk {
     @CriticalNative @JvmStatic external fun nativeTouch(handle: Long, count: Int): Long
 
     /** Predicts and draws `count` staged samples; returns the next housekeeping deadline (ns) or -1. */
-    @CriticalNative @JvmStatic external fun nativeProcess(handle: Long, count: Int): Long
+    @CriticalNative @JvmStatic external fun nativeProcess(handle: Long, count: Int, observe: Boolean, draw: Boolean): Long
     @CriticalNative @JvmStatic external fun nativeIdle(handle: Long): Long
     @CriticalNative @JvmStatic external fun nativeVsync(handle: Long, presentNanos: Long, periodNanos: Long)
 

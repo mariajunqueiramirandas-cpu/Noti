@@ -78,7 +78,7 @@ data class PalmSpec(
  * Main thread.
  */
 @Stable
-class PageController {
+class PageController(internal val initialPage: Int? = null) {
     var placement by mutableStateOf<PagePlacement?>(null)
         internal set
     var documentState by mutableStateOf(DoubleArray(8))
@@ -185,6 +185,7 @@ fun InkCanvas(
         }
         // Not drawn yet (no canvas size or document), so safe before the ink thread owns it.
         if (sheet) viewport.setSheet(screenPx, EndlessCanvas.SPAN, EndlessCanvas.HOME_Y, EndlessCanvas.GROW)
+        controller.initialPage?.let(viewport::goTo)
         val gestures = CanvasGestures(
             ViewConfiguration.get(context).scaledTouchSlop.toFloat(), viewport,
             onTwoFingerTap = { if (undoTap.value) created.documentAction(0) },
@@ -257,17 +258,7 @@ fun InkCanvas(
     LaunchedEffect(topPx, bottomPx) {
         layer.runOnInkThread { rig.viewport.setVerticalInsets(topPx, bottomPx) }
     }
-    LaunchedEffect(controller.requestedScroll, controller.resetZoomRequested) {
-        val scroll = controller.requestedScroll
-        val reset = controller.resetZoomRequested
-        if (scroll != null || reset) layer.runOnInkThread {
-            rig.gestures.stopMotion()
-            if (reset) rig.viewport.resetZoom()
-            if (scroll != null) rig.viewport.scrollTo(scroll)
-        }
-        controller.requestedScroll = null
-        controller.resetZoomRequested = false
-    }
+    ApplyScrollRequests(controller, rig)
     // Ink follows the document in the same display frame: the engine's ink layer moves
     // with the placement the canvas is about to draw (Android 14+, see InkLayer).
     DisposableEffect(layer, controller) {
@@ -311,6 +302,22 @@ internal fun DocumentViewport(modifier: Modifier = Modifier, content: @Composabl
 
 /** One canvas's engine and, for a PDF, its page viewport (owned by the ink thread). */
 private class Rig(val layer: InkLayer, val viewport: PageViewport, val gestures: CanvasGestures)
+
+/** Keep scroll thumb movement from recomposing the canvas for each input sample. */
+@Composable
+private fun ApplyScrollRequests(controller: PageController, rig: Rig) {
+    LaunchedEffect(controller.requestedScroll, controller.resetZoomRequested) {
+        val scroll = controller.requestedScroll
+        val reset = controller.resetZoomRequested
+        if (scroll != null || reset) rig.layer.runOnInkThread {
+            rig.gestures.stopMotion()
+            if (reset) rig.viewport.resetZoom()
+            if (scroll != null) rig.viewport.scrollTo(scroll)
+        }
+        controller.requestedScroll = null
+        controller.resetZoomRequested = false
+    }
+}
 
 /** The visible pages as the engine's flat [page, x, y, width, height] list. */
 internal fun PagePlacement.pageArray(): FloatArray {

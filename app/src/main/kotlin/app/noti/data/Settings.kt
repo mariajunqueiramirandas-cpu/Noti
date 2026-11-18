@@ -2,6 +2,7 @@ package app.noti.data
 
 import android.content.Context
 import app.noti.ink.PenHold
+import java.security.KeyStore
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -16,8 +17,6 @@ enum class Predictor(val label: String, val engineId: Int) {
 /** The engine takes a tool by [ordinal] (InkEngine::set_tool): keep this order. */
 enum class Tool(val label: String) {
     Pen("Pen"), Highlighter("Highlighter"), Eraser("Eraser"), Lasso("Lasso"),
-    /** A lasso whose loop turns the handwriting inside it into text. */
-    Transcribe("Transcribe"),
     /** A loop or tap on lines (a PDF's, or lined paper's) to type onto them (Type on lines). */
     Type("Type"),
 }
@@ -55,14 +54,23 @@ data class ToolSlots(
 class SettingsStore(context: Context) {
     private val prefs = context.getSharedPreferences("settings", Context.MODE_PRIVATE)
 
-    /** The Mistral API key Study boards use, encrypted on the device. */
-    val studyKey = app.noti.study.ApiKeyStore(context)
-
-    /** New study items: how many, and how hard (1 review · 2 exam · 3 hard). */
-    var studyCount by pref(15, { prefs.getInt("studyCount", it) }) { putInt("studyCount", it) }
-    var studyLevel by pref(2, { prefs.getInt("studyLevel", it) }) { putInt("studyLevel", it) }
+    init {
+        // Delete credentials left by the retired study service without reading their values.
+        val retiredKeys = context.getSharedPreferences("study_keys", Context.MODE_PRIVATE)
+        if (retiredKeys.contains("mistral") || retiredKeys.contains("mistralHint")) {
+            runCatching {
+                KeyStore.getInstance("AndroidKeyStore").apply { load(null); deleteEntry("noti-mistral-key") }
+            }
+            context.deleteSharedPreferences("study_keys")
+        }
+    }
 
     var theme by pref(ThemeMode.System, { enumOr(prefs.getString("theme", null), it) }) { putString("theme", it.name) }
+
+    var librarySort by pref(SortOrder.Recent, { enumOr(prefs.getString("librarySort", null), it) }) {
+        putString("librarySort", it.name)
+    }
+    var libraryList by pref(false, { prefs.getBoolean("libraryList", it) }) { putBoolean("libraryList", it) }
 
     /** Off = constant width, whatever the pressure. */
     var pressureOn by pref(true, { prefs.getBoolean("pressureOn", it) }) { putBoolean("pressureOn", it) }
@@ -99,11 +107,6 @@ class SettingsStore(context: Context) {
     }
 
     var tapUndo by pref(true, { prefs.getBoolean("tapUndo", it) }) { putBoolean("tapUndo", it) }
-
-    /** The language the Transcribe tool reads (a BCP 47 tag); empty follows the device language. */
-    var handwritingLanguage by pref("", { prefs.getString("handwritingLanguage", null) ?: it }) {
-        putString("handwritingLanguage", it)
-    }
 
     /**
      * Type on lines: the alignment and weight new text starts with. Not the size: sizes are
@@ -146,6 +149,8 @@ class SettingsStore(context: Context) {
     val toolDialOnHold get() = !toolDialAlways && penButtonsEnabled && penButtonHold == PenHold.Dial
     var penLegacyKeys by pref(true, { prefs.getBoolean("penLegacyKeys", it) }) { putBoolean("penLegacyKeys", it) }
     var penSwapLegacyKeys by pref(false, { prefs.getBoolean("penSwapLegacyKeys", it) }) { putBoolean("penSwapLegacyKeys", it) }
+    /** Clicks from the pen's own button flags: the Samsung S Pen path (see StylusButtonOptions.motionClicks). */
+    var penMotionClicks by pref(true, { prefs.getBoolean("penMotionClicks", it) }) { putBoolean("penMotionClicks", it) }
     var primaryButtonAction by pref(PenButtonAction.ToggleEraser, { enumOr(prefs.getString("primaryButtonAction", null), it) }) {
         putString("primaryButtonAction", it.name)
     }

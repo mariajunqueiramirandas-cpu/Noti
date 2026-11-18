@@ -5,10 +5,11 @@
 
 namespace noti {
 namespace {
-float point_segment(float x, float y, float ax, float ay, float bx, float by) {
+float point_segment_squared(float x, float y, float ax, float ay, float bx, float by) {
   const float dx = bx - ax, dy = by - ay, len = dx * dx + dy * dy;
   const float t = len > 0 ? std::clamp(((x - ax) * dx + (y - ay) * dy) / len, 0.f, 1.f) : 0;
-  return std::hypot(x - ax - t * dx, y - ay - t * dy);
+  const float ex = x - ax - t * dx, ey = y - ay - t * dy;
+  return ex * ex + ey * ey;
 }
 bool hit_segment(float ax, float ay, float bx, float by, const Capsule& c, float radius) {
   const float ux = bx - ax, uy = by - ay, vx = c.x1 - c.x0, vy = c.y1 - c.y0;
@@ -18,10 +19,11 @@ bool hit_segment(float ax, float ay, float bx, float by, const Capsule& c, float
     const float t = (qx * vy - qy * vx) / det, u = (qx * uy - qy * ux) / det;
     if (t >= 0 && t <= 1 && u >= 0 && u <= 1) return true;
   }
-  const float d = std::min({point_segment(ax, ay, c.x0, c.y0, c.x1, c.y1),
-    point_segment(bx, by, c.x0, c.y0, c.x1, c.y1),
-    point_segment(c.x0, c.y0, ax, ay, bx, by), point_segment(c.x1, c.y1, ax, ay, bx, by)});
-  return d <= radius + std::max(c.r0, c.r1);
+  const float r = radius + std::max(c.r0, c.r1), r2 = r * r;
+  return point_segment_squared(ax, ay, c.x0, c.y0, c.x1, c.y1) <= r2 ||
+         point_segment_squared(bx, by, c.x0, c.y0, c.x1, c.y1) <= r2 ||
+         point_segment_squared(c.x0, c.y0, ax, ay, bx, by) <= r2 ||
+         point_segment_squared(c.x1, c.y1, ax, ay, bx, by) <= r2;
 }
 }
 
@@ -74,6 +76,7 @@ bool InkEngine::pick_page(float x, float y) noexcept {
 }
 
 void InkEngine::set_tool(int tool) noexcept {
+  if (tool < 0 || tool > 4) tool = 0;  // 4 is Type (Type on lines)
   if (tool_ == tool) return;
   if (active_) finish_stroke(last_t_);
   if (editing_) end_edit(true);
@@ -87,7 +90,7 @@ RectF InkEngine::selection_bounds() const noexcept {
   return out;
 }
 
-bool InkEngine::edit_sample(const InkSample& s) {
+bool InkEngine::edit_sample(const InkSample& s, bool& redraw) {
   const bool contact = s.action == Action::kDown || s.action == Action::kMove || s.action == Action::kUp || s.action == Action::kCancel;
   if (!contact) return false;
   if (s.action == Action::kDown) {
@@ -106,20 +109,25 @@ bool InkEngine::edit_sample(const InkSample& s) {
     polygon_.push_back({edit_x_, edit_y_});
   }
   if (!editing_) return gesture_tool_ >= 2;
-  if (s.action == Action::kCancel) { end_edit(true); return true; }
+  if (s.action == Action::kCancel) { end_edit(true, &redraw); return true; }
   float x, y; cfg_.input_to_surface.apply(s.x, s.y, &x, &y);
   if (gesture_tool_ == 2) {
     const float radius = 18.f * scale_;
-    bool changed = false;
+    const float x0 = std::min(x, edit_x_) - radius, x1 = std::max(x, edit_x_) + radius;
+    const float y0 = std::min(y, edit_y_) - radius, y1 = std::max(y, edit_y_) + radius;
     for (uint32_t id = 0; id < store_.stroke_count(); ++id) {
       const auto& r = store_.stroke(id);
       if (r.hidden || !r.on_screen || r.page != page_) continue;
-      if (r.bounds.x1 < std::min(x, edit_x_) - radius || r.bounds.x0 > std::max(x, edit_x_) + radius || r.bounds.y1 < std::min(y, edit_y_) - radius || r.bounds.y0 > std::max(y, edit_y_) + radius) continue;
-      for (uint32_t j = 0; j < r.capsule_count; ++j) if (hit_segment(edit_x_, edit_y_, x, y, store_.capsules(id)[j], radius)) {
-        store_.set_hidden(id, true); edit_.ids.push_back(id); changed = true; break;
+      if (r.bounds.x1 < x0 || r.bounds.x0 > x1 || r.bounds.y1 < y0 || r.bounds.y0 > y1) continue;
+      const Capsule* caps = store_.capsules(id);
+      for (uint32_t j = 0; j < r.capsule_count; ++j) {
+        if (!hit_segment(edit_x_, edit_y_, x, y, caps[j], radius)) continue;
+        store_.set_hidden(id, true);
+        edit_.ids.push_back(id);
+        redraw = true;
+        break;
       }
     }
-    if (changed) redraw_document();
   } else if (moving_selection_) {
     float dx = x - edit_x_, dy = y - edit_y_;
     if (document_mode_) {
@@ -132,15 +140,17 @@ bool InkEngine::edit_sample(const InkSample& s) {
       }
     }
     dx /= page_map_.s; dy /= page_map_.s;
-    for (auto id : selected_) store_.translate(id, dx, dy, page_map_);
-    edit_.dx += dx; edit_.dy += dy;
-    redraw_document();
+    if (dx != 0 || dy != 0) {
+      for (auto id : selected_) store_.translate(id, dx, dy, page_map_);
+      edit_.dx += dx; edit_.dy += dy;
+      redraw = true;
+    }
   } else {
     Capsule c{edit_x_, edit_y_, 1.5f, x, y, 1.5f};
     edit_bounds_.add(c);
-    // Lasso loops are blue; transcribe and type loops are Noti's plum.
+    // Lasso loops are blue; type loops are Noti's plum.
     static constexpr float kBlue[4] = {0.15f, 0.35f, 0.9f, 1.f}, kPlum[4] = {0.36f, 0.29f, 0.53f, 1.f};
-    FrameUpdate f; f.ink = &c; f.ink_count = 1; f.color = gesture_tool_ >= 4 ? kPlum : kBlue; RectF b; b.add(c);
+    FrameUpdate f; f.ink = &c; f.ink_count = 1; f.color = gesture_tool_ == 4 ? kPlum : kBlue; RectF b; b.add(c);
     f.ink_rect = pixel_bounds(b, surface_w_, surface_h_); renderer_.render(f);
     polygon_.push_back({x, y});
   }
@@ -149,9 +159,9 @@ bool InkEngine::edit_sample(const InkSample& s) {
   return true;
 }
 
-void InkEngine::end_edit(bool cancel) {
+void InkEngine::end_edit(bool cancel, bool* redraw) {
   editing_ = false;
-  if (gesture_tool_ == 5) {
+  if (gesture_tool_ == 4) {
     // Type: the loop (or tap) is a place on the page, not a selection of ink. It is kept in
     // page units for the app, which finds the lines there.
     renderer_.cancel(pixel_bounds(edit_bounds_, surface_w_, surface_h_));
@@ -160,7 +170,7 @@ void InkEngine::end_edit(bool cancel) {
       for (const auto& p : polygon_) type_loop_.insert(type_loop_.end(), {(p.x - page_map_.ox) / page_map_.s, (p.y - page_map_.oy) / page_map_.s});
       ++type_serial_;
     }
-  } else if ((gesture_tool_ == 3 || gesture_tool_ == 4) && !moving_selection_) {
+  } else if (gesture_tool_ == 3 && !moving_selection_) {
     renderer_.cancel(pixel_bounds(edit_bounds_, surface_w_, surface_h_));
     if (!cancel && polygon_.size() >= 3) {
       auto inside = [&](float x, float y) {
@@ -181,10 +191,13 @@ void InkEngine::end_edit(bool cancel) {
         }
         if (contained) selected_.push_back(id);
       }
-      if (gesture_tool_ == 4) ++transcribe_serial_;
     }
   } else if (!edit_.ids.empty()) {
-    if (cancel) { apply_edit(false, edit_); redraw_document(); }
+    if (cancel) {
+      apply_edit(false, edit_);
+      if (redraw) *redraw = true;
+      else redraw_document();
+    }
     else if (edit_.kind != 2 || edit_.dx != 0 || edit_.dy != 0) remember_edit(std::move(edit_));
   }
   polygon_.clear(); edit_ = {}; moving_selection_ = false;
@@ -206,21 +219,6 @@ void InkEngine::apply_edit(bool forward, const EditAction& action) {
       store_.translate(id, sign * action.dx, sign * action.dy, map);
     } else store_.set_hidden(id, action.kind == 0 ? !forward : forward);
   }
-}
-
-std::vector<float> InkEngine::selection_ink() const {
-  std::vector<float> out{0.f};
-  uint32_t count = 0;
-  for (auto id : selected_) {
-    const auto& r = store_.stroke(id);
-    if (r.hidden) continue;
-    ++count;
-    out.insert(out.end(), {float(id), float(r.page), r.color[0], r.color[1], r.color[2], r.color[3], float(r.capsule_count)});
-    const Capsule* c = store_.canonical(id);
-    for (uint32_t j = 0; j < r.capsule_count; ++j) out.insert(out.end(), {c[j].x0, c[j].y0, c[j].r0, c[j].x1, c[j].y1, c[j].r1});
-  }
-  out[0] = float(count);
-  return out;
 }
 
 std::vector<float> InkEngine::page_ink(uint32_t page) const {

@@ -29,6 +29,10 @@ class PenButtonsTest {
         assertTrue(settings.penButtonOptions().enabled)
         assertFalse(settings.penButtonOptions().captureFocus)
         assertFalse(settings.penButtonOptions(enabled = false).enabled)
+        // The S Pen reports its button only in motion events.
+        assertTrue(settings.penButtonOptions().motionClicks)
+        settings.penMotionClicks = false
+        assertFalse(SettingsStore(context).penButtonOptions().motionClicks)
     }
 
     @Test fun toggleToolsReturnToTheUsersLastDrawingToolAcrossReopening() {
@@ -127,6 +131,13 @@ class PenButtonsTest {
         assertFalse(settings.toolDialOnHold)
     }
 
+    @Test fun retiredToolFallsBackToPenAndOldStudyCredentialsAreRemoved() {
+        context.getSharedPreferences("settings", Context.MODE_PRIVATE).edit().putString("tool", "Transcribe").commit()
+        context.getSharedPreferences("study_keys", Context.MODE_PRIVATE).edit().putString("mistral", "obsolete").commit()
+        assertEquals(Tool.Pen, SettingsStore(context).tool)
+        assertTrue(context.getSharedPreferences("study_keys", Context.MODE_PRIVATE).all.isEmpty())
+    }
+
     @Test fun dialSegmentsPickToolsAndReturnToTheLastDrawingToolForPresets() {
         settings.applyDialSegment(1)
         assertEquals(Tool.Highlighter, settings.tool)
@@ -135,8 +146,6 @@ class PenButtonsTest {
         settings.applyDialSegment(DialColors + 2)
         assertEquals(Tool.Highlighter, settings.tool)
         assertEquals(2, settings.highlighterSlots.color)
-        settings.applyDialSegment(4)
-        assertEquals(Tool.Transcribe, settings.tool)
         settings.applyDialSegment(0)
         settings.applyDialSegment(3)
         settings.applyDialSegment(DialWidths + 2)

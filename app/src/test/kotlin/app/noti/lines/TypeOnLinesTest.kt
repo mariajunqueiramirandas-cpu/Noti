@@ -5,8 +5,6 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import app.noti.R
-import app.noti.transcribe.TextInk
-import app.noti.transcribe.engineCoverage
 import java.io.File
 import kotlin.math.max
 import kotlin.math.min

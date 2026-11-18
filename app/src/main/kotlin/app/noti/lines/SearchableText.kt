@@ -4,7 +4,6 @@ import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.Typeface
 import app.noti.data.InkArchive
-import app.noti.transcribe.SelectedStroke
 import kotlin.math.atan
 
 /**
@@ -14,20 +13,20 @@ import kotlin.math.atan
  */
 object SearchableText {
     /** The archive's strokes as the matcher sees ink: centreline from the first capsule's start. */
-    fun strokes(archive: List<InkArchive.Stroke>): List<SelectedStroke> = archive.mapIndexed { i, s ->
+    fun strokes(archive: List<InkArchive.Stroke>): List<PageStroke> = archive.mapIndexed { i, s ->
         val c = s.capsules
         val n = c.size / 6
         val points = FloatArray(2 + n * 2)
         if (n > 0) { points[0] = c[0]; points[1] = c[1] }
         for (j in 0 until n) { points[2 + j * 2] = c[j * 6 + 3]; points[3 + j * 2] = c[j * 6 + 4] }
-        SelectedStroke(i, s.page, s.color, points)
+        PageStroke(i, s.page, s.color, points)
     }
 
     /**
      * Writes the text of [blocks] found on [page] among [ink] into [canvas], which draws in
      * page units. The words are laid out exactly as their ink was.
      */
-    fun draw(canvas: Canvas, page: Int, ink: List<SelectedStroke>, blocks: List<TextBlock>, regular: Typeface, bold: Typeface, mmPerUnit: Float) {
+    fun draw(canvas: Canvas, page: Int, ink: List<PageStroke>, blocks: List<TextBlock>, regular: Typeface, bold: Typeface, mmPerUnit: Float) {
         if (blocks.none { it.page == page }) return
         val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.LINEAR_TEXT_FLAG or Paint.SUBPIXEL_TEXT_FLAG)
         for (m in BlockMatcher.find(blocks, page, ink)) {

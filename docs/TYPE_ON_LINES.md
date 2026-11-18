@@ -55,7 +55,7 @@ does before checking it.
 ### The panel
 
 <p align="center">
-  <img src="type-on-lines/panel-light.png" alt="The Type panel: a text field, Fit 15 pt, smaller and bigger buttons, Centre, Bold, Write, today's date chip, Cancel and Place" width="460">
+  <img src="type-on-lines/panel-light.png" alt="The Type panel: a text field, Fit 15 pt, smaller and bigger buttons, Centre, Bold, today's date chip, Cancel and Place" width="460">
   <img src="type-on-lines/panel-overflow-dark.png" alt="The Type panel in dark mode saying 32 words don't fit, with Shrink to fit and Keep going" width="460">
 </p>
 
@@ -67,8 +67,6 @@ does before checking it.
 - **Quick fills** are chips that insert at the cursor: today's date, plus anything you save in **Settings → Writing
   → Quick fills** (your name, student number, class). In a form, a fill whose label matches the field's printed label
   comes first.
-- **Write** opens a pad where you write with the pen instead. Your writing is read on the tablet by the same
-  recognizer as Transcribe and inserted at the cursor, so it lands on the lines as tidy text.
 - Keys: **Tab / Shift-Tab** move between fields in a form, **Esc** cancels, **Ctrl+Enter** places.
 
 ### Fill this page (PDFs)
@@ -141,7 +139,7 @@ flowchart LR
 
 A whole A4 form page (16 blanks) takes about 60 ms on a desktop JVM. A typical loop's region is a fraction of that.
 
-### 4.2 Putting text on them (`lines/LineLayout.kt`, `transcribe/TextInk.kt`)
+### 4.2 Putting text on them (`lines/LineLayout.kt`, `lines/TextInk.kt`)
 
 `LineLayout` is pure arithmetic over a measure function, so the live preview and the ink use the same layout. It
 picks one em for the block (0.62 × the median room, clamped), puts each baseline 0.05 em above the line's top edge,
@@ -150,13 +148,13 @@ take one character per box. Overflow is reported, shrunk (a binary search for th
 on extra lines.
 
 `TextInk.place` turns the placed words into capsule strokes: the font outline of each word is traced into
-capsules, as Transcribe's *Replace on page* already did, turned to its line's slope, and kept as one stroke per word.
+capsules (`ShapeCapsules`), turned to its line's slope, and kept as one stroke per word.
 They go to `InkEngine::replace_strokes` as a single undoable edit.
 
 ### 4.3 The Type tool in the engine
 
-Tool 5 is a loop like Transcribe's, in plum. It selects nothing. It records the loop, or a tap, in **page units**
-with its page (`InkEngine::type_loop`), and counts it (document state [10]) so the app notices.
+Tool 4 is a loop like the lasso's, in plum. It selects nothing. It records the loop, or a tap, in **page units**
+with its page (`InkEngine::type_loop`), and counts it (document state [9]) so the app notices.
 `InkEngine::page_ink(page)` lists a page's visible strokes, which is used to find typed text again. The Type panel
 is a popup above the ink window that is **focusable but not touch-modal** (`FLAG_NOT_TOUCH_MODAL`): the keyboard
 types into it while the pen still reaches the page around it. Highlights and the live preview are drawn under the
@@ -187,7 +185,7 @@ change:
 
 | Question | Built as |
 |---|---|
-| Name and place | **Type**, a 12th dial segment (keyboard icon). The dial's touch targets moved 4 dp outward so the four diagonal ones stay clear of the hub. |
+| Name and place | **Type**, a fifth tool on the dial (keyboard icon), making eleven segments. |
 | Ink or text object | **Ink plus a text record**: it behaves like all other ink and stays editable. |
 | Fonts | Nunito and Nunito Bold. No handwriting-style font yet. |
 | MVP scope | All of it: rules, labels, dotted, tilted, cells, boxes, combs, forms. |

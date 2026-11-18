@@ -9,6 +9,9 @@ on:
       - 'gradle.properties'
       - 'gradle/**'
       - 'gradlew'
+      - 'protocol/**'
+      - 'extensions/assaad-reader/platform-api.js'
+      - 'extensions/assaad-reader/reader.js'
       - '.github/workflows/android-ui-tests.yml'
   workflow_dispatch:
 
@@ -47,6 +50,7 @@ jobs:
             app/build/reports/editor-ui/
             app/build/reports/mobile-ui/
             app/build/reports/brand-ui/
+            app/build/reports/assaad-ui/
             app/build/test-results/testDebugUnitTest/
           retention-days: 7
           if-no-files-found: warn

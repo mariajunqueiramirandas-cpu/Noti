@@ -71,10 +71,12 @@ class MobileLayoutTest {
         assertInside(compose.onNodeWithContentDescription("Clear selection"))
         assertInside(compose.onNodeWithContentDescription("Selection actions"))
         compose.onNodeWithContentDescription("Selection actions").performClick()
-        listOf("Favorite", "Move", "Rename", "Duplicate", "Export", "Delete").forEach {
+        listOf("Favorite", "Move to folder", "Rename", "Duplicate", "Export PDF", "Move to trash").forEach {
             compose.onNodeWithText(it).assertIsDisplayed()
         }
         compose.onNodeWithText("Favorite", substring = false).performClick()
+        compose.onNodeWithContentDescription("Select all visible documents").performClick()
+        compose.onNodeWithText("2 selected").assertIsDisplayed()
         compose.onNodeWithContentDescription("Clear selection").performClick()
         compose.runOnIdle { assertTrue(library.notebooks.first { it.name == "Meeting notes" }.favorite) }
     }

@@ -53,6 +53,8 @@ class PageViewport(private val marginPx: Float, private val onChange: (PagePlace
     private var homeY = 0f
     private var growBy = 0f
     private var placed = false
+    private var pendingPage: Int? = null
+    private var selectedPage: Int? = null
     val pageCount get() = aspects.size
     val isSheet get() = screenPx > 0f
 
@@ -74,9 +76,15 @@ class PageViewport(private val marginPx: Float, private val onChange: (PagePlace
         // A sheet has one page, which only ever grows (the view may have grown it already).
         val next = if (isSheet) floatArrayOf(maxOf(valid.firstOrNull() ?: 1f, this.aspects.firstOrNull() ?: 0f)) else valid
         if (this.aspects.contentEquals(next)) return
+        val previousStart = starts.getOrNull(page)
         this.aspects = next
         page = page.coerceIn(0, (next.size - 1).coerceAtLeast(0))
         layout()
+        // The PDF renderer can refine estimated page heights after the document opens.
+        // Keep the same point on the page when the pages above it change height.
+        if (!isSheet && previousStart != null && page in starts.indices) {
+            documentTop += (previousStart - starts[page]) * zoom
+        }
         emit()
     }
 
@@ -101,12 +109,7 @@ class PageViewport(private val marginPx: Float, private val onChange: (PagePlace
 
     /** On a sheet, any page means home. */
     fun goTo(index: Int) {
-        if (!ready()) return
-        if (isSheet) { home(); emit(); return }
-        page = index.coerceIn(aspects.indices)
-        zoom = 1f
-        left = marginPx
-        documentTop = topInset - starts[page]
+        pendingPage = index
         emit()
     }
 
@@ -122,6 +125,7 @@ class PageViewport(private val marginPx: Float, private val onChange: (PagePlace
 
     fun scrollTo(fraction: Float) {
         if (!ready() || !fraction.isFinite()) return
+        selectedPage = null
         val range = (totalHeight * zoom + topInset + bottomInset - canvasH).coerceAtLeast(0f)
         documentTop = topInset - fraction.coerceIn(0f, 1f) * range
         emit()
@@ -129,6 +133,7 @@ class PageViewport(private val marginPx: Float, private val onChange: (PagePlace
 
     fun resetZoom() {
         if (!ready()) return
+        selectedPage = null
         // Keep the same document point under the viewport centre.
         val centre = (canvasH / 2f - documentTop) / zoom
         if (isSheet) {
@@ -143,12 +148,14 @@ class PageViewport(private val marginPx: Float, private val onChange: (PagePlace
     fun begin() { moving = true }
     fun pan(dx: Float, dy: Float) {
         if (!ready() || !dx.isFinite() || !dy.isFinite()) return
+        selectedPage = null
         left += dx; documentTop += dy
         emit()
     }
 
     fun pinch(cx: Float, cy: Float, scale: Float, dx: Float, dy: Float) {
         if (!ready() || !scale.isFinite() || scale <= 0 || !cx.isFinite() || !cy.isFinite() || !dx.isFinite() || !dy.isFinite()) return
+        selectedPage = null
         val nextZoom = (zoom * scale).coerceIn(MIN_ZOOM, MAX_ZOOM)
         val k = nextZoom / zoom
         left = cx - (cx - left - dx) * k
@@ -157,7 +164,11 @@ class PageViewport(private val marginPx: Float, private val onChange: (PagePlace
         emit()
     }
 
-    fun end() { moving = false; emit() }
+    fun end() {
+        if (!moving) return
+        moving = false
+        emit()
+    }
     private fun ready() = canvasW > 0 && canvasH > 0 && aspects.isNotEmpty()
     private fun home() {
         zoom = 1f
@@ -177,6 +188,16 @@ class PageViewport(private val marginPx: Float, private val onChange: (PagePlace
 
     private fun emit() {
         if (!ready()) return
+        pendingPage?.let { target ->
+            pendingPage = null
+            if (isSheet) home() else {
+                page = target.coerceIn(aspects.indices)
+                selectedPage = page
+                zoom = 1f
+                left = marginPx
+                documentTop = topInset - starts[page]
+            }
+        }
         if (isSheet) return emitSheet()
         val width = baseWidth * zoom
         left = if (width <= canvasW - 2 * marginPx) (canvasW - width) / 2 else left.coerceIn(canvasW - width - marginPx, marginPx)
@@ -195,7 +216,10 @@ class PageViewport(private val marginPx: Float, private val onChange: (PagePlace
             val mid = (lo + hi + 1) / 2
             if (starts[mid] <= centre) lo = mid else hi = mid - 1
         }
-        page = lo
+        // An explicitly selected short page can share the view with other pages.
+        page = selectedPage?.takeIf { i ->
+            i in aspects.indices && y + starts[i] * zoom < canvasH && y + (starts[i] + baseWidth * aspects[i]) * zoom > 0f
+        } ?: lo
         fun placement(i: Int) = PagePlacement(i, x, (y + starts[i] * zoom).roundToInt().toFloat(), width,
             width * aspects[i], zoom, canvasW, canvasH, settled = !moving)
         val visible = ArrayList<PagePlacement>()

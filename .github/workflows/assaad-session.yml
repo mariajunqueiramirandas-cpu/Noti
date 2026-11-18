@@ -1,0 +1,38 @@
+name: Assaad session
+on:
+  push:
+    branches: [main]
+    paths: ['server/**', 'extensions/**', 'protocol/**', 'compose.yaml', '.github/workflows/assaad-session.yml']
+  pull_request:
+    paths: ['server/**', 'extensions/**', 'protocol/**', 'compose.yaml', '.github/workflows/assaad-session.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  relay-and-extension:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.4.2'
+      - run: bun install --frozen-lockfile
+        working-directory: server
+      - run: bun run typecheck && bun test
+        working-directory: server
+      - run: npm ci
+        working-directory: extensions/assaad-reader-dev
+      - run: npm test && bun run integration
+        working-directory: extensions/assaad-reader-dev
+      - run: git diff --exit-code -- extensions/assaad-reader/content.bundle.js
+      - run: docker compose config --quiet && docker compose -f server/compose.yml config --quiet
+      - name: Exercise Dokploy routing, persistence and proxy rate limits
+        run: bun run check:deployment
+        working-directory: server
+      - name: Package unpacked extension
+        run: cd extensions/assaad-reader && zip -r "$RUNNER_TEMP/noti-assaad-extension.zip" .
+      - uses: actions/upload-artifact@v6
+        with:
+          name: noti-assaad-extension
+          path: ${{ runner.temp }}/noti-assaad-extension.zip

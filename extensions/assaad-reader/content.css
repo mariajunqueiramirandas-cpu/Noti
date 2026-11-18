@@ -1,0 +1,10 @@
+#noti-assaad-connection { display:flex; align-items:center; flex-wrap:wrap; gap:12px; padding:14px 18px; margin:12px 0 20px; border:1px solid #e8e8ed; border-radius:12px; background:#fff; box-shadow:0 1px 2px #00000008; color:#111; font:inherit; }
+#noti-assaad-connection[data-questions="true"] { display:inline-flex; padding:0; margin:0; border:0; box-shadow:none; background:transparent; gap:8px; }
+#noti-assaad-connection button { appearance:none; display:inline-flex; align-items:center; justify-content:center; gap:8px; min-height:36px; border:1px solid #4b63ff; border-radius:9px; padding:8px 14px; background:#4b63ff; color:#fff; font:600 13px/1.4 Arial,sans-serif; font-family:inherit; cursor:pointer; white-space:nowrap; }
+#noti-assaad-connection button::before { content:"↗"; font:600 18px/1 system-ui; }
+#noti-assaad-connection button:hover { background:#3e50d4; }
+#noti-assaad-connection button:focus-visible { outline:3px solid #a7b1ff; outline-offset:3px; }
+#noti-assaad-connection button:disabled { opacity:.55; cursor:wait; }
+#noti-assaad-connection span { font-size:12px; color:#666b78; max-width:290px; }
+.dark #noti-assaad-connection { background:#17181e; border-color:#30313b; color:#fff; }
+.dark #noti-assaad-connection span { color:#b5b7c4; }

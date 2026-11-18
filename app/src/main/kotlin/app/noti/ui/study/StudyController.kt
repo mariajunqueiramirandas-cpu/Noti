@@ -1,66 +1,39 @@
 package app.noti.ui.study
 
-import android.os.Handler
-import android.os.Looper
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.unit.IntOffset
 import app.noti.data.LibraryStore
-import app.noti.data.Notebook
-import app.noti.data.SettingsStore
-import app.noti.data.Tool
 import app.noti.pdf.PagePlacement
 import app.noti.study.BoardLayer
 import app.noti.study.BoardStudy
-import app.noti.study.DeckRequest
 import app.noti.study.Exam
 import app.noti.study.ItemKind
-import app.noti.study.MistralClient
 import app.noti.study.PinnedCard
 import app.noti.study.PinnedLabel
 import app.noti.study.PlacedPage
 import app.noti.study.Progress
 import app.noti.study.Rating
 import app.noti.study.Srs
-import app.noti.study.StudyAi
-import app.noti.study.StudyApiException
-import app.noti.study.StudyImages
 import app.noti.study.StudyItem
-import app.noti.study.StudySource
 import app.noti.study.StudyStore
 import app.noti.study.Verdict
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.isActive
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import java.io.File
 import java.util.UUID
 
 /**
  * Everything a Study board does around its ink: the floating sheet (which item, where it
- * floats), answering, hints, checking a looped answer, printing onto the board, making
- * questions, exams and the topic layout. State lives in [store] (saved) and here (this
- * visit). Main thread.
+ * floats), local review, printing onto the board, exams and the topic layout.
+ * State lives in [store] (saved) and here (this visit). Main thread.
  */
 @Stable
 class StudyController(
-    val notebook: Notebook,
     val library: LibraryStore,
-    val settings: SettingsStore,
     val store: StudyStore,
-    private val scope: CoroutineScope,
-    private val cacheDir: File,
     private val toast: (String) -> Unit,
     private val now: () -> Long = System::currentTimeMillis,
 ) {
-    private val main = Handler(Looper.getMainLooper())
-
     // ---- the sheet ----
 
     /** The floating sheet is showing (the Study button in the top bar brings it back). */
@@ -79,40 +52,10 @@ class StudyController(
     val position: Int get() = current?.let { order.indexOf(it.id) } ?: -1
     val dueCount: Int get() = data.dueCount(now())
 
-    // ---- loops: an answer to check, or notes to make questions from ----
-
-    sealed interface Loop {
-        data class Answer(val itemId: String) : Loop
-        data class Notes(val request: DeckRequest) : Loop
-    }
-
-    /** Waiting for a loop on the board (the Transcribe loop tool is lent for it). */
-    var loop by mutableStateOf<Loop?>(null)
+    var editorKind by mutableStateOf<ItemKind?>(null)
         private set
-    /** Loops counted up to when the current one was asked for (engine document state [9]). */
-    var loopFrom = 0L
+    var editingItem by mutableStateOf<StudyItem?>(null)
         private set
-    private var toolBefore: Tool? = null
-    /** The item whose answer is being checked. */
-    var checking by mutableStateOf<String?>(null)
-        private set
-
-    // ---- making questions ----
-
-    @Stable
-    class Generation(val label: String) {
-        var made by mutableIntStateOf(0)
-        internal var job: Job? = null
-    }
-
-    var generating by mutableStateOf<Generation?>(null)
-        private set
-    /** A problem to show (no key, network…), or null. */
-    var problem by mutableStateOf<String?>(null)
-
-    // ---- dialogs and menus ----
-
-    var generateOpen by mutableStateOf(false)
     var deckOpen by mutableStateOf(false)
     var examSetupOpen by mutableStateOf(false)
     /** Exam whose results to show. */
@@ -122,35 +65,83 @@ class StudyController(
     /** The board's drawing layer (heights of printed cards), set by the editor. */
     var board: BoardLayer? = null
 
+    /** Items checked elsewhere (Plataforma Assaad on its board), set by the editor. */
+    var remote by mutableStateOf<RemoteChoices?>(null)
+
+    fun isRemote(id: String?) = id != null && remote?.owns(id) == true
+
     /** Something on the board that was tapped, and where (editor px). */
     var menu by mutableStateOf<Pair<BoardLayer.Hit, IntOffset>?>(null)
 
     // ------------------------------------------------------------------------------
 
-    /** Opens the sheet on what to study next: what's due, else what's new, else where you were. */
-    fun show() {
+    /** Opens the sheet on [id] (when it's on the board), else on what's next. */
+    fun showItem(id: String?) {
+        if (id == null || data.item(id) == null) { show(); return }
         refreshOrder()
-        val d = data
-        val next = exam?.let { e -> e.itemIds.firstOrNull { d.progressOf(it).let { p -> p.grade == null && p.chosen < 0 } } ?: e.itemIds.firstOrNull() }
-            ?: d.studyOrder(now()).firstOrNull { d.isNew(it.id) || d.progressOf(it.id).srs?.let { s -> s.due <= now() } == true }?.id
-            ?: d.current ?: order.firstOrNull()
-        if (next == null) { generateOpen = true; return }
-        select(next)
+        select(id)
         collapsed = false
         open = true
     }
 
-    fun hide() { open = false; cancelLoop() }
+    /** Opens the sheet on what to study next: what's due, else what's new, else where you were. */
+    fun show() {
+        refreshOrder()
+        val d = data
+        val next = exam?.let { run ->
+            run.itemIds.firstOrNull { id -> id !in run.submitted && d.progressOf(id).let { p -> p.grade == null && p.chosen < 0 } }
+                ?: run.itemIds.firstOrNull()
+        }
+            ?: d.studyOrder(now()).firstOrNull { d.isNew(it.id) || d.progressOf(it.id).srs?.let { s -> s.due <= now() } == true }?.id
+            ?: d.current ?: order.firstOrNull()
+        if (next != null) select(next)
+        collapsed = false
+        open = true
+    }
+
+    fun hide() { open = false }
 
     private fun refreshOrder() {
         order = exam?.itemIds ?: data.studyOrder(now()).map { it.id }
     }
 
     fun select(id: String) {
+        if (data.item(id) == null || exam?.let { id !in it.itemIds } == true) return
         if (order.isEmpty()) refreshOrder()
         if (id !in order) order = order + id
-        if (data.current != id) store.update { it.copy(current = id) }
-        if (loop is Loop.Answer) cancelLoop()
+        val last = data.progressOf(id)
+        val due = last.srs?.due
+        store.update { deck ->
+            val next = deck.copy(current = id)
+            if (exam == null && !isRemote(id) && due != null && due <= now() && preparedReviews.put(id, due) != due) {
+                next.withProgress(id) { Progress(attempts = it.attempts, srs = it.srs) }
+            } else next
+        }
+    }
+
+    private val preparedReviews = mutableMapOf<String, Long>()
+
+    fun editItem(kind: ItemKind, item: StudyItem? = null) {
+        if (exam != null || isRemote(item?.id)) return
+        editingItem = item
+        editorKind = kind
+    }
+
+    fun closeItemEditor() {
+        editorKind = null
+        editingItem = null
+    }
+
+    fun saveItem(draft: StudyItem) {
+        if (draft.prompt.isBlank() || draft.answer.isBlank() || exam != null) return
+        val item = if (draft.id.isEmpty()) draft.copy(id = UUID.randomUUID().toString(), createdAt = now()) else draft
+        store.update { deck ->
+            deck.copy(items = if (draft.id.isEmpty()) deck.items + item else deck.items.map { if (it.id == item.id) item else it })
+        }
+        select(item.id)
+        closeItemEditor()
+        collapsed = false
+        open = true
     }
 
     fun step(delta: Int) {
@@ -180,14 +171,20 @@ class StudyController(
     /** Flash card: how well you knew it. */
     fun rate(rating: Rating) {
         val item = current ?: return
-        progress(item.id) { it.copy(flipped = true, attempts = it.attempts + 1, srs = Srs.review(it.srs, rating, now())) }
-        main.postDelayed({ if (current?.id == item.id) step(1) }, 350)
+        if (item.kind != ItemKind.Flash || !data.progressOf(item.id).flipped || exam != null) return
+        progress(item.id) { it.copy(flipped = false, attempts = it.attempts + 1, srs = Srs.review(it.srs, rating, now())) }
+        if (position < order.lastIndex) step(1)
+        else toast("Review saved.")
     }
 
     /** Multiple choice: checked here, no network. In an exam it can change until the end. */
     fun choose(index: Int) {
         val item = current ?: return
-        if (item.kind != ItemKind.Choice) return
+        if (item.kind != ItemKind.Choice || index !in item.choices.indices) return
+        remote?.takeIf { it.owns(item.id) }?.let { r ->
+            if (r.state(item.id)?.locked != true) r.pick(item.id, index)
+            return
+        }
         val e = exam
         progress(item.id) { p ->
             if (e == null && p.chosen >= 0) return@progress p
@@ -199,147 +196,43 @@ class StudyController(
 
     /** Try again: hides your answer, hints and the check (the review schedule stays). */
     fun reset(id: String) {
-        progress(id) { Progress(srs = it.srs) }
+        progress(id) { Progress(attempts = it.attempts, srs = it.srs) }
     }
 
-    // ---- loops ----
-
-    /** Asks for a loop around an answer on the board, then checks it. [serial] is the loop count now. */
-    fun startCheck(serial: Long) {
+    fun assessWrittenAnswer(verdict: Verdict) {
         val item = current ?: return
-        if (!ensureKey()) return
-        beginLoop(Loop.Answer(item.id), serial)
-    }
-
-    /** Asks for a loop around notes on the board, then makes questions from them. */
-    fun startNotes(request: DeckRequest, serial: Long) {
-        if (!ensureKey()) return
-        beginLoop(Loop.Notes(request), serial)
-    }
-
-    private fun beginLoop(l: Loop, serial: Long) {
-        if (loop == null) toolBefore = settings.tool
-        loop = l
-        loopFrom = serial
-        settings.tool = Tool.Transcribe
-    }
-
-    fun cancelLoop() {
-        if (loop == null) return
-        loop = null
-        toolBefore?.let { settings.tool = it }
-        toolBefore = null
-    }
-
-    /** The ink of a finished loop (InkLayer.selectionInk); [clear] drops the selection. */
-    fun onLoop(selection: FloatArray, clear: () -> Unit) {
-        val l = loop ?: return
-        cancelLoop()
-        scope.launch {
-            val png = withContext(Dispatchers.Default) { StudyImages.inkPng(selection) }
-            clear()
-            if (png == null) { toast("There's no writing in that loop. Loop around your work and try again."); return@launch }
-            when (l) {
-                is Loop.Answer -> grade(l.itemId, png)
-                is Loop.Notes -> fromNotes(png, l.request)
-            }
+        if (exam != null || item.kind !in writtenKinds) return
+        val time = now()
+        progress(item.id) { p ->
+            if (!p.answerShown || p.selfAssessment != null) p else p.copy(
+                selfAssessment = verdict,
+                attempts = p.attempts + 1,
+                srs = Srs.review(p.srs, Srs.ratingFor(verdict, p.hintsShown, false, item.difficulty), time),
+            )
         }
     }
 
-    private fun key(): String? = settings.studyKey.load()
-
-    private fun ensureKey(): Boolean {
-        if (settings.studyKey.hasKey && key() != null) return true
-        problem = "Add your Mistral API key in Settings → Study to make and check questions."
-        return false
+    fun toggleExamAnswer() {
+        val run = exam ?: return
+        val item = current ?: return
+        if (item.id !in run.itemIds || item.kind !in writtenKinds) return
+        val submitted = if (item.id in run.submitted) run.submitted - item.id else run.submitted + item.id
+        store.update { deck -> deck.copy(exams = deck.exams.map { if (it.id == run.id) it.copy(submitted = submitted) else it }) }
     }
 
-    private suspend fun grade(itemId: String, png: ByteArray) {
+    fun assessExamAnswer(examId: String, itemId: String, verdict: Verdict) {
+        val run = data.exam(examId) ?: return
         val item = data.item(itemId) ?: return
-        val key = key() ?: run { ensureKey(); return }
-        checking = itemId
-        val result = withContext(Dispatchers.IO) { runCatching { StudyAi(MistralClient(key)).grade(item, png, now()) } }
-        checking = null
-        result.onSuccess { grade ->
-            val inExam = exam?.itemIds?.contains(itemId) == true
-            progress(itemId) { p ->
-                p.copy(grade = grade, attempts = p.attempts + 1,
-                    srs = if (inExam) p.srs else Srs.review(p.srs, Srs.ratingFor(grade.verdict, p.hintsShown, p.answerShown, item.difficulty), now()))
-            }
-            if (inExam) toast("Answer saved.")
-        }.onFailure { problem = (it as? StudyApiException)?.message ?: "Couldn't check that answer. Try again." }
-    }
-
-    // ---- making questions ----
-
-    /** From a library PDF; [request.pages] picks a range. */
-    fun generate(source: Notebook, request: DeckRequest) {
-        if (generating != null) return
-        val key = key() ?: run { ensureKey(); return }
-        val file = library.pdfFile(source)?.takeIf { it.exists() } ?: run { problem = "That PDF isn't in the library anymore."; return }
-        val gen = Generation(source.name)
-        generating = gen
-        val studySource = StudySource(source.id, source.name, source.pageCount)
-        if (data.source(source.id) == null) store.update { it.copy(sources = it.sources + studySource) }
-        gen.job = scope.launch {
-            val result = withContext(Dispatchers.IO) {
-                runCatching {
-                    var upload = file
-                    var first = 1
-                    val range = request.pages
-                    if (range != null) {
-                        upload = File(cacheDir, "study-pages-${UUID.randomUUID()}.pdf")
-                        StudyImages.extractPages(file, range.first, range.last, upload)
-                        first = range.first
-                    }
-                    try {
-                        StudyAi(MistralClient(key)).fromPdf(upload, source.name, studySource, first, request,
-                            onItem = { item -> main.post { added(item, gen) } }, cancelled = { !isActive })
-                    } finally { if (upload != file) upload.delete() }
+        if (run.finishedAt == null || !run.needsAssessment(itemId) || item.kind !in writtenKinds) return
+        val results = run.results.orEmpty() + (itemId to verdict)
+        val reviewTime = now()
+        store.update { deck ->
+            deck.copy(exams = deck.exams.map { if (it.id == examId) it.copy(results = results) else it })
+                .withProgress(itemId) { p ->
+                    p.copy(attempts = p.attempts + 1,
+                        srs = Srs.review(p.srs, Srs.ratingFor(verdict, 0, false, item.difficulty), reviewTime))
                 }
-            }
-            finished(gen, result)
         }
-    }
-
-    private suspend fun fromNotes(png: ByteArray, request: DeckRequest) {
-        if (generating != null) return
-        val key = key() ?: return
-        val gen = Generation("your notes")
-        generating = gen
-        gen.job = scope.launch {
-            val result = withContext(Dispatchers.IO) {
-                runCatching { StudyAi(MistralClient(key)).fromNotes(png, request, { item -> main.post { added(item, gen) } }, { !isActive }) }
-            }
-            finished(gen, result)
-        }
-    }
-
-    private fun added(item: StudyItem, gen: Generation) {
-        if (generating !== gen) return
-        store.update { it.copy(items = it.items + item) }
-        order = order + item.id
-        gen.made++
-        // The first new item goes straight onto the sheet.
-        if (gen.made == 1 && exam == null) { select(item.id); collapsed = false; open = true }
-    }
-
-    private fun finished(gen: Generation, result: Result<List<StudyItem>>) {
-        if (generating !== gen) return
-        generating = null
-        result.onSuccess { toast("Made ${it.size} ${if (it.size == 1) "item" else "items"} from ${gen.label}.") }
-            .onFailure { e ->
-                if (e is CancellationException) return
-                problem = (e as? StudyApiException)?.message ?: "Couldn't make questions: ${e.message ?: "something went wrong"}."
-                if (gen.made > 0) toast("Kept the ${gen.made} items made before that.")
-            }
-    }
-
-    fun stopGenerating() {
-        val gen = generating ?: return
-        gen.job?.cancel()
-        generating = null
-        if (gen.made > 0) toast("Stopped. Kept ${gen.made} items.")
     }
 
     // ---- the board ----
@@ -357,7 +250,6 @@ class StudyController(
             widthDp, density / k, now())
         store.update { d -> d.copy(cards = d.cards.filterNot { it.itemId == item.id } + card) }
         open = false
-        cancelLoop()
     }
 
     /**
@@ -437,7 +329,8 @@ class StudyController(
 
     fun startExam(count: Int, minutes: Int, topics: Set<String>) {
         val d = data
-        val pool = d.studyOrder(now()).filter { topics.isEmpty() || it.topic in topics }.filter { it.kind != ItemKind.Flash }
+        // Remotely checked items answer for real when submitted, so they stay out of practice exams.
+        val pool = d.studyOrder(now()).filter { topics.isEmpty() || it.topic in topics }.filter { it.kind != ItemKind.Flash && !isRemote(it.id) }
         if (pool.isEmpty()) { toast("No questions to make an exam from yet."); return }
         val picked = (pool.take(count * 2).shuffled().take(count)).map { it.id }
         // Start each from scratch, keeping the review schedule.
@@ -454,12 +347,16 @@ class StudyController(
     fun finishExam() {
         val e = exam ?: return
         val t = now()
+        val results = e.itemIds.mapNotNull { id ->
+            val item = data.item(id) ?: return@mapNotNull null
+            data.progressOf(id).outcome(item)?.let { id to it }
+        }.toMap()
         store.update { s ->
-            var next = s.copy(exams = s.exams.map { if (it.id == e.id) it.copy(finishedAt = t) else it })
+            var next = s.copy(exams = s.exams.map { if (it.id == e.id) it.copy(finishedAt = t, results = results) else it })
             for (id in e.itemIds) {
                 val item = s.item(id) ?: continue
+                val verdict = results[id] ?: if (id !in e.submitted) Verdict.Incorrect else continue
                 next = next.withProgress(id) { p ->
-                    val verdict = p.outcome(item) ?: Verdict.Incorrect
                     p.copy(srs = Srs.review(p.srs, Srs.ratingFor(verdict, 0, false, item.difficulty), t))
                 }
             }
@@ -477,3 +374,5 @@ class StudyController(
         store.update { s -> s.copy(exams = s.exams.map { if (it.id == examId) it.copy(card = card) else it }) }
     }
 }
+
+internal val writtenKinds = setOf(ItemKind.Short, ItemKind.Problem)

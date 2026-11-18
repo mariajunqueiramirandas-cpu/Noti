@@ -45,7 +45,9 @@ android {
     }
 
     sourceSets {
+        getByName("test") { resources.directories += "../protocol/fixtures" }
         getByName("main") {
+            assets.directories += layout.buildDirectory.dir("generated/assaadAssets").get().asFile.absolutePath
             kotlin.directories += "../engine/android/kotlin"
             baselineProfiles.directories += "../engine/android/baseline-profile"
         }
@@ -117,6 +119,7 @@ androidComponents {
 }
 
 dependencies {
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.robolectric:robolectric:4.17")
     testImplementation("androidx.compose.ui:ui-test-junit4")
@@ -127,6 +130,14 @@ dependencies {
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.material:material-icons-extended")
     implementation("androidx.activity:activity-compose:1.13.0")
-    // On-device handwriting recognition for the Transcribe tool; language models download on first use.
-    implementation("com.google.mlkit:digital-ink-recognition:19.0.0")
+    // Document-start scripts: the Assaad page observer must load before the website's own code.
+    implementation("androidx.webkit:webkit:1.14.0")
 }
+
+
+// The embedded browser and extension execute the same audited, packaged page adapter.
+val packageAssaadBrowserAssets by tasks.registering(Sync::class) {
+    from(rootProject.file("extensions/assaad-reader")) { include("platform-api.js", "reader.js", "page-observer.js") }
+    into(layout.buildDirectory.dir("generated/assaadAssets"))
+}
+tasks.named("preBuild").configure { dependsOn(packageAssaadBrowserAssets) }

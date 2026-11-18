@@ -1,5 +1,6 @@
 package app.noti.ink
 
+import android.content.pm.PackageInfo
 import android.view.InputDevice
 import android.view.KeyEvent
 import android.view.MotionEvent
@@ -8,6 +9,8 @@ import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.RuntimeEnvironment
+import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 
 @RunWith(RobolectricTestRunner::class)
@@ -212,6 +215,94 @@ class StylusButtonsTest {
         assertEquals(listOf(PenButton.Primary, PenButton.Primary), clicks)
     }
 
+    // ---- Samsung S Pen: buttons only in motion events ----
+
+    private val P = MotionEvent.BUTTON_STYLUS_PRIMARY
+    private fun hover(buttonsDown: Int, time: Long, device: Int = 14) = buttons.motion(device, buttonsDown, time)
+
+    @Test fun anSPenClickWhileHoveringFiresFromMotionFlagsAlone() {
+        hover(0, 100); hover(P, 200); hover(P, 230); hover(0, 300)
+        assertEquals(listOf(PenButton.Primary), clicks)
+        assertTrue(reports.last().contains("click · 100 ms"))
+        hover(MotionEvent.BUTTON_STYLUS_SECONDARY, 400); hover(0, 450)
+        assertEquals(listOf(PenButton.Primary, PenButton.Secondary), clicks)
+    }
+
+    @Test fun anSPenLongPressOrAHoldUsedForInkNeverClicks() {
+        hover(0, 100); hover(P, 200); hover(0, 700)
+        assertTrue(clicks.isEmpty())
+        assertTrue(reports.last().contains("long press"))
+        hover(P, 800); buttons.motion(14, P, 850, contact = true); hover(0, 900)
+        assertTrue(clicks.isEmpty())
+        assertTrue(reports.last().contains("used while writing"))
+    }
+
+    @Test fun leavingHoverRangeOrTouchingDownForgetsTheSPenPressWithoutClicking() {
+        hover(0, 100); hover(P, 200)
+        buttons.motion(14, P, 250, leaving = true)
+        // Back in range with the button still held: not a new press, so its release is not a click.
+        hover(P, 300); hover(0, 350)
+        assertTrue(clicks.isEmpty())
+        // The state is known again: the next real press clicks.
+        hover(P, 400); hover(0, 450)
+        assertEquals(listOf(PenButton.Primary), clicks)
+    }
+
+    @Test fun aButtonAlreadyHeldWhenThePenAppearsIsNotAClick() {
+        hover(P, 100); hover(0, 150)
+        assertTrue(clicks.isEmpty())
+    }
+
+    @Test fun motionClicksCanBeTurnedOffOrDisabledWithTheShortcuts() {
+        buttons.options = buttons.options.copy(motionClicks = false)
+        hover(0, 100); hover(P, 200); hover(0, 250)
+        buttons.options = buttons.options.copy(motionClicks = true, enabled = false)
+        hover(0, 300); hover(P, 400); hover(0, 450)
+        assertTrue(clicks.isEmpty())
+    }
+
+    @Test fun aKeyArrivingAfterTheMotionClickForTheSamePressDoesNotClickAgain() {
+        hover(0, 100); hover(P, 200); hover(0, 260)
+        // The same press, as keys from the activity (posted to the ink thread a little later).
+        down(device = 18, time = 205); up(device = 18, time = 262)
+        assertEquals(listOf(PenButton.Primary), clicks)
+        assertTrue(reports.last().contains("already clicked by the pen"))
+        // From now on the keys are authoritative: motion alone never clicks, keys do.
+        hover(P, 1000); hover(0, 1050)
+        assertEquals(1, clicks.size)
+        down(device = 18, time = 1001); up(device = 18, time = 1052)
+        assertEquals(listOf(PenButton.Primary, PenButton.Primary), clicks)
+    }
+
+    @Test fun theSPenSideButtonHoldsTheDialAndErasesFromMotionFlags() {
+        buttons.options = StylusButtonOptions()
+        assertTrue(buttons.summonsDial(14, P))
+        buttons.options = buttons.options.copy(hold = PenHold.Erase)
+        assertEquals(NotiInk.FLAG_BUTTON_PRIMARY, buttons.flags(14, P, true))
+    }
+
+    @Test fun samsungButtonActionsMapToStandardActionsWithTheButtonHeld() {
+        assertEquals(MotionEvent.ACTION_DOWN, SamsungPenActions.action(211))
+        assertEquals(MotionEvent.ACTION_UP, SamsungPenActions.action(212))
+        assertEquals(MotionEvent.ACTION_MOVE, SamsungPenActions.action(213))
+        assertEquals(MotionEvent.ACTION_CANCEL, SamsungPenActions.action(214))
+        assertEquals(MotionEvent.ACTION_POINTER_DOWN, SamsungPenActions.action(MotionEvent.ACTION_POINTER_DOWN))
+        assertEquals(P, SamsungPenActions.buttons(213, 0))
+        assertEquals(P, SamsungPenActions.buttons(211, P))
+        assertEquals(0, SamsungPenActions.buttons(MotionEvent.ACTION_MOVE, 0))
+        buttons.options = StylusButtonOptions()
+        assertTrue(buttons.summonsDial(14, SamsungPenActions.buttons(211, 0)))
+    }
+
+    @Test fun samsungTabletsAreRecognizedAndNameTheSideButton() {
+        assertTrue(PenVendor.isSamsung("samsung", "samsung"))
+        assertTrue(PenVendor.isSamsung("Samsung", "unknown"))
+        assertFalse(PenVendor.isSamsung("Xiaomi", "Redmi"))
+        assertFalse(PenVendor.isSamsung(null, null))
+        assertEquals("Writing button", PenButton.Primary.title)
+        assertEquals("writing button", PenButton.Primary.phrase)
+    }
+
     @Test fun mappingProtectsKeyboardsAndRecognizesBothAndroidAndXiaomiPaths() {
         val options = StylusButtonOptions()
         fun map(code: Int, source: Int = InputDevice.SOURCE_KEYBOARD, name: String? = "Bluetooth Keyboard", opts: StylusButtonOptions = options) =
@@ -229,6 +320,27 @@ class StylusButtonsTest {
         assertEquals(PenButton.Secondary, map(93, name = "Xiaomi Focus Pen", opts = options.copy(swapLegacyKeys = true)))
         assertNull(map(93, name = "Xiaomi Focus Pen", opts = options.copy(legacyKeys = false)))
         assertNull(map(308, opts = options.copy(enabled = false)))
+    }
+
+    private fun installNotes() {
+        val context = RuntimeEnvironment.getApplication()
+        shadowOf(context.packageManager).installPackage(PackageInfo().apply { packageName = XiaomiStylusWindow.NOTES_PACKAGE })
+    }
+
+    @Test @Config(qualifiers = "sw411dp-w411dp-h900dp")
+    fun xiaomiPhonesNeverRewriteTheirWindowPackage() {
+        installNotes()
+        val context = RuntimeEnvironment.getApplication()
+        assertFalse(XiaomiStylusWindow.deviceSupportsHijack(context, isXiaomi = true))
+    }
+
+    @Test @Config(qualifiers = "sw800dp-w1280dp-h800dp")
+    fun xiaomiTabletsRewriteOnlyWithTheNotesApp() {
+        val context = RuntimeEnvironment.getApplication()
+        assertFalse(XiaomiStylusWindow.deviceSupportsHijack(context, isXiaomi = true))
+        installNotes()
+        assertTrue(XiaomiStylusWindow.deviceSupportsHijack(context, isXiaomi = true))
+        assertFalse(XiaomiStylusWindow.deviceSupportsHijack(context, isXiaomi = false))
     }
 
     @Test fun xiaomiWindowAttributesLatchNotesPackageBeforeAddView() {

@@ -1,6 +1,5 @@
 package app.noti.lines
 
-import app.noti.transcribe.SelectedStroke
 import java.io.File
 import org.junit.Assert.*
 import org.junit.Test
@@ -15,7 +14,7 @@ class TextBlocksTest {
 
     /** A stroke with [n] capsules starting at ([x], [y]), as InkLines.parse would give it. */
     private fun stroke(id: Int, n: Int, x: Float, y: Float, color: FloatArray = plum, page: Int = 2) =
-        SelectedStroke(id, page, color, FloatArray(2 + n * 2) { i -> if (i % 2 == 0) x + i else y })
+        PageStroke(id, page, color, FloatArray(2 + n * 2) { i -> if (i % 2 == 0) x + i else y })
 
     private val block = TextBlock(
         id = "b1", page = 2, text = "Ada Lovelace", style = TypeStyle(align = TextAlign.Center, bold = true),
