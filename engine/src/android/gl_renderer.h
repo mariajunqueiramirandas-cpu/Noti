@@ -137,7 +137,7 @@ class GlFrontBufferRenderer final : public InkRenderer {
   void scissor(const RectI& r);
   void clear_rect(const Target& t, const RectI& r);
   void set_color(const float* premul);
-  void draw_stroke_into_dry(Target& dry, const StrokeStore& store, uint32_t id);
+  void draw_stroke_into_dry(Target& dry, const StrokeStore& store, uint32_t id, bool use_backing = false);
   // Swap in a new wet + dry pair with one atomic transaction (commit/redraw).
   void publish(int next_wet, int next_dry);
   void do_redraw();
@@ -196,6 +196,7 @@ class GlFrontBufferRenderer final : public InkRenderer {
   Target wet_[2];
   Target dry_[3];
   Target backing_, scratch_;
+  uint32_t backing_capsules_ = 0;
   int cur_wet_ = 0, cur_dry_ = 0;
   bool front_buffer_supported_ = false;
   const StrokeStore* store_ = nullptr;

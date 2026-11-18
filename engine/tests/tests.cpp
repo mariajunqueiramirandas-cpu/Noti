@@ -766,6 +766,25 @@ TEST(document_eraser_sweeps_segments_and_cancel_rolls_back) {
   e.redo(); CHECK(e.store().stroke(0).hidden);
 }
 
+TEST(document_eraser_redraws_once_for_batched_samples) {
+  NullRenderer renderer;
+  EngineConfig cfg;
+  cfg.surface_w = cfg.surface_h = 256;
+  cfg.store_max_strokes = 8;
+  cfg.store_max_capsules = 64;
+  InkEngine e(cfg, renderer);
+  draw_line(e, 20, 50, 50, 50);
+  draw_line(e, 20, 140, 50, 140);
+  e.set_tool(2);
+  InkSample erase[] = {sample(Action::kDown, 10000, 40, 20),
+                       sample(Action::kMove, 14000, 40, 70),
+                       sample(Action::kMove, 18000, 40, 160),
+                       sample(Action::kUp, 22000, 40, 160)};
+  e.process(erase, 4);
+  CHECK(e.store().stroke(0).hidden && e.store().stroke(1).hidden);
+  CHECK(renderer.redraws_ == 1);
+}
+
 TEST(document_lasso_moves_and_undoes_canonical_ink) {
   EngineFixture fx; auto& e = *fx.engine;
   draw_line(e, 50, 50, 80, 50);
@@ -1062,6 +1081,19 @@ TEST(palm_clean_fingertip_confirms_after_roll_window_and_replays) {
   }
 }
 
+TEST(palm_replays_multiple_contacts_in_gesture_time_order) {
+  PalmFilter f = make_filter();
+  TouchSample samples[] = {touch(0, 1, TouchAction::kDown, 100, 80),
+                           touch(0, 1, TouchAction::kMove, 100.5f, 80),
+                           touch(15, 2, TouchAction::kDown, 130, 80)};
+  f.process(samples, 3);
+  GestureEvent batch[4];
+  CHECK(f.copy_gestures(batch, 4) == 3);
+  CHECK(batch[0].id == 1 && batch[0].action == GestureAction::kDown);
+  CHECK(batch[1].id == 1 && batch[1].action == GestureAction::kMove);
+  CHECK(batch[2].id == 2 && batch[2].action == GestureAction::kDown);
+}
+
 TEST(palm_contact_while_pen_hovers_is_palm_at_once) {
   PalmFilter f = make_filter();
   InkSample p = pen(0, Action::kHoverEnter, 100, 60);
@@ -1087,6 +1119,95 @@ TEST(palm_platform_cancel_cancels_a_started_gesture) {
   CHECK(f.drain_reports(r, 4) == 1);
   CHECK(r[0].system_palm);
   CHECK(r[0].verdict == Verdict::kPalm);
+}
+
+TEST(palm_stream_cancel_does_not_poison_neighbouring_touches) {
+  PalmFilter f = make_filter();
+  TouchSample first[] = {touch(0, 1, TouchAction::kDown, 100, 80),
+                         touch(32, 1, TouchAction::kMove, 104, 80),
+                         touch(40, 1, TouchAction::kCancel, 104, 80)};
+  f.process(first, 3);
+  CHECK(count_gestures(f, GestureAction::kCancel) == 1);
+  ContactReport r;
+  CHECK(f.drain_reports(&r, 1) == 1);
+  CHECK(r.verdict == Verdict::kUndecided);
+  TouchSample second[] = {touch(46, 1, TouchAction::kDown, 100, 80),
+                          touch(78, 1, TouchAction::kMove, 100, 80)};
+  f.process(second, 2);
+  CHECK(f.verdict(1) == Verdict::kTouch);
+  TouchSample palm = touch(90, 1, TouchAction::kCancel, 100, 80, 9, ToolType::kFinger, kTouchCanceled);
+  f.process(&palm, 1);
+  CHECK(f.drain_reports(&r, 1) == 1);
+  CHECK(r.verdict == Verdict::kPalm && r.system_palm);
+}
+
+TEST(palm_stationary_roll_does_not_flash_finger_ink) {
+  for (float size : {0.0f, 9.0f}) {
+    PalmFilter f = make_filter(true);
+    TouchSample a = touch(0, 1, TouchAction::kDown, 100, 80, size);
+    a.minor = a.major * 0.6f;
+    f.process(&a, 1);
+    CHECK(f.ink_count() == 0);
+    a = touch(30, 1, TouchAction::kMove, 100.2f, 80, size * 2.5f);
+    a.minor = a.major * 0.6f;
+    f.process(&a, 1);
+    CHECK(f.ink_count() == 0);
+  }
+}
+
+TEST(palm_unsized_finger_draws_from_original_position) {
+  PalmFilter f = make_filter(true);
+  TouchSample drag[] = {touch(0, 1, TouchAction::kDown, 100, 80, 0),
+                        touch(0, 1, TouchAction::kMove, 101, 80, 0),
+                        touch(17, 1, TouchAction::kMove, 105, 80, 0)};
+  f.process(drag, 3);
+  CHECK(f.ink_count() == 3);
+  CHECK(f.ink()[0].action == Action::kDown);
+  CHECK(f.ink()[0].x == drag[0].x);
+  CHECK(f.ink()[1].x == drag[1].x);
+  CHECK(f.ink()[2].x == drag[2].x);
+}
+
+TEST(palm_quick_finger_strokes_with_reused_pointer_id_both_commit) {
+  PalmFilter f = make_filter(true);
+  TouchSample taps[] = {touch(0, 1, TouchAction::kDown, 80, 80),
+                        touch(20, 1, TouchAction::kUp, 80, 80),
+                        touch(35, 1, TouchAction::kDown, 85, 80),
+                        touch(55, 1, TouchAction::kUp, 85, 80)};
+  f.process(taps, 4);
+  CHECK(f.ink_count() == 3);
+  CHECK(f.ink()[1].action == Action::kUp);
+  CHECK(f.ink()[1].t_ns == taps[1].t_ns);
+  CHECK(f.ink()[2].action == Action::kDown);
+  f.tick(taps[3].t_ns + 81'000'000);
+  CHECK(count_ink(f, Action::kUp) == 2);
+  ContactReport r[2];
+  CHECK(f.drain_reports(r, 2) == 2);
+  CHECK(r[0].ink_committed && r[1].ink_committed);
+}
+
+TEST(palm_pen_preserves_an_expired_or_distant_finger_stroke) {
+  for (bool expired : {false, true}) {
+    PalmFilter f = make_filter(true);
+    TouchSample taps[] = {touch(0, 1, TouchAction::kDown, 180, 100),
+                          touch(20, 1, TouchAction::kUp, 180, 100)};
+    f.process(taps, 2);
+    InkSample p = expired ? pen(110, Action::kDown, 145, 55) : pen(35, Action::kDown, 30, 40);
+    f.observe_pen(&p, 1);
+    CHECK(count_ink(f, Action::kCancel) == 0);
+    CHECK(count_ink(f, Action::kUp) == 1);
+    CHECK(!f.ink_active());
+  }
+}
+
+TEST(palm_input_surface_reset_clears_pen_contact) {
+  PalmFilter f = make_filter(true);
+  InkSample p = pen(10, Action::kDown, 145, 55);
+  f.observe_pen(&p, 1);
+  f.reset_input(p.t_ns + 1);
+  TouchSample t = touch(20, 1, TouchAction::kDown, 180, 100);
+  f.process(&t, 1);
+  CHECK(count_ink(f, Action::kDown) == 1);
 }
 
 TEST(palm_finger_ink_starts_at_once_and_pen_revokes_it) {
@@ -1144,6 +1265,20 @@ TEST(palm_second_finger_turns_ink_into_gesture) {
     f.process(m, 2);
   }
   CHECK(count_gestures(f, GestureAction::kDown) == 2);
+}
+
+TEST(palm_rolling_contact_does_not_interrupt_finger_ink) {
+  PalmFilter f = make_filter(true);
+  TouchSample samples[] = {touch(0, 1, TouchAction::kDown, 80, 80),
+                           touch(17, 2, TouchAction::kDown, 115, 80),
+                           touch(33, 2, TouchAction::kMove, 115, 80, 24),
+                           touch(42, 1, TouchAction::kMove, 86, 80)};
+  samples[1].minor = samples[1].major * 0.6f;
+  f.process(samples, 4);
+  CHECK(f.verdict(2) == Verdict::kPalm);
+  CHECK(f.ink_active());
+  CHECK(count_ink(f, Action::kCancel) == 0);
+  CHECK(count_ink(f, Action::kMove) == 1);
 }
 
 TEST(palm_model_roundtrip_and_validation) {
@@ -1207,6 +1342,10 @@ TEST(palm_synthetic_scenarios_all_pass) {
         CHECK(out.streams_well_formed);
         CHECK(sc.false_accepts == 0);
         CHECK(sc.false_rejects == 0);
+        if (!cfg.report_size && s.name.starts_with("other_hand_pinch_while_hovering")) {
+          CHECK(sc.touch_latency_ms.size() == 2);
+          for (double ms : sc.touch_latency_ms) CHECK(ms < 100.0);
+        }
         for (const std::string& fl : sc.failures) std::printf("    %s\n", fl.c_str());
       }
     }

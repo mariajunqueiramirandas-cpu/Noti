@@ -109,7 +109,7 @@ internal object NotiInk {
     @CriticalNative @JvmStatic external fun nativeTouch(handle: Long, count: Int): Long
 
     /** Predicts and draws `count` staged samples; returns the next housekeeping deadline (ns) or -1. */
-    @CriticalNative @JvmStatic external fun nativeProcess(handle: Long, count: Int): Long
+    @CriticalNative @JvmStatic external fun nativeProcess(handle: Long, count: Int, observe: Boolean, draw: Boolean): Long
     @CriticalNative @JvmStatic external fun nativeIdle(handle: Long): Long
     @CriticalNative @JvmStatic external fun nativeVsync(handle: Long, presentNanos: Long, periodNanos: Long)
 

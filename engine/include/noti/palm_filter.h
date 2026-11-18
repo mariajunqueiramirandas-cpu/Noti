@@ -6,9 +6,8 @@
 //                       while the decision was pending replayed first, so a pan
 //                       starts exactly where the finger landed;
 //   * finger ink      – InkSamples for the ink engine (when drawing with a
-//                       finger is on), drawn speculatively from the first
-//                       sample and rolled back (Action::kCancel) if the contact
-//                       turns out to be a palm.
+//                       finger is on), replayed from the first sample once
+//                       eligible and rolled back if the contact is a palm.
 //
 // The pen is never filtered: it is ground truth, and its state is the
 // strongest evidence about everything else.
@@ -39,8 +38,8 @@
 //                  the heel of the hand) palms too; two small contacts landing
 //                  together a finger-spread apart look like a two-finger gesture
 //   L5 commitment  gestures start only once a contact is a confirmed touch
-//                  (then replay); finger ink starts at once and is cancelled if
-//                  the verdict flips, including during a short linger after lift
+//                  (then replay); credible fingertip ink starts at once and is
+//                  revocable, including during a short linger after lift
 //   L6 learning    finger and palm sizes, the hand model, handedness and the
 //                  grace window adapt to the user from confident decisions only,
 //                  inside fixed bounds; export/import to persist them
@@ -65,7 +64,7 @@ enum class TouchAction : uint8_t { kDown = 0, kMove = 1, kUp = 2, kCancel = 3 };
 
 enum TouchFlags : uint8_t {
   kTouchNone = 0,
-  kTouchCanceled = 1 << 0,    // pointer went up with FLAG_CANCELED (platform palm rejection)
+  kTouchCanceled = 1 << 0,    // Android supplied FLAG_CANCELED (platform palm rejection)
   kTouchHistorical = 1 << 1,  // came from MotionEvent.getHistorical*
 };
 
@@ -159,6 +158,8 @@ class PalmFilter {
   void observe_pen(const InkSample* s, uint32_t n) noexcept;
   // Finger / palm contacts.
   void process(const TouchSample* s, uint32_t n) noexcept;
+  // End streams when their input surface goes away. Keep the learned model.
+  void reset_input(int64_t now_ns) noexcept;
   // Timers (resting evidence, finger-ink linger). Returns ns until the next
   // deadline, or -1 if none.
   int64_t tick(int64_t now_ns) noexcept;
@@ -168,9 +169,11 @@ class PalmFilter {
   // ---- outputs: valid until clear_outputs() ----
   const GestureEvent* gestures() const noexcept { return gestures_; }
   uint32_t gesture_count() const noexcept { return n_gestures_; }
+  // Copy a delivery batch in timestamp order, including interleaved replays.
+  uint32_t copy_gestures(GestureEvent* out, uint32_t capacity) const noexcept;
   const InkSample* ink() const noexcept { return ink_; }
   uint32_t ink_count() const noexcept { return n_ink_; }
-  void clear_outputs() noexcept { n_gestures_ = n_ink_ = 0; }
+  void clear_outputs() noexcept { n_gestures_ = n_ink_ = 0; gestures_ordered_ = true; }
 
   // Reports of ended contacts (oldest first); drained by the caller.
   uint32_t drain_reports(ContactReport* out, uint32_t max) noexcept;
@@ -202,11 +205,10 @@ class PalmFilter {
   struct Pt { int64_t t; float x, y; };
 
   struct Contact {
-    bool used = false;
     uint32_t id = 0, serial = 0;
     int64_t t_down = 0, t_last = 0, t_up = 0, t_decided = 0, t_pen_down_during = 0;
     float x0 = 0, y0 = 0, x = 0, y = 0;
-    float path_mm = 0, max_disp_mm = 0;
+    float path_mm = 0, disp_mm = 0, max_disp_mm = 0;
     float major0_mm = 0, peak_major_mm = 0, minor_at_peak_mm = 0;
     bool size_seen = false;
     float score = 0, peak_score = -1e9f;
@@ -224,7 +226,7 @@ class PalmFilter {
     bool nib_tracked = false;
     // Replay buffer: first sample + ring of the most recent ones.
     Pt first{};
-    Pt ring[kReplay];
+    Pt ring[kReplay];  // only the ring_n initialized entries may be read
     uint32_t ring_n = 0, ring_head = 0;
   };
 
@@ -239,6 +241,7 @@ class PalmFilter {
   void on_down(const TouchSample& s) noexcept;
   void on_move(Contact& c, const TouchSample& s) noexcept;
   void on_up(Contact& c, const TouchSample& s, bool cancelled) noexcept;
+  void update_shape(Contact& c, const TouchSample& s) noexcept;
   void observe_one_pen(const InkSample& s) noexcept;
   Contact* find(uint32_t id) noexcept;
   const Contact* find(uint32_t id) const noexcept;
@@ -259,9 +262,10 @@ class PalmFilter {
   void maybe_start_ink(Contact& c, int64_t now) noexcept;
   void emit_ink(Action a, int64_t t, float x, float y) noexcept;
   void revoke_ink(int64_t t) noexcept;
-  void commit_ink(int64_t t) noexcept;
+  void commit_ink() noexcept;
   void finish(Contact& c) noexcept;  // contact ended: report, learn, free
-  void release_suppressed_gestures(int64_t now) noexcept;
+  void release_suppressed_gestures() noexcept;
+  void expire_ink(int64_t now) noexcept;
   void on_pen_active(int64_t t) noexcept;
   bool pen_in_context(int64_t t) const noexcept;
 
@@ -276,6 +280,8 @@ class PalmFilter {
 
   PalmConfig cfg_;
   Contact contacts_[kMaxContacts];
+  // Only occupied slots are visited on the input and timer paths.
+  uint32_t occupied_ = 0;
   uint32_t next_serial_ = 0;
   int64_t last_time_ = 0;
 
@@ -314,6 +320,7 @@ class PalmFilter {
   // Outputs.
   GestureEvent gestures_[kMaxGestures];
   uint32_t n_gestures_ = 0;
+  bool gestures_ordered_ = true;
   InkSample ink_[kMaxInk];
   uint32_t n_ink_ = 0;
   ContactReport reports_[kMaxReports];

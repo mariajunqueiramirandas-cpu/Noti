@@ -60,11 +60,19 @@ internal class CanvasGestures(
         clock().removeFrameCallback(fling)
     }
     fun stopMotion() { cancelFling(); viewport?.end() }
-    override fun onPenDown() { stopMotion(); main.removeCallbacks(tapAction) }
+    override fun onPenDown() {
+        penDown = true
+        pointers.clear()
+        lastTapEnd = 0L
+        stopMotion()
+        main.removeCallbacks(tapAction)
+    }
+    override fun onPenUp() { penDown = false }
     fun close() { main.removeCallbacks(tapAction); cancelFling() }
     private class Pointer(var x: Float, var y: Float, val x0: Float, val y0: Float)
 
     private val pointers = LinkedHashMap<Int, Pointer>()
+    private var penDown = false
     // The current session: from the first finger down to the last finger up.
     private var sessionStart = 0L
     private var maxPointers = 0
@@ -75,13 +83,15 @@ internal class CanvasGestures(
     private var upX = 0f
     private var upY = 0f
     // Transform tracking between batches.
-    private var lastCount = 0
     private var lastCx = 0f
     private var lastCy = 0f
     private var lastDist = 0f
 
     override fun onGesture(action: Int, id: Int, x: Float, y: Float, timeNanos: Long) {
-        eventTime = timeNanos
+        if (penDown) return
+        if (action == NotiInk.GESTURE_DOWN || action == NotiInk.GESTURE_MOVE) {
+            eventTime = if (pointers.isEmpty()) timeNanos else maxOf(eventTime, timeNanos)
+        }
         when (action) {
             NotiInk.GESTURE_DOWN -> {
                 if (pointers.isEmpty()) {
@@ -96,6 +106,8 @@ internal class CanvasGestures(
                 }
                 pointers[id] = Pointer(x, y, x, y)
                 maxPointers = max(maxPointers, pointers.size)
+                // Anchor at DOWN before any queued moves are replayed.
+                updateTransform(apply = false)
             }
             NotiInk.GESTURE_MOVE -> pointers[id]?.let { p ->
                 p.x = x
@@ -103,33 +115,39 @@ internal class CanvasGestures(
                 if (hypot(x - p.x0, y - p.y0) > slopPx) moved = true
             }
             NotiInk.GESTURE_UP, NotiInk.GESTURE_CANCEL -> {
-                val gone = pointers.remove(id) ?: return
+                val gone = pointers[id] ?: return
+                if (action == NotiInk.GESTURE_UP) updateTransform(apply = true)
+                pointers.remove(id)
                 upX = gone.x; upY = gone.y
                 if (action == NotiInk.GESTURE_CANCEL) cancelled = true
                 if (pointers.isEmpty()) endSession(timeNanos)
+                else {
+                    eventTime = maxOf(eventTime, timeNanos)
+                    updateTransform(apply = false)
+                }
             }
         }
     }
 
     override fun onGestureBatchEnd() {
+        if (pointers.isNotEmpty()) updateTransform(apply = true)
+    }
+
+    private fun updateTransform(apply: Boolean) {
         val vp = viewport ?: return
-        val n = pointers.size
-        if (n == 0) {
-            lastCount = 0
-            return
-        }
         val it = pointers.values.iterator()
         val a = it.next()
-        val b = if (n >= 2) it.next() else null
+        val b = if (it.hasNext()) it.next() else null
         val cx = if (b == null) a.x else (a.x + b.x) / 2
         val cy = if (b == null) a.y else (a.y + b.y) / 2
         val dist = if (b == null) 0f else hypot(a.x - b.x, a.y - b.y)
-        if (n != lastCount) {
-            // Fingers added or lifted: restart from here so the page doesn't jump.
-            lastCount = n
+        if (!apply) {
+            // Membership changes reset the centroid and current velocity.
             lastCx = cx
             lastCy = cy
             lastDist = dist
+            vx = 0f
+            vy = 0f
             batchTime = eventTime
             return
         }
@@ -143,8 +161,11 @@ internal class CanvasGestures(
             vy = 0.4f * vy + 0.6f * (cy - lastCy) / elapsed
         }
         batchTime = eventTime
-        if (b == null) vp.pan(cx - lastCx, cy - lastCy)
-        else vp.pinch(cx, cy, if (lastDist > 1f) dist / lastDist else 1f, cx - lastCx, cy - lastCy)
+        if (b == null) {
+            if (cx != lastCx || cy != lastCy) vp.pan(cx - lastCx, cy - lastCy)
+        } else if (cx != lastCx || cy != lastCy || dist != lastDist) {
+            vp.pinch(cx, cy, if (lastDist > 1f) dist / lastDist else 1f, cx - lastCx, cy - lastCy)
+        }
         lastCx = cx
         lastCy = cy
         lastDist = dist
@@ -155,7 +176,6 @@ internal class CanvasGestures(
             viewport?.begin()
             startFling()
         } else viewport?.end()
-        lastCount = 0
         if (!cancelled && maxPointers == 1 && !moved && t - sessionStart < TAP_NS && onTap != null) {
             val x = upX; val y = upY
             main.post { onTap.invoke(x, y) }

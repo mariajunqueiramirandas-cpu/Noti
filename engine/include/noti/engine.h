@@ -201,10 +201,10 @@ class InkEngine {
   void track_prediction_error(int64_t t_prev, float x0, float y0, int64_t t_now, float x1, float y1) noexcept;
   bool has_pending() noexcept;
 
-  bool edit_sample(const InkSample& s);
+  bool edit_sample(const InkSample& s, bool& redraw);
   bool pick_page(float x, float y) noexcept;
   void redraw_document();
-  void end_edit(bool cancel);
+  void end_edit(bool cancel, bool* redraw = nullptr);
   struct EditAction;
   void apply_edit(bool forward, const EditAction& action);
   struct EditAction {

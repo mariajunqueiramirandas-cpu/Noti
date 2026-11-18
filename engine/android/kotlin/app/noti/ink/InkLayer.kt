@@ -97,6 +97,7 @@ class InkLayer(
             gestures?.onGesture(action, id, x, y, timeNanos)
         }
         override fun onPenDown() { gestures?.onPenDown() }
+        override fun onPenUp() { gestures?.onPenUp() }
         override fun onGestureBatchEnd() { gestures?.onGestureBatchEnd() }
     }
     private val initialModel = palmModel?.copyOf()

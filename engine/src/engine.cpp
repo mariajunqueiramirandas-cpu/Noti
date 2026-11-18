@@ -226,6 +226,7 @@ void InkEngine::handle_command(const Command& c) noexcept {
       if (active_) cancel_stroke();
       renderer_.surface_destroyed();
       surface_w_ = surface_h_ = 0;
+      if (editing_) end_edit(true);
       break;
     case CommandType::kResetProbe:
       probe_.reset();
@@ -255,9 +256,14 @@ void InkEngine::handle_command(const Command& c) noexcept {
 void InkEngine::process_samples(const InkSample* s, uint32_t n, int64_t t_start) noexcept {
   batch_t_start_ = t_start;
   bool dirty = false;
+  bool edit_redraw = false;
   for (uint32_t i = 0; i < n; ++i) {
     const InkSample& smp = s[i];
-    if (edit_sample(smp)) continue;
+    if (NOTI_UNLIKELY(edit_redraw && smp.action == Action::kDown)) {
+      redraw_document();
+      edit_redraw = false;
+    }
+    if (edit_sample(smp, edit_redraw)) continue;
     switch (smp.action) {
       case Action::kHoverEnter:
         renderer_.hover(true);
@@ -294,6 +300,7 @@ void InkEngine::process_samples(const InkSample* s, uint32_t n, int64_t t_start)
         continue;
     }
   }
+  if (edit_redraw) redraw_document();
   stats_.samples.fetch_add(n, std::memory_order_relaxed);
   if (active_) {
     // Track the dispatch-delay floor: follow decreases at once, creep up
