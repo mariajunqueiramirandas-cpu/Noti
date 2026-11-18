@@ -1,14 +1,11 @@
 package app.noti.ui.study
 
-import android.os.Handler
-import android.os.Looper
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.unit.IntOffset
 import app.noti.data.LibraryStore
-import app.noti.data.Notebook
 import app.noti.pdf.PagePlacement
 import app.noti.study.BoardLayer
 import app.noti.study.BoardStudy
@@ -27,20 +24,16 @@ import java.util.UUID
 
 /**
  * Everything a Study board does around its ink: the floating sheet (which item, where it
- * floats), local review, hints, self-assessment, printing onto the board,
- * practice exams and the topic layout. State lives in [store] (saved) and here (this
- * visit). Main thread.
+ * floats), local review, printing onto the board, exams and the topic layout.
+ * State lives in [store] (saved) and here (this visit). Main thread.
  */
 @Stable
 class StudyController(
-    val notebook: Notebook,
     val library: LibraryStore,
     val store: StudyStore,
     private val toast: (String) -> Unit,
     private val now: () -> Long = System::currentTimeMillis,
 ) {
-    private val main = Handler(Looper.getMainLooper())
-
     // ---- the sheet ----
 
     /** The floating sheet is showing (the Study button in the top bar brings it back). */
@@ -59,10 +52,10 @@ class StudyController(
     val position: Int get() = current?.let { order.indexOf(it.id) } ?: -1
     val dueCount: Int get() = data.dueCount(now())
 
-    var problem by mutableStateOf<String?>(null)
-
-    // ---- dialogs and menus ----
-
+    var editorKind by mutableStateOf<ItemKind?>(null)
+        private set
+    var editingItem by mutableStateOf<StudyItem?>(null)
+        private set
     var deckOpen by mutableStateOf(false)
     var examSetupOpen by mutableStateOf(false)
     /** Exam whose results to show. */
@@ -95,11 +88,13 @@ class StudyController(
     fun show() {
         refreshOrder()
         val d = data
-        val next = exam?.let { e -> e.itemIds.firstOrNull { d.progressOf(it).let { p -> p.grade == null && p.chosen < 0 } } ?: e.itemIds.firstOrNull() }
+        val next = exam?.let { run ->
+            run.itemIds.firstOrNull { id -> id !in run.submitted && d.progressOf(id).let { p -> p.grade == null && p.chosen < 0 } }
+                ?: run.itemIds.firstOrNull()
+        }
             ?: d.studyOrder(now()).firstOrNull { d.isNew(it.id) || d.progressOf(it.id).srs?.let { s -> s.due <= now() } == true }?.id
             ?: d.current ?: order.firstOrNull()
-        if (next == null) { collapsed = false; open = true; return }
-        select(next)
+        if (next != null) select(next)
         collapsed = false
         open = true
     }
@@ -111,9 +106,42 @@ class StudyController(
     }
 
     fun select(id: String) {
+        if (data.item(id) == null || exam?.let { id !in it.itemIds } == true) return
         if (order.isEmpty()) refreshOrder()
         if (id !in order) order = order + id
-        if (data.current != id) store.update { it.copy(current = id) }
+        val last = data.progressOf(id)
+        val due = last.srs?.due
+        store.update { deck ->
+            val next = deck.copy(current = id)
+            if (exam == null && !isRemote(id) && due != null && due <= now() && preparedReviews.put(id, due) != due) {
+                next.withProgress(id) { Progress(attempts = it.attempts, srs = it.srs) }
+            } else next
+        }
+    }
+
+    private val preparedReviews = mutableMapOf<String, Long>()
+
+    fun editItem(kind: ItemKind, item: StudyItem? = null) {
+        if (exam != null || isRemote(item?.id)) return
+        editingItem = item
+        editorKind = kind
+    }
+
+    fun closeItemEditor() {
+        editorKind = null
+        editingItem = null
+    }
+
+    fun saveItem(draft: StudyItem) {
+        if (draft.prompt.isBlank() || draft.answer.isBlank() || exam != null) return
+        val item = if (draft.id.isEmpty()) draft.copy(id = UUID.randomUUID().toString(), createdAt = now()) else draft
+        store.update { deck ->
+            deck.copy(items = if (draft.id.isEmpty()) deck.items + item else deck.items.map { if (it.id == item.id) item else it })
+        }
+        select(item.id)
+        closeItemEditor()
+        collapsed = false
+        open = true
     }
 
     fun step(delta: Int) {
@@ -143,14 +171,16 @@ class StudyController(
     /** Flash card: how well you knew it. */
     fun rate(rating: Rating) {
         val item = current ?: return
-        progress(item.id) { it.copy(flipped = true, attempts = it.attempts + 1, srs = Srs.review(it.srs, rating, now())) }
-        main.postDelayed({ if (current?.id == item.id) step(1) }, 350)
+        if (item.kind != ItemKind.Flash || !data.progressOf(item.id).flipped || exam != null) return
+        progress(item.id) { it.copy(flipped = false, attempts = it.attempts + 1, srs = Srs.review(it.srs, rating, now())) }
+        if (position < order.lastIndex) step(1)
+        else toast("Review saved.")
     }
 
     /** Multiple choice: checked here, no network. In an exam it can change until the end. */
     fun choose(index: Int) {
         val item = current ?: return
-        if (item.kind != ItemKind.Choice) return
+        if (item.kind != ItemKind.Choice || index !in item.choices.indices) return
         remote?.takeIf { it.owns(item.id) }?.let { r ->
             if (r.state(item.id)?.locked != true) r.pick(item.id, index)
             return
@@ -166,16 +196,43 @@ class StudyController(
 
     /** Try again: hides your answer, hints and the check (the review schedule stays). */
     fun reset(id: String) {
-        progress(id) { Progress(srs = it.srs) }
+        progress(id) { Progress(attempts = it.attempts, srs = it.srs) }
     }
 
-    /** Self-assessment of existing material; no remote model or upload. */
-    fun selfAssess(verdict: Verdict) {
+    fun assessWrittenAnswer(verdict: Verdict) {
         val item = current ?: return
-        val inExam = exam?.itemIds?.contains(item.id) == true
-        progress(item.id) { p -> p.copy(grade = app.noti.study.Grade(verdict,
-            when (verdict) { Verdict.Correct -> 1f; Verdict.Partial -> 0.5f; Verdict.Incorrect -> 0f }, "Self-assessed", at = now()), attempts = p.attempts + 1,
-            srs = if (inExam) p.srs else Srs.review(p.srs, Srs.ratingFor(verdict, p.hintsShown, p.answerShown, item.difficulty), now())) }
+        if (exam != null || item.kind !in writtenKinds) return
+        val time = now()
+        progress(item.id) { p ->
+            if (!p.answerShown || p.selfAssessment != null) p else p.copy(
+                selfAssessment = verdict,
+                attempts = p.attempts + 1,
+                srs = Srs.review(p.srs, Srs.ratingFor(verdict, p.hintsShown, false, item.difficulty), time),
+            )
+        }
+    }
+
+    fun toggleExamAnswer() {
+        val run = exam ?: return
+        val item = current ?: return
+        if (item.id !in run.itemIds || item.kind !in writtenKinds) return
+        val submitted = if (item.id in run.submitted) run.submitted - item.id else run.submitted + item.id
+        store.update { deck -> deck.copy(exams = deck.exams.map { if (it.id == run.id) it.copy(submitted = submitted) else it }) }
+    }
+
+    fun assessExamAnswer(examId: String, itemId: String, verdict: Verdict) {
+        val run = data.exam(examId) ?: return
+        val item = data.item(itemId) ?: return
+        if (run.finishedAt == null || !run.needsAssessment(itemId) || item.kind !in writtenKinds) return
+        val results = run.results.orEmpty() + (itemId to verdict)
+        val reviewTime = now()
+        store.update { deck ->
+            deck.copy(exams = deck.exams.map { if (it.id == examId) it.copy(results = results) else it })
+                .withProgress(itemId) { p ->
+                    p.copy(attempts = p.attempts + 1,
+                        srs = Srs.review(p.srs, Srs.ratingFor(verdict, 0, false, item.difficulty), reviewTime))
+                }
+        }
     }
 
     // ---- the board ----
@@ -290,12 +347,16 @@ class StudyController(
     fun finishExam() {
         val e = exam ?: return
         val t = now()
+        val results = e.itemIds.mapNotNull { id ->
+            val item = data.item(id) ?: return@mapNotNull null
+            data.progressOf(id).outcome(item)?.let { id to it }
+        }.toMap()
         store.update { s ->
-            var next = s.copy(exams = s.exams.map { if (it.id == e.id) it.copy(finishedAt = t) else it })
+            var next = s.copy(exams = s.exams.map { if (it.id == e.id) it.copy(finishedAt = t, results = results) else it })
             for (id in e.itemIds) {
                 val item = s.item(id) ?: continue
+                val verdict = results[id] ?: if (id !in e.submitted) Verdict.Incorrect else continue
                 next = next.withProgress(id) { p ->
-                    val verdict = p.outcome(item) ?: Verdict.Incorrect
                     p.copy(srs = Srs.review(p.srs, Srs.ratingFor(verdict, 0, false, item.difficulty), t))
                 }
             }
@@ -313,3 +374,5 @@ class StudyController(
         store.update { s -> s.copy(exams = s.exams.map { if (it.id == examId) it.copy(card = card) else it }) }
     }
 }
+
+internal val writtenKinds = setOf(ItemKind.Short, ItemKind.Problem)

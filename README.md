@@ -50,7 +50,7 @@ actual statistics in it, and a cheerful lavender mascot. Priorities.
 <tr>
 <td width="33%" align="center">⚡<br><b>Fast ink</b><br><sub>Front-buffer rendering, a tuned predictor, and a UI thread that is politely not invited.</sub></td>
 <td width="33%" align="center">✋<br><b>Your palm is not a pen</b><br><sub>A sequential probability test decides that, usually before you've noticed you put it down.</sub></td>
-<td width="33%" align="center">🍩<br><b>One dial to rule the tools</b><br><sub>Eleven segments. Every preset is one tap. The plum one is the boss.</sub></td>
+<td width="33%" align="center">🍩<br><b>One dial to rule the tools</b><br><sub>Ten segments. Every preset is one tap. The plum one is the boss.</sub></td>
 </tr>
 <tr>
 <td align="center">📄<br><b>PDFs that keep up</b><br><sub>Tiled rendering, pinch from 25% to 600%, ink that stays glued to the page.</sub></td>
@@ -58,8 +58,7 @@ actual statistics in it, and a cheerful lavender mascot. Priorities.
 <td align="center">💾<br><b>Saves on its own</b><br><sub>Atomic, versioned, autosaved between strokes. Your notes are safe.</sub></td>
 </tr>
 <tr>
-<td align="center">🔤<br><b>Handwriting to text</b><br><sub>Loop it, read it, copy it or swap it for neat typed ink. On the tablet, offline, no account.</sub></td>
-<td colspan="2" align="center">🎓<br><b>Study boards</b><br><sub>Link a PDF, get math and physics questions on a floating sheet, work them on the board, loop to check, print the keepers.</sub></td>
+<td colspan="3" align="center">🎓<br><b>Study boards</b><br><sub>Write flash cards and practice questions, review them offline, and pin cards to the board.</sub></td>
 </tr>
 </table>
 
@@ -77,7 +76,7 @@ actual statistics in it, and a cheerful lavender mascot. Priorities.
 <br><br>
 
 <img src="docs/screenshots/radial-editor/tablet-light.png" alt="The editor with the radial tool dial in the upper left" width="540">
-<img src="docs/branding/screenshots/editor-phone.png" alt="The editor on a phone" width="138">
+<img src="docs/screenshots/radial-editor/phone-large-text.png" alt="The editor on a phone" width="138">
 <img src="docs/branding/screenshots/library-phone.png" alt="The library on a phone" width="138">
 
 <sub>The editor (with its one bold element, the dial) and the phone layouts, which are tested down to 360 dp with 1.5× text. Yes, really.</sub>
@@ -127,9 +126,9 @@ naps either. Your tablet may get warm. That's the ink being enthusiastic. Detail
 <img align="right" src="docs/screenshots/radial-editor/highlighter-light.png" alt="The radial dial with the highlighter selected" width="260">
 
 The editor is a full canvas with a small pill header and a persistent **radial tool dial** at the upper left.
-Eleven rounded segments, three groups, read clockwise:
+Ten rounded segments, three groups, read clockwise:
 
-- **Top:** pen, highlighter, stroke eraser, lasso, transcribe
+- **Top:** pen, highlighter, stroke eraser, lasso
 - **Right:** your three saved colors
 - **Left:** three width presets
 
@@ -143,29 +142,17 @@ centered where it was. The chosen tool stays active while collapsed. More → Co
 
 <br clear="right">
 
-### 🔤 Handwriting to text
-
-Pick **Transcribe** (the **Tt** segment) and draw a loop around some handwriting. Noti reads it and opens a panel with the text,
-where you can fix anything it misread, then:
-
-- **Copy** it, to paste anywhere.
-- **Replace on page**, which swaps the handwriting for tidy typed ink in Nunito, in your ink's color, line by line where you wrote
-  it. It's still ink: erase it, lasso it, move it. **Undo** brings your handwriting back.
-
-Reading happens on the tablet with Google's ML Kit digital ink recognizer. The first time, it downloads the language's model
-(about 20 MB); after that it works offline and your notes never leave the device. It follows the device language; pick another
-in **Settings → Writing → Handwriting language**. Highlighter strokes in the loop are left out, and the lines are worked out from
-the ink itself, so dots, accents and descenders stay on the line they belong to.
-
 ### 🎓 Study boards
 
-**New → Study board** opens an endless canvas for saved study material. Existing
-multiple-choice questions, flash cards, hints, source-page previews, pinned cards,
-spaced reviews, and practice exams continue to work locally. Written answers can
-be self-assessed. Exported PDFs include pinned cards and drawings.
+**New → Study board** opens an endless canvas with a floating study sheet. Use **Add flash card** or
+**Add question** to build a deck. The sheet shows reviews that are due and new items.
 
-Cloud question generation, remote answer grading, PDF/ink uploads to AI providers,
-and cloud API-key settings have been removed. On-device **Transcribe** remains.
+- **Flash cards** show the answer when you ask. Rate your recall to schedule the next review.
+- **Multiple choice** checks the option against the answer you saved.
+- **Written questions** let you work on the board, reveal the answer, and rate how you did.
+- **Print** pins an item to the board. Exporting the board as PDF includes pinned cards and pages.
+
+The deck, reviews, and timed exams stay on your device. [Study board guide](docs/STUDY_BOARD.md).
 
 Open **Plataforma Assaad** from the library to receive questions on the canvas.
 Choose **This tablet** to sign into the real site inside Noti, or pair the
@@ -213,8 +200,8 @@ On a **Samsung Galaxy Tab with the S Pen**, the S Pen's side button is the writi
 toggle the eraser, hold it and touch the page for the dial. One UI only tells apps about it through the pen's own
 events, so Noti reads it there; Air actions (presses with the pen away from the screen) stay with One UI.
 
-Holding can erase temporarily instead, if that's more your style. The dial stays hidden otherwise (More → Show tools,
-or keep it on the page in settings).
+Holding can erase temporarily instead. Tap **Show tools** in the editor's bottom bar when the dial is hidden, or keep it
+on the page in settings.
 
 On Pad 7 with Android 16, Noti stops the writing button from launching Mi Canvas, using a verified window workaround.
 We asked nicely first. Screenshot-button holds stay with HyperOS, and the Focus/Spotlight button stays with the system
@@ -235,7 +222,8 @@ two-finger double tap, no matter how confident it looks. [Read the whole thing](
 ## 📄 Pages & PDFs
 
 Notebooks and imported PDFs scroll vertically as one continuous document. Drag to scroll, **pinch from 25% to 600%**,
-drag the slim scroll indicator on the right, or jump with the pages panel. Tap the zoom percentage to fit width.
+drag the scroll indicator on the right, or use the arrows by the page count. Tap the count for thumbnails or use
+**More → Go to page** to enter a page number. Paged documents reopen at the last page you visited. Tap the zoom percentage to fit width.
 Momentum stops the instant the pen touches down, because you clearly meant to write.
 
 <details>
@@ -281,6 +269,8 @@ No save button. You won't need one.
 On tablets, the library and settings put navigation on the desk and content on a rounded sheet; notebooks are drawn as
 their own first page with a colored spine and, for favorites, a honey bookmark. Phone windows, including the **Poco X8 Pro**,
 get a navigation drawer, a full-width search field, a compact selection menu and an adaptive notebook grid.
+Use **View options** to switch between covers and a list or change the sort order. Search matches document names, types and folders.
+Each document has an options menu, and a long press starts selection for bulk actions. Import can pick several PDFs at once.
 
 Settings use a section menu and stack the pen/palm/button test canvas below the controls when space is narrow. Paper choices
 wrap, and dialogs scroll on short screens or with larger text. Layouts follow Android's available dp size rather than physical

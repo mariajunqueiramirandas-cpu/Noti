@@ -2,6 +2,7 @@ package app.noti.data
 
 import android.content.Context
 import app.noti.ink.PenHold
+import java.security.KeyStore
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -16,8 +17,6 @@ enum class Predictor(val label: String, val engineId: Int) {
 /** The engine takes a tool by [ordinal] (InkEngine::set_tool): keep this order. */
 enum class Tool(val label: String) {
     Pen("Pen"), Highlighter("Highlighter"), Eraser("Eraser"), Lasso("Lasso"),
-    /** A lasso whose loop turns the handwriting inside it into text. */
-    Transcribe("Transcribe"),
 }
 
 /** The three quick color slots and three quick width slots of a drawing tool. */
@@ -51,11 +50,22 @@ class SettingsStore(context: Context) {
     private val prefs = context.getSharedPreferences("settings", Context.MODE_PRIVATE)
 
     init {
-        // Clear obsolete cloud-study credentials on upgrade; saved boards remain intact.
-        context.getSharedPreferences("study_keys", Context.MODE_PRIVATE).edit().clear().apply()
+        // Delete credentials left by the retired study service without reading their values.
+        val retiredKeys = context.getSharedPreferences("study_keys", Context.MODE_PRIVATE)
+        if (retiredKeys.contains("mistral") || retiredKeys.contains("mistralHint")) {
+            runCatching {
+                KeyStore.getInstance("AndroidKeyStore").apply { load(null); deleteEntry("noti-mistral-key") }
+            }
+            context.deleteSharedPreferences("study_keys")
+        }
     }
 
     var theme by pref(ThemeMode.System, { enumOr(prefs.getString("theme", null), it) }) { putString("theme", it.name) }
+
+    var librarySort by pref(SortOrder.Recent, { enumOr(prefs.getString("librarySort", null), it) }) {
+        putString("librarySort", it.name)
+    }
+    var libraryList by pref(false, { prefs.getBoolean("libraryList", it) }) { putBoolean("libraryList", it) }
 
     /** Off = constant width, whatever the pressure. */
     var pressureOn by pref(true, { prefs.getBoolean("pressureOn", it) }) { putBoolean("pressureOn", it) }
@@ -92,11 +102,6 @@ class SettingsStore(context: Context) {
     }
 
     var tapUndo by pref(true, { prefs.getBoolean("tapUndo", it) }) { putBoolean("tapUndo", it) }
-
-    /** The language the Transcribe tool reads (a BCP 47 tag); empty follows the device language. */
-    var handwritingLanguage by pref("", { prefs.getString("handwritingLanguage", null) ?: it }) {
-        putString("handwritingLanguage", it)
-    }
 
     private var storedTool by pref(Tool.Pen, { enumOr(prefs.getString("tool", null), it) }) { putString("tool", it.name) }
     var lastDrawingTool by pref(Tool.Pen, {

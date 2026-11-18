@@ -37,8 +37,8 @@ data class BoardStudy(
 
     fun dueCount(now: Long) = items.count { progress[it.id]?.srs?.let { s -> s.due <= now } == true }
 
-    /** Never answered, checked, flipped or rated. */
-    fun isNew(id: String) = progressOf(id).let { it.srs == null && it.grade == null && it.chosen < 0 }
+    /** Has yet to complete a practice attempt. */
+    fun isNew(id: String) = progressOf(id).let { it.srs == null && it.grade == null && it.selfAssessment == null && it.chosen < 0 }
 
     /**
      * The order the sheet walks: what's due first, then new items in deck order, then the
@@ -224,10 +224,12 @@ data class Progress(
     val grade: Grade? = null,
     val attempts: Int = 0,
     val srs: SrsState? = null,
+    val selfAssessment: Verdict? = null,
 ) {
     /** Correct, partly right or not yet, from a check, a choice or a rating; null if untried. */
     fun outcome(item: StudyItem): Verdict? = when {
         item.kind == ItemKind.Choice && chosen >= 0 -> if (chosen == item.correctChoice) Verdict.Correct else Verdict.Incorrect
+        selfAssessment != null -> selfAssessment
         grade != null -> grade.verdict
         item.kind == ItemKind.Flash && srs != null -> when (srs.lastRating) {
             Rating.Again -> Verdict.Incorrect
@@ -239,7 +241,11 @@ data class Progress(
 
     fun json(): JSONObject = JSONObject().put("hintsShown", hintsShown).put("answerShown", answerShown)
         .put("flipped", flipped).put("chosen", chosen).put("attempts", attempts)
-        .apply { grade?.let { put("grade", it.json()) }; srs?.let { put("srs", it.json()) } }
+        .apply {
+            grade?.let { put("grade", it.json()) }
+            srs?.let { put("srs", it.json()) }
+            selfAssessment?.let { put("selfAssessment", it.wire) }
+        }
 
     companion object {
         fun from(o: JSONObject) = Progress(
@@ -250,6 +256,7 @@ data class Progress(
             grade = o.optJSONObject("grade")?.let(Grade::from),
             attempts = o.optInt("attempts"),
             srs = o.optJSONObject("srs")?.let(SrsState::from),
+            selfAssessment = o.optString("selfAssessment").takeIf(String::isNotEmpty)?.let(Verdict::of),
         )
     }
 }
@@ -294,8 +301,8 @@ data class PlacedPage(val id: String, val sourceId: String, val page: Int, val x
 }
 
 /**
- * A timed run through [itemIds] without hints, answers or sources. Answers are checked as
- * they come in; the result is shown when it ends, and can be printed as a score card.
+ * A timed run through [itemIds]. Multiple-choice results are captured when it ends and
+ * written answers can be assessed by the learner afterwards.
  */
 data class Exam(
     val id: String,
@@ -305,15 +312,30 @@ data class Exam(
     val finishedAt: Long? = null,
     /** Score card on the board (top-left, page units), once printed. */
     val card: PinnedCard? = null,
+    val submitted: Set<String> = emptySet(),
+    /** Null for active exams and results saved before individual exam scores were stored. */
+    val results: Map<String, Verdict>? = null,
 ) {
     val endsAt get() = startedAt + minutes * 60_000L
+    fun outcome(item: StudyItem, study: BoardStudy): Verdict? =
+        if (results != null) results[item.id] else study.progressOf(item.id).outcome(item)
+
+    fun needsAssessment(id: String): Boolean = results != null && id in submitted && id !in results
+
     fun json(): JSONObject = JSONObject().put("id", id).put("itemIds", JSONArray(itemIds)).put("minutes", minutes)
-        .put("startedAt", startedAt).apply { finishedAt?.let { put("finishedAt", it) }; card?.let { put("card", it.json()) } }
+        .put("startedAt", startedAt).apply {
+            finishedAt?.let { put("finishedAt", it) }
+            card?.let { put("card", it.json()) }
+            if (submitted.isNotEmpty()) put("submitted", JSONArray(submitted.toList()))
+            results?.let { scores -> put("results", JSONObject(scores.mapValues { it.value.wire })) }
+        }
 
     companion object {
         fun from(o: JSONObject) = Exam(o.getString("id"), o.optJSONArray("itemIds").strings(), o.optInt("minutes", 30),
             o.optLong("startedAt"), if (o.has("finishedAt")) o.getLong("finishedAt") else null,
-            o.optJSONObject("card")?.let { runCatching { PinnedCard.from(it) }.getOrNull() })
+            o.optJSONObject("card")?.let { runCatching { PinnedCard.from(it) }.getOrNull() },
+            o.optJSONArray("submitted").strings().toSet(),
+            o.optJSONObject("results")?.let { scores -> scores.keys().asSequence().associateWith { Verdict.of(scores.optString(it)) } })
     }
 }
 

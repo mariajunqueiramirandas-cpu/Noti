@@ -103,6 +103,25 @@ class PageViewportTest {
         assertEquals(2, f.state.page)
     }
 
+    @Test fun readingPositionCanBeRestoredBeforeBoundsOrPageSizesArrive() {
+        lateinit var state: PagePlacement
+        val viewport = PageViewport(10f) { state = it }
+        viewport.goTo(2)
+        viewport.setDocument(floatArrayOf(1.4f, 1.4f, 0.4f))
+        viewport.setCanvas(300, 400)
+        assertEquals(2, state.page)
+        assertEquals(2, state.visiblePages.last().page)
+    }
+
+    @Test fun measuringAnEarlierPdfPageKeepsTheSelectedPageInPlace() {
+        val f = Fixture(FloatArray(10) { 1.4f })
+        f.viewport.goTo(4)
+        val before = f.state
+        f.viewport.setDocument(FloatArray(10) { if (it < 4) 3f else 1.4f })
+        assertEquals(4, f.state.page)
+        assertEquals(before.top, f.state.top, 1f)
+    }
+
     @Test fun resizeKeepsLocationInPageCoordinates() {
         val f = Fixture(FloatArray(10) { 1.4f })
         f.viewport.goTo(4); f.viewport.pan(0f, -80f)

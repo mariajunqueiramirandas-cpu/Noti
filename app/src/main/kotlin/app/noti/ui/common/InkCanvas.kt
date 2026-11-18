@@ -78,7 +78,7 @@ data class PalmSpec(
  * Main thread.
  */
 @Stable
-class PageController {
+class PageController(internal val initialPage: Int? = null) {
     var placement by mutableStateOf<PagePlacement?>(null)
         internal set
     var documentState by mutableStateOf(DoubleArray(8))
@@ -183,6 +183,7 @@ fun InkCanvas(
         }
         // Not drawn yet (no canvas size or document), so safe before the ink thread owns it.
         if (sheet) viewport.setSheet(screenPx, EndlessCanvas.SPAN, EndlessCanvas.HOME_Y, EndlessCanvas.GROW)
+        controller.initialPage?.let(viewport::goTo)
         val gestures = CanvasGestures(
             ViewConfiguration.get(context).scaledTouchSlop.toFloat(), viewport,
             onTwoFingerTap = { if (undoTap.value) created.documentAction(0) },

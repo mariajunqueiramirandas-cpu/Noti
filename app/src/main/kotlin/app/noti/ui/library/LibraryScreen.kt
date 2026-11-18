@@ -22,9 +22,9 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -41,6 +41,9 @@ import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.CreateNewFolder
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.DeleteForever
+import androidx.compose.material.icons.outlined.GridView
+import androidx.compose.material.icons.automirrored.outlined.ViewList
+import androidx.compose.material.icons.outlined.SelectAll
 import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.DriveFileRenameOutline
 import androidx.compose.material.icons.outlined.Folder
@@ -57,10 +60,16 @@ import androidx.compose.material.icons.outlined.StarBorder
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.Icon
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
+import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
@@ -74,6 +83,8 @@ import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.saveable.Saver
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -84,9 +95,9 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
@@ -110,9 +121,12 @@ import app.noti.ui.common.TextInputDialog
 import app.noti.ui.theme.Noti
 import app.noti.ui.theme.NotiBrand
 import java.io.File
+import java.text.Collator
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -127,6 +141,32 @@ private sealed interface Filter {
     data object Trash : Filter
 }
 
+private val filterSaver = Saver<Filter, String>(
+    save = {
+        when (it) {
+            Filter.All -> "all"
+            Filter.Recent -> "recent"
+            Filter.Favorites -> "favorites"
+            Filter.Pdfs -> "pdfs"
+            Filter.Boards -> "boards"
+            Filter.Trash -> "trash"
+            is Filter.InFolder -> "folder:${it.id}"
+        }
+    },
+    restore = {
+        when (it) {
+            "recent" -> Filter.Recent
+            "favorites" -> Filter.Favorites
+            "pdfs" -> Filter.Pdfs
+            "boards" -> Filter.Boards
+            "trash" -> Filter.Trash
+            else -> if (it.startsWith("folder:")) Filter.InFolder(it.removePrefix("folder:")) else Filter.All
+        }
+    },
+)
+
+private enum class LibraryAction { Select, Favorite, Move, Rename, Duplicate, Export, Trash, Restore, DeleteForever }
+
 @Composable
 fun LibraryScreen(
     library: LibraryStore,
@@ -134,38 +174,81 @@ fun LibraryScreen(
     onOpen: (String) -> Unit,
     onSettings: () -> Unit,
 ) {
-    var filter by remember { mutableStateOf<Filter>(Filter.All) }
-    var query by remember { mutableStateOf("") }
-    var sort by remember { mutableStateOf(SortOrder.Recent) }
+    var filter by rememberSaveable(stateSaver = filterSaver) { mutableStateOf<Filter>(Filter.All) }
+    var query by rememberSaveable { mutableStateOf("") }
+    val grid = rememberLazyGridState()
+    val snackbar = remember { SnackbarHostState() }
+    val sort = settings.librarySort
+    val listView = settings.libraryList
     var selection by remember { mutableStateOf(emptySet<String>()) }
     var creating by remember { mutableStateOf(false) }
     var creatingBoard by remember { mutableStateOf(false) }
     var creatingFolder by remember { mutableStateOf(false) }
     var renamingNotebook by remember { mutableStateOf<Notebook?>(null) }
     var renamingFolder by remember { mutableStateOf<Folder?>(null) }
-    var moving by remember { mutableStateOf(false) }
+    var movingIds by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var deletingFolder by remember { mutableStateOf<Folder?>(null) }
+    var duplicating by remember { mutableStateOf(false) }
     var confirmDeleteForever by remember { mutableStateOf<Set<String>?>(null) }
-    var importing by remember { mutableStateOf(false) }
+    var importProgress by remember { mutableStateOf<Pair<Int, Int>?>(null) }
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val drawer = rememberDrawerState(DrawerValue.Closed)
-    val importPdf = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri == null) return@rememberLauncherForActivityResult
-        importing = true
+    fun changeFilter(next: Filter) {
+        if (next != filter) {
+            filter = next
+            query = ""
+            selection = emptySet()
+            grid.requestScrollToItem(0)
+        }
+        scope.launch { drawer.close() }
+    }
+    fun changeQuery(next: String) {
+        query = next
+        grid.requestScrollToItem(0)
+    }
+    val importPdf = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+        if (uris.isEmpty()) return@rememberLauncherForActivityResult
         val folderId = (filter as? Filter.InFolder)?.id
         scope.launch {
-            val result = withContext(Dispatchers.IO) { runCatching { PdfImport.import(context, uri, library.pdfDir) } }
-            importing = false
-            result
-                .onSuccess { onOpen(library.addPdf(it.id, it.name, it.pageCount, folderId).id) }
-                .onFailure { Toast.makeText(context, it.message ?: "Couldn't import that PDF.", Toast.LENGTH_LONG).show() }
+            val imported = mutableListOf<Notebook>()
+            val errors = mutableListOf<String>()
+            for ((index, uri) in uris.withIndex()) {
+                ensureActive()
+                importProgress = (index + 1) to uris.size
+                withContext(NonCancellable) {
+                    val result = withContext(Dispatchers.IO) { runCatching { PdfImport.import(context, uri, library.pdfDir) } }
+                    result.onSuccess { imported += library.addPdf(it.id, it.name, it.pageCount, folderId) }
+                        .onFailure { errors += it.message ?: "Couldn't import that PDF." }
+                }
+            }
+            ensureActive()
+            importProgress = null
+            if (uris.size == 1 && imported.isNotEmpty()) {
+                onOpen(imported.single().id)
+            } else {
+                if (imported.isNotEmpty()) {
+                    if (folderId == null) changeFilter(Filter.Pdfs)
+                    changeQuery("")
+                }
+                val message = when {
+                    errors.isEmpty() -> "${count(imported.size, "PDF")} imported"
+                    imported.isEmpty() -> errors.first()
+                    else -> "Imported ${imported.size} of ${uris.size} PDFs. ${errors.first()}"
+                }
+                snackbar.showSnackbar(message, withDismissAction = true)
+            }
         }
     }
-    var exportNotebooks by remember { mutableStateOf<List<Notebook>>(emptyList()) }
+    var exportIds by rememberSaveable { mutableStateOf(arrayListOf<String>()) }
     var exporting by remember { mutableStateOf(false) }
     fun exportTo(uri: android.net.Uri?) {
         if (uri == null) return
-        val chosen = exportNotebooks
+        val chosen = exportIds.mapNotNull(library::notebook)
+        if (chosen.size != exportIds.size || chosen.isEmpty()) {
+            Toast.makeText(context, "The selected documents are no longer available.", Toast.LENGTH_LONG).show()
+            return
+        }
         exporting = true
         scope.launch {
             val result = withContext(Dispatchers.IO) {
@@ -195,9 +278,60 @@ fun LibraryScreen(
     val exportZip = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/zip"), ::exportTo)
     val onImportPdf = { importPdf.launch(arrayOf("application/pdf")) }
 
-    BackHandler(enabled = selection.isNotEmpty()) { selection = emptySet() }
+    fun runAction(action: LibraryAction, ids: Set<String>) {
+        when (action) {
+            LibraryAction.Select -> selection = ids
+            LibraryAction.Favorite -> {
+                library.setFavorite(ids, !ids.all { library.notebook(it)?.favorite == true })
+                if (filter == Filter.Favorites) selection = selection.filterTo(mutableSetOf()) { library.notebook(it)?.favorite == true }
+            }
+            LibraryAction.Move -> movingIds = ids
+            LibraryAction.Rename -> renamingNotebook = library.notebook(ids.single())
+            LibraryAction.Duplicate -> if (!duplicating) {
+                duplicating = true
+                scope.launch {
+                    val copied = try { library.duplicate(ids) } finally { duplicating = false }
+                    selection = emptySet()
+                    val message = if (copied == ids.size) "${count(copied, "copy", "copies")} created"
+                        else "Copied $copied of ${ids.size} documents"
+                    snackbar.showSnackbar(message, withDismissAction = true)
+                }
+            }
+            LibraryAction.Export -> if (!exporting) {
+                exportIds = ArrayList(library.notebooks.filter { it.id in ids }.map { it.id })
+                if (exportIds.size == 1) {
+                    val name = library.notebook(exportIds.single())!!.name.replace(Regex("[^a-zA-Z0-9 ._-]"), "_")
+                    exportPdf.launch("$name.pdf")
+                } else if (exportIds.isNotEmpty()) exportZip.launch("Noti documents.zip")
+            }
+            LibraryAction.Trash -> {
+                library.trash(ids)
+                selection = emptySet()
+                scope.launch {
+                    snackbar.currentSnackbarData?.dismiss()
+                    if (snackbar.showSnackbar("${count(ids.size, "document")} moved to trash", actionLabel = "Undo",
+                            duration = SnackbarDuration.Long) == SnackbarResult.ActionPerformed) {
+                        library.restore(ids)
+                    }
+                }
+            }
+            LibraryAction.Restore -> {
+                library.restore(ids)
+                selection = emptySet()
+                scope.launch { snackbar.showSnackbar("${count(ids.size, "document")} restored", withDismissAction = true) }
+            }
+            LibraryAction.DeleteForever -> confirmDeleteForever = ids
+        }
+    }
 
-    // What's due for review on each Study board, for its cover.
+    BackHandler(enabled = drawer.isClosed && (selection.isNotEmpty() || query.isNotEmpty() || filter != Filter.All)) {
+        when {
+            selection.isNotEmpty() -> selection = emptySet()
+            query.isNotEmpty() -> changeQuery("")
+            else -> changeFilter(Filter.All)
+        }
+    }
+
     val boards = library.notebooks.filter { it.board && it.trashedAt == null }
     val due by produceState(emptyMap<String, Int>(), boards.map { it.id }) {
         value = withContext(Dispatchers.IO) {
@@ -207,28 +341,34 @@ fun LibraryScreen(
     }
 
     val inTrash = filter == Filter.Trash
-    val visible = library.notebooks
-        .filter { if (inTrash) it.trashedAt != null else it.trashedAt == null }
-        .filter {
-            when (val f = filter) {
-                Filter.Favorites -> it.favorite
-                Filter.Pdfs -> it.isPdf
-                Filter.Boards -> it.board
-                is Filter.InFolder -> it.folderId == f.id
-                else -> true
-            }
+    val folderNames = remember(library.folders) { library.folders.associate { it.id to it.name } }
+    val collator = remember { Collator.getInstance().apply { strength = Collator.PRIMARY } }
+    val filtered = library.notebooks.filter { nb ->
+        if (inTrash) nb.trashedAt != null
+        else nb.trashedAt == null && when (val active = filter) {
+            Filter.Favorites -> nb.favorite
+            Filter.Pdfs -> nb.isPdf
+            Filter.Boards -> nb.board
+            is Filter.InFolder -> nb.folderId == active.id
+            else -> true
         }
-        .filter { query.isBlank() || it.name.contains(query.trim(), ignoreCase = true) }
-        .let { list ->
-            when {
-                filter == Filter.Recent -> list.sortedByDescending { it.openedAt }.take(20)
-                sort == SortOrder.Recent -> list.sortedByDescending { it.openedAt }
-                sort == SortOrder.Name -> list.sortedBy { it.name.lowercase() }
-                else -> list.sortedByDescending { it.createdAt }
-            }
+    }
+    val terms = query.trim().split(Regex("\\s+")).filter(String::isNotEmpty)
+    val visible = filtered.filter { nb ->
+        val searchable = listOf(nb.name, nb.kind, folderNames[nb.folderId].orEmpty())
+        terms.all { term -> searchable.any { it.contains(term, ignoreCase = true) } }
+    }.let { list ->
+        when {
+            filter == Filter.Recent -> list.sortedByDescending { it.openedAt }.let { if (terms.isEmpty()) it.take(20) else it }
+            sort == SortOrder.Name -> list.sortedWith(compareBy(collator) { it.name })
+            sort == SortOrder.Created -> list.sortedByDescending { it.createdAt }
+            inTrash -> list.sortedByDescending { it.trashedAt }
+            else -> list.sortedByDescending { it.openedAt }
         }
+    }
+    val visibleIds = visible.mapTo(linkedSetOf()) { it.id }
     val title = when (val f = filter) {
-        Filter.All -> "All notebooks"
+        Filter.All -> "Library"
         Filter.Recent -> "Recent"
         Filter.Favorites -> "Favorites"
         Filter.Pdfs -> "PDFs"
@@ -238,10 +378,11 @@ fun LibraryScreen(
     }
 
     val subtitle = when {
-        inTrash -> if (visible.isEmpty()) null else "Deleted notebooks wait here until you delete them forever"
-        query.isNotBlank() -> null
-        visible.isEmpty() -> null
-        else -> count(visible.size, "notebook")
+        terms.isNotEmpty() -> count(visible.size, "result")
+        filter == Filter.Pdfs -> count(visible.size, "PDF")
+        filter == Filter.Boards -> count(visible.size, "study board")
+        visible.all { !it.isPdf && !it.board } && !inTrash -> count(visible.size, "notebook")
+        else -> count(visible.size, "document")
     }
 
     Surface(color = MaterialTheme.colorScheme.background, modifier = Modifier.fillMaxSize()) {
@@ -252,101 +393,86 @@ fun LibraryScreen(
                 Sidebar(
                     library = library,
                     filter = filter,
-                    onFilter = {
-                        filter = it
-                        selection = emptySet()
-                        scope.launch { drawer.close() }
-                    },
+                    onFilter = ::changeFilter,
                     onNewFolder = { creatingFolder = true; scope.launch { drawer.close() } },
                     onRenameFolder = { renamingFolder = it; scope.launch { drawer.close() } },
-                    onSettings = { scope.launch { drawer.close() }; onSettings() },
+                    onDeleteFolder = { deletingFolder = it; scope.launch { drawer.close() } },
+                    onSettings = { scope.launch { drawer.close(); onSettings() } },
                 )
             }
             val content: @Composable () -> Unit = {
-                Column(Modifier.fillMaxSize()) {
-                    app.noti.ui.assaad.AssaadLibraryEntry()
-                    if (selection.isEmpty()) {
-                        TopBar(
-                            title = title,
-                            subtitle = subtitle,
-                            onNavigation = if (compact) ({ scope.launch { drawer.open() }; Unit }) else null,
-                            query = query,
-                            onQuery = { query = it },
-                            sort = sort,
-                            onSort = { sort = it },
-                            showSort = filter != Filter.Recent,
-                            inTrash = inTrash,
-                            trashNotEmpty = visible.isNotEmpty(),
-                            onNew = { creatingBoard = false; creating = true },
-                            onNewBoard = { creatingBoard = true; creating = true },
-                            onImportPdf = onImportPdf,
-                            onEmptyTrash = { confirmDeleteForever = visible.map { it.id }.toSet() },
-                        )
-                    } else {
-                        SelectionBar(
-                            count = selection.size,
-                            inTrash = inTrash,
-                            allFavorite = selection.all { id -> library.notebook(id)?.favorite == true },
-                            onClear = { selection = emptySet() },
-                            onFavorite = { fav -> library.setFavorite(selection, fav) },
-                            onMove = { moving = true },
-                            onRename = { renamingNotebook = library.notebook(selection.first()) },
-                            onExport = {
-                                if (!exporting) {
-                                    exportNotebooks = library.notebooks.filter { it.id in selection }
-                                    if (exportNotebooks.size == 1) exportPdf.launch("${exportNotebooks.single().name.replace(Regex("[^a-zA-Z0-9 ._-]"), "_")}.pdf")
-                                    else exportZip.launch("Noti notebooks.zip")
-                                }
-                            },
-                            onDuplicate = {
-                                library.duplicate(selection)
-                                selection = emptySet()
-                            },
-                            onDelete = {
-                                library.trash(selection)
-                                selection = emptySet()
-                            },
-                            onRestore = {
-                                library.restore(selection)
-                                selection = emptySet()
-                            },
-                            onDeleteForever = { confirmDeleteForever = selection },
-                        )
-                    }
+                Box(Modifier.fillMaxSize()) {
+                    Column(Modifier.fillMaxSize()) {
+                        app.noti.ui.assaad.AssaadLibraryEntry()
+                        if (selection.isEmpty()) {
+                            TopBar(
+                                title = title,
+                                subtitle = subtitle,
+                                onNavigation = if (compact) ({ scope.launch { drawer.open() }; Unit }) else null,
+                                query = query,
+                                onQuery = ::changeQuery,
+                                sort = sort,
+                                onSort = { settings.librarySort = it; grid.requestScrollToItem(0) },
+                                showSort = filter != Filter.Recent,
+                                listView = listView,
+                                showLayout = visible.isNotEmpty(),
+                                onToggleLayout = { settings.libraryList = !listView },
+                                inTrash = inTrash,
+                                trashNotEmpty = filtered.isNotEmpty(),
+                                onNew = { creatingBoard = false; creating = true },
+                                onNewBoard = { creatingBoard = true; creating = true },
+                                onImportPdf = onImportPdf,
+                                onEmptyTrash = { confirmDeleteForever = filtered.mapTo(mutableSetOf()) { it.id } },
+                            )
+                        } else {
+                            SelectionBar(
+                                count = selection.size,
+                                allSelected = selection.containsAll(visibleIds),
+                                inTrash = inTrash,
+                                allFavorite = selection.all { id -> library.notebook(id)?.favorite == true },
+                                onClear = { selection = emptySet() },
+                                onSelectAll = { selection = visibleIds },
+                                onAction = { runAction(it, selection) },
+                            )
+                        }
 
-                    if (visible.isEmpty()) {
-                        EmptyState(filter, query.isNotBlank(), onNew = { creating = true }, onImportPdf = onImportPdf)
-                    } else {
-                        val showRecentRow = filter == Filter.All && query.isBlank() && visible.size > 6
-                        val recent = if (showRecentRow) visible.sortedByDescending { it.openedAt }.take(if (compact) 4 else 6) else emptyList()
-                        val onTap: (Notebook) -> Unit = { nb ->
-                            when {
-                                selection.isNotEmpty() -> selection = selection.toggle(nb.id)
-                                inTrash -> selection = setOf(nb.id)
-                                else -> onOpen(nb.id)
-                            }
-                        }
-                        val onLongPress: (Notebook) -> Unit = { selection = selection.toggle(it.id) }
-                        val gutter = if (compact) 20.dp else 32.dp
-                        LazyVerticalGrid(
-                            columns = GridCells.Adaptive(if (compact) 136.dp else 164.dp),
-                            contentPadding = PaddingValues(start = gutter, end = gutter, top = 8.dp, bottom = 32.dp),
-                            horizontalArrangement = Arrangement.spacedBy(if (compact) 16.dp else 28.dp),
-                            verticalArrangement = Arrangement.spacedBy(if (compact) 20.dp else 28.dp),
-                            modifier = Modifier.fillMaxSize(),
-                        ) {
-                            if (showRecentRow) {
-                                item(span = { GridItemSpan(maxLineSpan) }) { SectionLabel("Jump back in") }
-                                items(recent, key = { "r-" + it.id }) { nb ->
-                                    NotebookCard(nb, library.thumbnailFile(nb), nb.id in selection, inTrash, onTap, onLongPress, due[nb.id] ?: 0)
+                        if (visible.isEmpty()) {
+                            EmptyState(filter, terms.isNotEmpty(), onNew = {
+                                creatingBoard = filter == Filter.Boards
+                                creating = true
+                            }, onImportPdf = onImportPdf, onClearSearch = { changeQuery("") })
+                        } else {
+                            val gutter = if (compact) 16.dp else 32.dp
+                            LazyVerticalGrid(
+                                columns = if (listView) GridCells.Fixed(1) else GridCells.Adaptive(if (compact) 136.dp else 164.dp),
+                                state = grid,
+                                contentPadding = PaddingValues(start = gutter, end = gutter, top = 8.dp, bottom = 32.dp),
+                                horizontalArrangement = Arrangement.spacedBy(if (compact) 12.dp else 24.dp),
+                                verticalArrangement = Arrangement.spacedBy(if (listView) 8.dp else 20.dp),
+                                modifier = Modifier.fillMaxSize(),
+                            ) {
+                                items(visible, key = { it.id }) { nb ->
+                                    NotebookCard(
+                                        nb = nb,
+                                        thumbnail = library.thumbnailFile(nb),
+                                        selected = nb.id in selection,
+                                        selecting = selection.isNotEmpty(),
+                                        inTrash = inTrash,
+                                        listView = listView,
+                                        folderName = folderNames[nb.folderId].takeUnless { filter is Filter.InFolder },
+                                        onTap = {
+                                            if (selection.isNotEmpty() || inTrash) selection = selection.toggle(nb.id)
+                                            else onOpen(nb.id)
+                                        },
+                                        onLongPress = { selection = selection.toggle(nb.id) },
+                                        onAction = { runAction(it, setOf(nb.id)) },
+                                        due = due[nb.id] ?: 0,
+                                    )
                                 }
-                                item(span = { GridItemSpan(maxLineSpan) }) { SectionLabel("Everything") }
-                            }
-                            items(visible, key = { it.id }) { nb ->
-                                NotebookCard(nb, library.thumbnailFile(nb), nb.id in selection, inTrash, onTap, onLongPress, due[nb.id] ?: 0)
                             }
                         }
                     }
+                    SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter).padding(12.dp))
                 }
             }
             ModalNavigationDrawer(
@@ -373,16 +499,20 @@ fun LibraryScreen(
 
     // ---- dialogs ----
 
-    if (importing) {
+    if (duplicating) {
+        AlertDialog(onDismissRequest = {}, confirmButton = {}, title = { Text("Making copies") },
+            text = { LinearProgressIndicator(Modifier.fillMaxWidth()) })
+    }
+    importProgress?.let { (current, total) ->
         AlertDialog(
             onDismissRequest = {},
             confirmButton = {},
-            title = { Text("Importing PDF") },
+            title = { Text(if (total == 1) "Importing PDF" else "Importing PDFs") },
             text = {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     CircularProgressIndicator(Modifier.size(24.dp))
                     Spacer(Modifier.width(16.dp))
-                    Text("Copying it into Noti…")
+                    Text(if (total == 1) "Copying file…" else "Copying file $current of $total…")
                 }
             },
         )
@@ -390,7 +520,7 @@ fun LibraryScreen(
     if (creating) {
         NewNotebookDialog(
             initialPaper = Paper(settings.defaultTemplate, settings.defaultColor),
-            initialBoard = creatingBoard || filter == Filter.Boards,
+            initialBoard = creatingBoard,
             onDismiss = { creating = false },
             onCreate = { name, paper, board ->
                 creating = false
@@ -403,7 +533,7 @@ fun LibraryScreen(
         TextInputDialog("New folder", "", "Create", onDismiss = { creatingFolder = false }) {
             val f = library.createFolder(it)
             creatingFolder = false
-            filter = Filter.InFolder(f.id)
+            changeFilter(Filter.InFolder(f.id))
         }
     }
     renamingNotebook?.let { nb ->
@@ -419,27 +549,40 @@ fun LibraryScreen(
             renamingFolder = null
         }
     }
-    if (moving) {
+    deletingFolder?.let { folder ->
+        AlertDialog(
+            onDismissRequest = { deletingFolder = null },
+            title = { Text("Delete ${folder.name}?") },
+            text = { Text("Its documents will stay in your library without a folder.") },
+            confirmButton = {
+                Button(onClick = {
+                    if (filter == Filter.InFolder(folder.id)) changeFilter(Filter.All)
+                    library.deleteFolder(folder.id)
+                    deletingFolder = null
+                }, destructive = true) { Text("Delete folder") }
+            },
+            dismissButton = { TextButton(onClick = { deletingFolder = null }) { Text("Cancel") } },
+        )
+    }
+    if (movingIds.isNotEmpty()) {
+        fun moveTo(folderId: String?) {
+            library.move(movingIds, folderId)
+            movingIds = emptySet()
+            selection = emptySet()
+            val destination = folderNames[folderId] ?: library.folders.firstOrNull { it.id == folderId }?.name
+            scope.launch { snackbar.showSnackbar(destination?.let { "Moved to $it" } ?: "Moved out of folders", withDismissAction = true) }
+        }
         MoveDialog(
             folders = library.folders,
-            onDismiss = { moving = false },
-            onMove = { folderId ->
-                library.move(selection, folderId)
-                moving = false
-                selection = emptySet()
-            },
-            onNewFolder = { name ->
-                val f = library.createFolder(name)
-                library.move(selection, f.id)
-                moving = false
-                selection = emptySet()
-            },
+            onDismiss = { movingIds = emptySet() },
+            onMove = ::moveTo,
+            onNewFolder = { moveTo(library.createFolder(it).id) },
         )
     }
     confirmDeleteForever?.let { ids ->
         AlertDialog(
             onDismissRequest = { confirmDeleteForever = null },
-            title = { Text(if (ids.size == 1) "Delete forever?" else "Delete ${ids.size} notebooks forever?") },
+            title = { Text(if (ids.size == 1) "Delete forever?" else "Delete ${ids.size} documents forever?") },
             text = { Text("This can't be undone.") },
             confirmButton = {
                 app.noti.ui.common.NotiButton(destructive = true, onClick = {
@@ -455,7 +598,13 @@ fun LibraryScreen(
 
 private fun Set<String>.toggle(id: String) = if (id in this) this - id else this + id
 
-private fun count(n: Int, noun: String) = "$n $noun${if (n == 1) "" else "s"}"
+private fun count(n: Int, singular: String, plural: String = "${singular}s") = "$n ${if (n == 1) singular else plural}"
+
+private val Notebook.kind: String get() = when {
+    isPdf -> "PDF"
+    board -> "Study board"
+    else -> "Notebook"
+}
 
 // ---- sidebar ----
 
@@ -466,6 +615,7 @@ private fun Sidebar(
     onFilter: (Filter) -> Unit,
     onNewFolder: () -> Unit,
     onRenameFolder: (Folder) -> Unit,
+    onDeleteFolder: (Folder) -> Unit,
     onSettings: () -> Unit,
 ) {
     val colors = MaterialTheme.colorScheme
@@ -521,8 +671,7 @@ private fun Sidebar(
                         leadingIcon = { Icon(Icons.Outlined.Delete, null) },
                         onClick = {
                             menu = false
-                            if (filter == Filter.InFolder(f.id)) onFilter(Filter.All)
-                            library.deleteFolder(f.id)
+                            onDeleteFolder(f)
                         },
                     )
                 }
@@ -570,13 +719,16 @@ private fun SideItem(
 @Composable
 private fun TopBar(
     title: String,
-    subtitle: String?,
+    subtitle: String,
     onNavigation: (() -> Unit)?,
     query: String,
     onQuery: (String) -> Unit,
     sort: SortOrder,
     onSort: (SortOrder) -> Unit,
     showSort: Boolean,
+    listView: Boolean,
+    showLayout: Boolean,
+    onToggleLayout: () -> Unit,
     inTrash: Boolean,
     trashNotEmpty: Boolean,
     onNew: () -> Unit,
@@ -584,259 +736,267 @@ private fun TopBar(
     onImportPdf: () -> Unit,
     onEmptyTrash: () -> Unit,
 ) {
-    var sortMenu by remember { mutableStateOf(false) }
+    var viewMenu by remember { mutableStateOf(false) }
     var newMenu by remember { mutableStateOf(false) }
     val colors = MaterialTheme.colorScheme
-    BoxWithConstraints(Modifier.fillMaxWidth()) {
-        val stacked = maxWidth < 720.dp * LocalDensity.current.fontScale
-        val search: @Composable (Modifier) -> Unit = { modifier ->
-            TextField(
-                value = query,
-                onValueChange = onQuery,
-                placeholder = { Text("Search notebooks", color = colors.onSurfaceVariant) },
-                leadingIcon = { Icon(Icons.Outlined.Search, null, tint = colors.onSurfaceVariant) },
-                trailingIcon = {
-                    if (query.isNotEmpty()) {
-                        IconButton(onClick = { onQuery("") }) { Icon(Icons.Outlined.Close, contentDescription = "Clear search") }
-                    }
-                },
-                singleLine = true,
-                shape = CircleShape,
-                textStyle = MaterialTheme.typography.bodyMedium,
-                colors = TextFieldDefaults.colors(
-                    unfocusedContainerColor = colors.surfaceContainer,
-                    focusedContainerColor = colors.surfaceContainerHigh,
-                    unfocusedIndicatorColor = Color.Transparent,
-                    focusedIndicatorColor = Color.Transparent,
-                ),
-                modifier = modifier.heightIn(min = 52.dp),
-            )
-        }
-        val gutter = if (onNavigation != null) 20.dp else 32.dp
-        Column(Modifier.fillMaxWidth().padding(start = if (onNavigation != null) 8.dp else gutter, end = gutter,
-            top = if (onNavigation != null) 8.dp else 28.dp, bottom = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                onNavigation?.let { open ->
-                    IconButton(onClick = open) { Icon(Icons.Outlined.Menu, "Open navigation") }
+    val compact = onNavigation != null
+    val gutter = if (compact) 16.dp else 32.dp
+    val layoutAction = if (listView) "Show grid view" else "Show list view"
+    Column(
+        Modifier.fillMaxWidth().padding(start = if (compact) 8.dp else gutter, end = gutter,
+            top = if (compact) 8.dp else 28.dp, bottom = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            onNavigation?.let { open ->
+                IconButton(onClick = open) { Icon(Icons.Outlined.Menu, "Open navigation") }
+            }
+            Column(Modifier.weight(1f)) {
+                Text(title, style = if (compact) MaterialTheme.typography.titleLarge else MaterialTheme.typography.headlineMedium,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.semantics { heading() })
+                Text(subtitle, style = MaterialTheme.typography.bodyMedium, color = colors.onSurfaceVariant,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            if (showSort || showLayout) Box {
+                IconButton(onClick = { viewMenu = true }) {
+                    Icon(Icons.AutoMirrored.Outlined.Sort, contentDescription = "View options", tint = colors.onSurfaceVariant)
                 }
-                Column(Modifier.weight(1f)) {
-                    Text(title, style = if (onNavigation != null) MaterialTheme.typography.titleLarge else MaterialTheme.typography.headlineMedium,
-                        maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    if (subtitle != null && onNavigation == null) {
-                        Text(subtitle, style = MaterialTheme.typography.bodyMedium, color = colors.onSurfaceVariant,
-                            maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    }
-                }
-                if (!stacked) search(Modifier.width(260.dp))
-                if (showSort) {
-                    Box {
-                        IconButton(onClick = { sortMenu = true }) {
-                            Icon(Icons.AutoMirrored.Outlined.Sort, contentDescription = "Sort: ${sort.label}", tint = colors.onSurfaceVariant)
-                        }
-                        DropdownMenu(expanded = sortMenu, onDismissRequest = { sortMenu = false }) {
-                            SortOrder.entries.forEach { s ->
-                                DropdownMenuItem(text = { Text(s.label) }, onClick = { sortMenu = false; onSort(s) },
-                                    trailingIcon = if (s == sort) ({ Icon(Icons.Outlined.Check, null, Modifier.size(18.dp)) }) else null)
-                            }
-                        }
-                    }
-                }
-                if (inTrash) {
-                    TextButton(onClick = onEmptyTrash, enabled = trashNotEmpty, destructive = true) { Text("Empty trash") }
-                } else {
-                    Box {
-                        Button(onClick = { newMenu = true }, contentPadding = PaddingValues(start = 16.dp, end = 20.dp)) {
-                            Icon(Icons.Outlined.Add, null, Modifier.size(20.dp))
-                            Spacer(Modifier.width(6.dp))
-                            Text("New")
-                        }
-                        DropdownMenu(expanded = newMenu, onDismissRequest = { newMenu = false }) {
+                DropdownMenu(expanded = viewMenu, onDismissRequest = { viewMenu = false }) {
+                    if (showLayout) DropdownMenuItem(
+                        text = { Text(layoutAction) },
+                        leadingIcon = { Icon(if (listView) Icons.Outlined.GridView else Icons.AutoMirrored.Outlined.ViewList, null) },
+                        onClick = { viewMenu = false; onToggleLayout() },
+                    )
+                    if (showSort) {
+                        if (showLayout) HorizontalDivider(Modifier.padding(vertical = 4.dp))
+                        Text("Sort by", Modifier.padding(start = 18.dp, top = 4.dp), style = MaterialTheme.typography.labelMedium,
+                            color = colors.onSurfaceVariant)
+                        SortOrder.entries.forEach { order ->
                             DropdownMenuItem(
-                                text = { Text("Notebook") },
-                                leadingIcon = { Icon(Icons.Outlined.Description, null) },
-                                onClick = { newMenu = false; onNew() },
-                            )
-                            DropdownMenuItem(
-                                text = { Text("Study board") },
-                                leadingIcon = { Icon(Icons.Outlined.School, null) },
-                                onClick = { newMenu = false; onNewBoard() },
-                            )
-                            DropdownMenuItem(
-                                text = { Text("Import PDF") },
-                                leadingIcon = { Icon(Icons.Outlined.PictureAsPdf, null) },
-                                onClick = { newMenu = false; onImportPdf() },
+                                text = { Text(if (inTrash && order == SortOrder.Recent) "Date deleted" else order.label) },
+                                onClick = { viewMenu = false; onSort(order) },
+                                trailingIcon = if (order == sort) ({ Icon(Icons.Outlined.Check, null, Modifier.size(18.dp)) }) else null,
                             )
                         }
                     }
                 }
             }
-            if (stacked) search(Modifier.fillMaxWidth().padding(start = if (onNavigation != null) 12.dp else 0.dp))
+            if (inTrash) {
+                TextButton(onClick = onEmptyTrash, enabled = trashNotEmpty, destructive = true) { Text("Empty trash") }
+            } else {
+                Box {
+                    Button(onClick = { newMenu = true }, contentPadding = PaddingValues(horizontal = 14.dp)) {
+                        Icon(Icons.Outlined.Add, null, Modifier.size(20.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("New")
+                    }
+                    DropdownMenu(expanded = newMenu, onDismissRequest = { newMenu = false }) {
+                        DropdownMenuItem(
+                            text = { Text("Notebook") },
+                            leadingIcon = { Icon(Icons.Outlined.Description, null) },
+                            onClick = { newMenu = false; onNew() },
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Study board") },
+                            leadingIcon = { Icon(Icons.Outlined.School, null) },
+                            onClick = { newMenu = false; onNewBoard() },
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Import PDF") },
+                            leadingIcon = { Icon(Icons.Outlined.PictureAsPdf, null) },
+                            onClick = { newMenu = false; onImportPdf() },
+                        )
+                    }
+                }
+            }
         }
+        TextField(
+            value = query,
+            onValueChange = onQuery,
+            placeholder = { Text(if (inTrash) "Search trash" else "Search this view", maxLines = 1) },
+            leadingIcon = { Icon(Icons.Outlined.Search, null, tint = colors.onSurfaceVariant) },
+            trailingIcon = {
+                if (query.isNotEmpty()) IconButton(onClick = { onQuery("") }) {
+                    Icon(Icons.Outlined.Close, "Clear search")
+                }
+            },
+            singleLine = true,
+            shape = CircleShape,
+            textStyle = MaterialTheme.typography.bodyMedium,
+            colors = TextFieldDefaults.colors(
+                unfocusedContainerColor = colors.surfaceContainer,
+                focusedContainerColor = colors.surfaceContainerHigh,
+                unfocusedIndicatorColor = Color.Transparent,
+                focusedIndicatorColor = Color.Transparent,
+            ),
+            modifier = Modifier.fillMaxWidth().padding(start = if (compact) 8.dp else 0.dp).heightIn(min = 52.dp),
+        )
     }
 }
 
 @Composable
 private fun SelectionBar(
     count: Int,
+    allSelected: Boolean,
     inTrash: Boolean,
     allFavorite: Boolean,
     onClear: () -> Unit,
-    onFavorite: (Boolean) -> Unit,
-    onMove: () -> Unit,
-    onRename: () -> Unit,
-    onExport: () -> Unit,
-    onDuplicate: () -> Unit,
-    onDelete: () -> Unit,
-    onRestore: () -> Unit,
-    onDeleteForever: () -> Unit,
+    onSelectAll: () -> Unit,
+    onAction: (LibraryAction) -> Unit,
 ) {
-    var menu by remember { mutableStateOf(false) }
     val colors = MaterialTheme.colorScheme
-    BoxWithConstraints(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 12.dp)) {
-        val compact = maxWidth < 1000.dp * LocalDensity.current.fontScale
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(2.dp),
-            modifier = Modifier.fillMaxWidth().clip(CircleShape).background(colors.primaryContainer).padding(4.dp),
-        ) {
-            IconButton(onClick = onClear) { Icon(Icons.Outlined.Close, contentDescription = "Clear selection", tint = colors.onPrimaryContainer) }
-            Text("$count selected", style = MaterialTheme.typography.titleMedium, color = colors.onPrimaryContainer,
-                modifier = Modifier.weight(1f).padding(start = 4.dp))
-            if (compact) {
-                Box {
-                    IconButton(onClick = { menu = true }) { Icon(Icons.Outlined.MoreHoriz, "Selection actions", tint = colors.onPrimaryContainer) }
-                    DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                        val action: @Composable (String, ImageVector, Boolean, () -> Unit) -> Unit = { label, icon, destructive, run ->
-                            DropdownMenuItem(text = { Text(label) }, destructive = destructive, leadingIcon = { Icon(icon, null) },
-                                onClick = { menu = false; run() })
-                        }
-                        if (inTrash) {
-                            action("Restore", Icons.Outlined.RestoreFromTrash, false, onRestore)
-                            action("Delete forever", Icons.Outlined.DeleteForever, true, onDeleteForever)
-                        } else {
-                            action(if (allFavorite) "Unfavorite" else "Favorite", if (allFavorite) Icons.Outlined.Star else Icons.Outlined.StarBorder, false) { onFavorite(!allFavorite) }
-                            action("Move", Icons.AutoMirrored.Outlined.DriveFileMove, false, onMove)
-                            if (count == 1) action("Rename", Icons.Outlined.DriveFileRenameOutline, false, onRename)
-                            action("Duplicate", Icons.Outlined.ContentCopy, false, onDuplicate)
-                            action("Export", Icons.Outlined.IosShare, false, onExport)
-                            action("Delete", Icons.Outlined.Delete, true, onDelete)
-                        }
-                    }
-                }
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.fillMaxWidth().padding(12.dp).clip(CircleShape).background(colors.primaryContainer).padding(4.dp),
+    ) {
+        IconButton(onClick = onClear) { Icon(Icons.Outlined.Close, "Clear selection", tint = colors.onPrimaryContainer) }
+        Text("$count selected", style = MaterialTheme.typography.titleMedium, color = colors.onPrimaryContainer,
+            modifier = Modifier.weight(1f).padding(start = 4.dp))
+        IconButton(onClick = onSelectAll, enabled = !allSelected) {
+            Icon(Icons.Outlined.SelectAll, "Select all visible documents")
+        }
+        ActionMenu("Selection actions", inTrash, allFavorite, single = count == 1, selecting = true, onAction)
+    }
+}
+
+@Composable
+private fun ActionMenu(
+    description: String,
+    inTrash: Boolean,
+    favorite: Boolean,
+    single: Boolean,
+    selecting: Boolean,
+    onAction: (LibraryAction) -> Unit,
+) {
+    var open by remember { mutableStateOf(false) }
+    Box {
+        IconButton(onClick = { open = true }) { Icon(Icons.Outlined.MoreHoriz, description) }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            @Composable
+            fun item(action: LibraryAction, label: String, icon: ImageVector, destructive: Boolean = false) {
+                DropdownMenuItem(text = { Text(label) }, leadingIcon = { Icon(icon, null) }, destructive = destructive,
+                    onClick = { open = false; onAction(action) })
+            }
+            if (!selecting) item(LibraryAction.Select, "Select", Icons.Outlined.Check)
+            if (inTrash) {
+                item(LibraryAction.Restore, "Restore", Icons.Outlined.RestoreFromTrash)
+                item(LibraryAction.DeleteForever, "Delete forever", Icons.Outlined.DeleteForever, destructive = true)
             } else {
-                if (inTrash) {
-                    BarAction("Restore", Icons.Outlined.RestoreFromTrash, onClick = onRestore)
-                    BarAction("Delete forever", Icons.Outlined.DeleteForever, onClick = onDeleteForever)
-                } else {
-                    BarAction(
-                        if (allFavorite) "Unfavorite" else "Favorite",
-                        if (allFavorite) Icons.Outlined.Star else Icons.Outlined.StarBorder,
-                    ) { onFavorite(!allFavorite) }
-                    BarAction("Move", Icons.AutoMirrored.Outlined.DriveFileMove, onClick = onMove)
-                    if (count == 1) BarAction("Rename", Icons.Outlined.DriveFileRenameOutline, onClick = onRename)
-                    BarAction("Duplicate", Icons.Outlined.ContentCopy, onClick = onDuplicate)
-                    BarAction("Export", Icons.Outlined.IosShare, onClick = onExport)
-                    BarAction("Delete", Icons.Outlined.Delete, onClick = onDelete)
-                }
+                item(LibraryAction.Favorite, if (favorite) "Unfavorite" else "Favorite",
+                    if (favorite) Icons.Outlined.Star else Icons.Outlined.StarBorder)
+                if (single) item(LibraryAction.Rename, "Rename", Icons.Outlined.DriveFileRenameOutline)
+                item(LibraryAction.Move, "Move to folder", Icons.AutoMirrored.Outlined.DriveFileMove)
+                item(LibraryAction.Duplicate, "Duplicate", Icons.Outlined.ContentCopy)
+                item(LibraryAction.Export, if (single) "Export PDF" else "Export", Icons.Outlined.IosShare)
+                item(LibraryAction.Trash, "Move to trash", Icons.Outlined.Delete, destructive = true)
             }
         }
     }
 }
 
-@Composable
-private fun BarAction(label: String, icon: ImageVector, modifier: Modifier = Modifier, onClick: () -> Unit) {
-    TextButton(onClick = onClick, modifier = modifier, contentPadding = PaddingValues(horizontal = 14.dp)) {
-        Icon(icon, null, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onPrimaryContainer)
-        Spacer(Modifier.width(6.dp))
-        Text(label, color = MaterialTheme.colorScheme.onPrimaryContainer)
-    }
-}
-
-// ---- content ----
-
-@Composable
-private fun SectionLabel(text: String) {
-    Text(
-        text,
-        style = MaterialTheme.typography.titleMedium,
-        color = MaterialTheme.colorScheme.onSurface,
-        modifier = Modifier.padding(top = 8.dp),
-    )
-}
-
 private val PageShape = RoundedCornerShape(14.dp)
 
-/**
- * A notebook is drawn as its own first page: real paper, a colored spine on the left,
- * a honey bookmark when it's a favorite. No invented content.
- */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun NotebookCard(
     nb: Notebook,
     thumbnail: File?,
     selected: Boolean,
+    selecting: Boolean,
     inTrash: Boolean,
-    onTap: (Notebook) -> Unit,
-    onLongPress: (Notebook) -> Unit,
-    due: Int = 0,
+    listView: Boolean,
+    folderName: String?,
+    onTap: () -> Unit,
+    onLongPress: () -> Unit,
+    onAction: (LibraryAction) -> Unit,
+    due: Int,
 ) {
+    val colors = MaterialTheme.colorScheme
+    val shape = MaterialTheme.shapes.medium
+    val target = Modifier.fillMaxWidth().clip(shape)
+        .background(when {
+            selected -> colors.primaryContainer
+            listView -> colors.surfaceContainerLow
+            else -> Color.Transparent
+        })
+        .combinedClickable(
+            onClick = onTap,
+            onClickLabel = if (inTrash || selecting) "Toggle selection" else "Open ${nb.kind.lowercase()}",
+            onLongClick = onLongPress,
+            onLongClickLabel = "Toggle selection",
+        )
+        .semantics { if (selecting) this.selected = selected }
+    val options: @Composable () -> Unit = {
+        if (!selecting) ActionMenu("Options for ${nb.name}", inTrash, nb.favorite, single = true, selecting = false, onAction)
+    }
+    if (listView) {
+        Row(target.padding(start = 10.dp, end = 4.dp, top = 8.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            DocumentCover(nb, thumbnail, inTrash, selected, Modifier.size(width = 46.dp, height = 56.dp))
+            DocumentDetails(nb, folderName, inTrash, due, Modifier.weight(1f).padding(horizontal = 12.dp))
+            options()
+        }
+    } else {
+        Column(target.padding(4.dp)) {
+            DocumentCover(nb, thumbnail, inTrash, selected, Modifier.fillMaxWidth().aspectRatio(0.84f))
+            Row(Modifier.padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                DocumentDetails(nb, folderName, inTrash, due, Modifier.weight(1f).padding(start = 2.dp))
+                options()
+            }
+        }
+    }
+}
+
+@Composable
+private fun DocumentCover(nb: Notebook, thumbnail: File?, inTrash: Boolean, selected: Boolean, modifier: Modifier) {
     val colors = MaterialTheme.colorScheme
     val extras = Noti.extras
     val cover = extras.covers[Math.floorMod(nb.id.hashCode(), extras.covers.size)]
-    Column(
-        Modifier.clip(MaterialTheme.shapes.medium)
-            .combinedClickable(onClick = { onTap(nb) }, onLongClick = { onLongPress(nb) })
-            .semantics { this.selected = selected }
-            .padding(4.dp),
-    ) {
-        Box(Modifier.fillMaxWidth().aspectRatio(0.76f)) {
-            Box(
-                Modifier.matchParentSize()
-                    .shadow(if (selected) 0.dp else 3.dp, PageShape, ambientColor = extras.shadow, spotColor = extras.shadow)
-                    .clip(PageShape)
-                    .background(Color.White)
-                    .border(if (selected) 2.5.dp else 0.5.dp,
-                        if (selected) colors.primary else colors.outlineVariant, PageShape),
-            ) {
-                if (nb.isPdf) PdfThumbnail(thumbnail, Modifier.fillMaxSize())
-                else {
-                    PaperPreview(nb.paper, Modifier.fillMaxSize())
-                    Box(Modifier.fillMaxHeight().width(9.dp).background(cover))
-                    Box(Modifier.padding(start = 9.dp).fillMaxHeight().width(1.dp).background(Color(0x14000000)))
-                }
+    Box(modifier) {
+        Box(
+            Modifier.matchParentSize()
+                .shadow(if (selected) 0.dp else 2.dp, PageShape, ambientColor = extras.shadow, spotColor = extras.shadow)
+                .clip(PageShape)
+                .background(Color.White)
+                .border(if (selected) 2.dp else 0.5.dp, if (selected) colors.primary else colors.outlineVariant, PageShape),
+        ) {
+            if (nb.isPdf) PdfThumbnail(thumbnail, Modifier.fillMaxSize())
+            else {
+                PaperPreview(nb.paper, Modifier.fillMaxSize())
+                Box(Modifier.fillMaxHeight().width(7.dp).background(cover))
             }
-            if (nb.favorite && !inTrash) Bookmark(extras.bookmark, Modifier.align(Alignment.TopEnd).padding(end = 14.dp))
-            if (selected) Box(
-                Modifier.align(Alignment.TopStart).padding(10.dp).size(24.dp).background(colors.primary, CircleShape),
-                contentAlignment = Alignment.Center,
-            ) { Icon(Icons.Outlined.Check, null, Modifier.size(16.dp), tint = colors.onPrimary) }
-            val tag = when {
-                nb.isPdf -> "PDF"
-                nb.board -> "Study"
-                nb.pageCount > 1 -> count(nb.pageCount, "page")
-                else -> null
-            }
-            if (due > 0 && !inTrash) Text(
-                "$due due", style = MaterialTheme.typography.labelSmall, color = colors.onPrimary,
-                modifier = Modifier.align(Alignment.BottomStart).padding(start = 16.dp, bottom = 8.dp)
-                    .background(colors.primary, CircleShape).padding(horizontal = 8.dp, vertical = 3.dp)
-                    .semantics { contentDescription = "$due cards due for review" },
-            )
-            if (tag != null) Text(
-                tag, style = MaterialTheme.typography.labelSmall, color = NotiBrand.Ink,
-                modifier = Modifier.align(Alignment.BottomEnd).padding(8.dp)
-                    .background(Color.White.copy(alpha = 0.92f), CircleShape)
-                    .border(0.5.dp, Color(0x1F000000), CircleShape)
-                    .padding(horizontal = 8.dp, vertical = 3.dp),
-            )
         }
-        Spacer(Modifier.height(12.dp))
-        Text(nb.name, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.padding(horizontal = 2.dp))
-        Text(if (inTrash) "Deleted " + relative(nb.trashedAt ?: 0) else relative(nb.openedAt).replaceFirstChar { it.uppercase() },
-            style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant, maxLines = 1,
-            overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(horizontal = 2.dp))
+        if (nb.favorite && !inTrash) Bookmark(extras.bookmark, Modifier.align(Alignment.TopEnd).padding(end = 10.dp))
+        if (selected) Box(
+            Modifier.align(Alignment.TopStart).padding(6.dp).size(24.dp).background(colors.primary, CircleShape),
+            contentAlignment = Alignment.Center,
+        ) { Icon(Icons.Outlined.Check, null, Modifier.size(16.dp), tint = colors.onPrimary) }
+    }
+}
+
+@Composable
+private fun DocumentDetails(nb: Notebook, folderName: String?, inTrash: Boolean, due: Int, modifier: Modifier) {
+    val colors = MaterialTheme.colorScheme
+    val type = when {
+        nb.board -> nb.kind
+        nb.isCanvas -> "Endless notebook"
+        else -> "${nb.kind} · ${count(nb.pageCount, "page")}"
+    }
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Text(nb.name, style = MaterialTheme.typography.titleSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        Text(
+            if (inTrash) "Deleted ${relative(nb.trashedAt ?: 0)}" else type,
+            style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant,
+            maxLines = 1, overflow = TextOverflow.Ellipsis,
+        )
+        if (!inTrash) {
+            val detail = when {
+                due > 0 -> count(due, "review") + " due"
+                folderName != null -> folderName
+                else -> relative(nb.openedAt).replaceFirstChar { it.uppercase() }
+            }
+            Text(detail, style = MaterialTheme.typography.bodySmall,
+                color = if (due > 0) colors.primary else colors.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
     }
 }
 
@@ -871,13 +1031,13 @@ private fun relative(t: Long): String =
     }
 
 @Composable
-private fun EmptyState(filter: Filter, searching: Boolean, onNew: () -> Unit, onImportPdf: () -> Unit) {
+private fun EmptyState(filter: Filter, searching: Boolean, onNew: () -> Unit, onImportPdf: () -> Unit, onClearSearch: () -> Unit) {
     val (headline, body) = when {
-        searching -> "Nothing found" to "Try a different word. Your idea might be hiding."
+        searching -> "Nothing found" to "Try a document name, folder, or type."
         filter == Filter.Pdfs -> "No PDFs yet" to "Import a PDF to write on it."
-        filter == Filter.Boards -> "No study boards yet" to "Make one, link a PDF, and get math and physics questions to work on the board."
+        filter == Filter.Boards -> "No study boards yet" to "Make one to practice with flash cards and questions."
         filter == Filter.Trash -> "Trash is empty" to "Deleted notebooks wait here until you delete them forever."
-        filter == Filter.Favorites -> "No favorites yet" to "Long-press a notebook and tap Favorite."
+        filter == Filter.Favorites -> "No favorites yet" to "Open a document’s options and choose Favorite."
         filter is Filter.InFolder -> "This folder is empty" to "Create a notebook here, or move notebooks in from All."
         else -> "A fresh start. A little possibility." to "Start a notebook, or import a PDF to write on."
     }
@@ -892,14 +1052,17 @@ private fun EmptyState(filter: Filter, searching: Boolean, onNew: () -> Unit, on
         Spacer(Modifier.height(6.dp))
         Text(body, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center,
             modifier = Modifier.widthIn(max = 320.dp), style = MaterialTheme.typography.bodyMedium)
-        if (!searching && filter == Filter.Pdfs) {
+        if (searching) {
+            Spacer(Modifier.height(16.dp))
+            TextButton(onClick = onClearSearch) { Text("Clear search") }
+        } else if (filter == Filter.Pdfs) {
             Spacer(Modifier.height(24.dp))
             Button(onClick = onImportPdf) {
                 Icon(Icons.Outlined.PictureAsPdf, null, Modifier.size(20.dp))
                 Spacer(Modifier.width(8.dp))
                 Text("Import PDF")
             }
-        } else if (!searching && filter != Filter.Trash && filter != Filter.Favorites) {
+        } else if (filter != Filter.Trash && filter != Filter.Favorites) {
             Spacer(Modifier.height(24.dp))
             Button(onClick = onNew) {
                 Icon(Icons.Outlined.Add, null, Modifier.size(20.dp))
@@ -915,26 +1078,16 @@ private fun EmptyState(filter: Filter, searching: Boolean, onNew: () -> Unit, on
 @Composable
 private fun NewNotebookDialog(initialPaper: Paper, initialBoard: Boolean, onDismiss: () -> Unit,
     onCreate: (String, Paper, Boolean) -> Unit) {
-    var name by remember { mutableStateOf("") }
-    var board by remember { mutableStateOf(initialBoard) }
-    // A board starts on grid paper (handy for graphs and working), unless you pick another.
-    var paper by remember { mutableStateOf(if (initialBoard) initialPaper.copy(template = PaperTemplate.Grid) else initialPaper) }
+    var name by rememberSaveable { mutableStateOf("") }
+    val board = initialBoard
+    var paper by remember { mutableStateOf(if (board) initialPaper.copy(template = PaperTemplate.Grid) else initialPaper) }
     app.noti.ui.common.NotiDialogFrame(onDismiss,
         title = { Text(if (board) "New study board" else "New notebook") }, icon = { DotiMascot(Modifier.size(40.dp)) }, maxWidth = 540.dp,
         actions = {
             TextButton(onClick = onDismiss) { Text("Cancel") }
             Button(onClick = { onCreate(name.trim(), paper, board) }) { Text(if (board) "Create board" else "Create notebook") }
         }) {
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            app.noti.ui.common.NotiFilterChip(selected = !board, onClick = { board = false }, label = { Text("Notebook") },
-                leadingIcon = { Icon(Icons.Outlined.Description, null, Modifier.size(18.dp)) })
-            app.noti.ui.common.NotiFilterChip(selected = board, onClick = {
-                if (!board && paper.template == initialPaper.template) paper = paper.copy(template = PaperTemplate.Grid)
-                board = true
-            }, label = { Text("Study board") }, leadingIcon = { Icon(Icons.Outlined.School, null, Modifier.size(18.dp)) })
-        }
-        if (board) Text("An endless canvas that studies a PDF with you: link one, get math and physics questions on a " +
-            "floating sheet, work them out on the board, and print the ones worth keeping.",
+        if (board) Text("Create flash cards and practice questions on an endless canvas.",
             style = MaterialTheme.typography.bodyMedium)
         OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("Name") },
             placeholder = { Text(if (board) "Physics 1, Calculus II…" else "What’s on your mind?") }, singleLine = true,

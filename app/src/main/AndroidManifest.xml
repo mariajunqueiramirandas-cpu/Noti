@@ -1,8 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- Download handwriting language models for on-device Transcribe, and connect paired
-         Assaad sessions to noti.vendua.com.br. No cloud generation or grading provider. -->
+    <!-- The paired Assaad session and tablet browser use the network. -->
     <uses-permission android:name="android.permission.INTERNET" />
 
     <!-- Only to check that HyperOS's Notes app exists before pretending to be it for the

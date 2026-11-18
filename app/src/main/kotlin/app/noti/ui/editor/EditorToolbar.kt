@@ -43,6 +43,7 @@ internal fun EditorToolbar(
     onBack: () -> Unit, onRename: () -> Unit, onTogglePages: () -> Unit,
     onPagePaper: () -> Unit, onFullScreen: () -> Unit, onSettings: () -> Unit,
     pdfPage: Pair<Int, Int>? = null, onPage: (Int) -> Unit = {},
+    onJumpPage: () -> Unit = {}, onCanvasHome: (() -> Unit)? = null,
     canUndo: Boolean = false, canRedo: Boolean = false,
     onUndo: () -> Unit = {}, onRedo: () -> Unit = {}, onExport: () -> Unit = {},
     onAddPage: (() -> Unit)? = null, saveStatus: String = "Autosave on", onSave: () -> Unit = {},
@@ -54,7 +55,7 @@ internal fun EditorToolbar(
     /** Full screen hides the chrome; the pen can still summon the dial. */
     fullScreen: Boolean = false,
     /** A Study board's Study button, shown in the header. */
-    studyButton: (@Composable () -> Unit)? = null,
+    studyButton: (@Composable (compact: Boolean) -> Unit)? = null,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
     var toolsExpanded by rememberSaveable { mutableStateOf(true) }
@@ -64,6 +65,7 @@ internal fun EditorToolbar(
         val density = LocalDensity.current
         fun px(value: Dp) = with(density) { value.roundToPx() }
         val wide = maxWidth >= 760.dp
+        val compactStudy = !wide && maxWidth < 560.dp * density.fontScale
         // Islands sit 12 dp from the edges; the popup includes a halo for their shadow.
         val halo = (12f - Halo).dp
         val headerWidth = if (wide) (maxWidth - 260.dp).coerceAtMost(440.dp) else maxWidth - 24.dp
@@ -83,12 +85,12 @@ internal fun EditorToolbar(
                         DropdownMenuItem(text = { Text("Rename") }, leadingIcon = { Icon(Icons.Outlined.Edit, null) },
                             onClick = { menuOpen = false; onRename() })
                         HorizontalDivider(Modifier.padding(vertical = 4.dp), color = colors.outlineVariant)
-                        pdfPage?.let { (page, count) ->
-                            DropdownMenuItem(text = { Text("Previous page") }, enabled = page > 0,
-                                leadingIcon = { Icon(Icons.AutoMirrored.Outlined.KeyboardArrowLeft, null) }, onClick = { menuOpen = false; onPage(page - 1) })
-                            DropdownMenuItem(text = { Text("Next page") }, enabled = page < count - 1,
-                                leadingIcon = { Icon(Icons.AutoMirrored.Outlined.KeyboardArrowRight, null) }, onClick = { menuOpen = false; onPage(page + 1) })
+                        if (pdfPage != null) {
+                            DropdownMenuItem(text = { Text("Go to page…") }, leadingIcon = { Icon(Icons.Outlined.Numbers, null) },
+                                onClick = { menuOpen = false; onJumpPage() })
                         }
+                        onCanvasHome?.let { home -> DropdownMenuItem(text = { Text("Return to canvas start") },
+                            leadingIcon = { Icon(Icons.Outlined.CenterFocusStrong, null) }, onClick = { menuOpen = false; home() }) }
                         onAddPage?.let { add -> DropdownMenuItem(text = { Text("Add page") }, leadingIcon = { Icon(Icons.Outlined.Add, null) },
                             onClick = { menuOpen = false; add() }) }
                         if (!isPdf) DropdownMenuItem(text = { Text("Page paper") }, leadingIcon = { Icon(Icons.Outlined.Description, null) },
@@ -96,10 +98,7 @@ internal fun EditorToolbar(
                         DropdownMenuItem(text = { Text("Export PDF") }, leadingIcon = { Icon(Icons.Outlined.IosShare, null) },
                             onClick = { menuOpen = false; onExport() })
                         HorizontalDivider(Modifier.padding(vertical = 4.dp), color = colors.outlineVariant)
-                        if (settings.toolDialOnHold) DropdownMenuItem(text = { Text("Show tools") },
-                            leadingIcon = { Icon(Icons.Outlined.Palette, null) },
-                            onClick = { menuOpen = false; dial.open() })
-                        else DropdownMenuItem(text = { Text(if (toolsExpanded) "Collapse tools" else "Expand tools") },
+                        if (!settings.toolDialOnHold) DropdownMenuItem(text = { Text(if (toolsExpanded) "Collapse tools" else "Expand tools") },
                             leadingIcon = { Icon(if (toolsExpanded) Icons.Outlined.UnfoldLess else Icons.Outlined.UnfoldMore, null) },
                             onClick = { menuOpen = false; toolsExpanded = !toolsExpanded })
                         if (!wide) DropdownMenuItem(text = { Text("Full screen") }, leadingIcon = { Icon(Icons.Outlined.Fullscreen, null) },
@@ -119,7 +118,7 @@ internal fun EditorToolbar(
                         .padding(start = 6.dp, end = 14.dp),
                         style = MaterialTheme.typography.titleSmall, color = colors.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     if (saveFailed) ToolbarButton(Icons.Outlined.ErrorOutline, saveStatus, onSave, tint = colors.error)
-                    studyButton?.invoke()
+                    studyButton?.invoke(compactStudy)
                     if (!wide) history()
                 }
             }
@@ -130,18 +129,25 @@ internal fun EditorToolbar(
         if (!fullScreen) FloatingIsland(Alignment.BottomCenter, IntOffset(0, -px(halo)), floatingWindows) {
             GlassSurface(Modifier.widthIn(max = dockWidth)) {
                 Row(Modifier.padding(4.dp), verticalAlignment = Alignment.CenterVertically) {
+                    if (settings.toolDialOnHold) {
+                        val open = dial.phase == PenDialState.Phase.Locked
+                        ToolbarButton(settings.tool.icon(), if (open) "Hide tools" else "Show tools", {
+                            if (open) dial.dismiss() else dial.open()
+                        }, tint = colors.primary)
+                        DockDivider()
+                    }
                     pdfPage?.let { (page, count) ->
-                        TextButton(onClick = onTogglePages, contentPadding = PaddingValues(horizontal = 12.dp),
+                        if (count > 1) ToolbarButton(Icons.AutoMirrored.Outlined.KeyboardArrowLeft, "Previous page", { onPage(page - 1) }, page > 0)
+                        TextButton(onClick = onTogglePages, contentPadding = PaddingValues(horizontal = 8.dp),
                             modifier = Modifier.weight(1f, fill = false).semantics {
                                 contentDescription = "Pages"; stateDescription = "Page ${page + 1} of $count"; selected = pagesOpen
                             }) {
-                            Icon(Icons.Outlined.Layers, null, Modifier.size(18.dp), tint = if (pagesOpen) colors.primary else colors.onSurfaceVariant)
-                            Spacer(Modifier.width(8.dp))
                             Text("${page + 1} of $count", Modifier.weight(1f, fill = false),
-                                color = colors.onSurface, style = MaterialTheme.typography.labelLarge,
+                                color = if (pagesOpen) colors.primary else colors.onSurface, style = MaterialTheme.typography.labelLarge,
                                 maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
-                        Box(Modifier.padding(horizontal = 2.dp).width(1.dp).height(20.dp).background(colors.outlineVariant))
+                        if (count > 1) ToolbarButton(Icons.AutoMirrored.Outlined.KeyboardArrowRight, "Next page", { onPage(page + 1) }, page < count - 1)
+                        DockDivider()
                     }
                     ZoomControl(zoom, onResetZoom)
                 }
@@ -154,6 +160,11 @@ internal fun EditorToolbar(
             expanded = toolsExpanded, onExpandedChange = { toolsExpanded = it },
             dial = dial, docked = !fullScreen && !settings.toolDialOnHold)
     }
+}
+
+@Composable
+private fun DockDivider() {
+    Box(Modifier.padding(horizontal = 2.dp).width(1.dp).height(20.dp).background(MaterialTheme.colorScheme.outlineVariant))
 }
 
 @Composable
@@ -233,7 +244,6 @@ internal fun Tool.icon(): ImageVector = when (this) {
     Tool.Highlighter -> Icons.Outlined.BorderColor
     Tool.Eraser -> EraserIcon
     Tool.Lasso -> Icons.Outlined.Gesture
-    Tool.Transcribe -> Icons.Outlined.TextFields
 }
 
 /** Material Icons has no eraser; a simple outlined one in the same 24 dp grid. */

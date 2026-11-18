@@ -16,20 +16,27 @@ import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import kotlin.math.roundToInt
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -94,6 +101,7 @@ fun EditorScreen(notebook: Notebook, library: LibraryStore, settings: SettingsSt
 private fun EditorContent(notebook: Notebook, library: LibraryStore, settings: SettingsStore, inkFile: InkFile,
     sheetAspect: Float?, onBack: () -> Unit) {
     var pagesOpen by remember { mutableStateOf(false) }
+    var jumping by rememberSaveable { mutableStateOf(false) }
     var fullScreen by remember { mutableStateOf(false) }
     var renaming by remember { mutableStateOf(false) }
     var choosingPaper by remember { mutableStateOf(false) }
@@ -154,8 +162,13 @@ private fun EditorContent(notebook: Notebook, library: LibraryStore, settings: S
     val palm = PalmSpec(settings.fingerDrawing, settings.palmModel, onModel = { settings.palmModel = it })
     val pdf = remember(notebook.pdf) { library.pdfFile(notebook)?.let { PdfDocument(it) } }
     DisposableEffect(pdf) { onDispose { pdf?.close() } }
-    val pages = remember { PageController() }
+    val pages = remember { PageController(if (notebook.isCanvas) null else library.lastPage(notebook.id)) }
     val pageCount = if (pdf != null) pdf.pageCount.takeIf { it > 0 } ?: notebook.pageCount else notebook.pageCount
+    LaunchedEffect(pages, notebook.isCanvas) {
+        if (!notebook.isCanvas) snapshotFlow { pages.placement?.takeIf { it.settled }?.page }.collect { page ->
+            if (page != null) library.rememberPage(notebook.id, page)
+        }
+    }
     // The placement changes every frame while scrolling; the chrome only needs these.
     val currentPage by remember { derivedStateOf { pages.page } }
     val zoom by remember { derivedStateOf { ((pages.placement?.zoom ?: 1f) * 100).roundToInt() / 100f } }
@@ -175,20 +188,20 @@ private fun EditorContent(notebook: Notebook, library: LibraryStore, settings: S
         }
     }
     val export = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/pdf")) { uri ->
-        if (uri != null) {
-            exporting = true; saveStatus = "Exporting PDF…"
-            layer?.snapshot { bytes ->
+        val current = layer
+        if (uri != null && current != null) {
+            exporting = true
+            current.snapshot { bytes ->
                 scope.launch {
                     val result = withContext(Dispatchers.IO) { runCatching { DocumentExport.writePdf(context, notebook, library, bytes, uri) } }
                     exporting = false
-                    saveStatus = if (result.isSuccess) "PDF exported" else "Export failed"
                     Toast.makeText(context, if (result.isSuccess) "PDF exported" else "Couldn't export PDF. Try another destination.", Toast.LENGTH_LONG).show()
                 }
             }
         }
     }
     val buttonsEnabled = !settingsOpen && !renaming && !choosingPaper && !confirmingLeave && !restoreError &&
-        deletingPage == null && !leaving && !exporting && !pageBusy && !pagesOpen
+        deletingPage == null && !leaving && !exporting && !pageBusy && !pagesOpen && !jumping
     // Holding the writing button and touching the page summons the dial instead of drawing.
     val dialGesture = buttonsEnabled && settings.penButtonsEnabled && settings.penButtonHold == PenHold.Dial
     DisposableEffect(layer, dialGesture) {
@@ -198,8 +211,7 @@ private fun EditorContent(notebook: Notebook, library: LibraryStore, settings: S
         onDispose { current?.setPenDial(null) }
     }
     // A Study board: its sheet, printed cards and the loops the sheet asks for.
-    val study = app.noti.ui.study.rememberStudyBoard(notebook, library, settings)
-    val loopSerial = pages.documentState.getOrNull(9)?.toLong() ?: 0L
+    val study = app.noti.ui.study.rememberStudyBoard(notebook, library)
     val dialLocked = dial.phase == PenDialState.Phase.Locked
     LaunchedEffect(layer, dialLocked) { layer?.setDialLocked(dialLocked) }
     Surface(color = MaterialTheme.colorScheme.background, modifier = Modifier.fillMaxSize()) {
@@ -227,7 +239,9 @@ private fun EditorContent(notebook: Notebook, library: LibraryStore, settings: S
                     Toast.makeText(context, "Two-finger double-tap or Back to exit full screen", Toast.LENGTH_SHORT).show()
                 },
                 // The Endless canvas has no pages to count, add or turn.
-                onSettings = { settingsOpen = true }, pdfPage = if (notebook.isCanvas) null else currentPage to pageCount, onPage = pages::goTo,
+                onSettings = { settingsOpen = true },
+                pdfPage = if (notebook.isCanvas) null else currentPage to pageCount, onPage = pages::goTo,
+                onJumpPage = { jumping = true }, onCanvasHome = if (notebook.isCanvas) ({ pages.goTo(0) }) else null,
                 canUndo = pages.canUndo, canRedo = pages.canRedo,
                 onUndo = { layer?.documentAction(0) }, onRedo = { layer?.documentAction(1) },
                 onExport = { if (!exporting && layer != null) export.launch("${notebook.name.replace(Regex("[^a-zA-Z0-9 ._-]"), "_")}.pdf") },
@@ -236,11 +250,10 @@ private fun EditorContent(notebook: Notebook, library: LibraryStore, settings: S
                 viewportFraction = viewportFraction, onResetZoom = pages::resetZoom, onScroll = pages::scrollTo,
                 saveStatus = saveStatus, onSave = { layer?.saveNow() }, selectionCount = pages.documentState[3].toInt(), isPdf = notebook.isPdf,
                 dial = dial, fullScreen = fullScreen,
-                studyButton = study?.let { b -> { app.noti.ui.study.StudyButton(b.controller) } },
+                studyButton = study?.let { b -> { compact -> app.noti.ui.study.StudyButton(b.controller, compact) } },
             )
             if (study != null) BoxWithConstraints(Modifier.fillMaxSize()) {
-                app.noti.ui.study.StudyOverlay(study, layer, { pages.placement }, loopSerial, maxWidth, maxHeight,
-                    hidden = settingsOpen, onSettings = { settingsOpen = true })
+                app.noti.ui.study.StudyOverlay(study, { pages.placement }, maxWidth, maxHeight, hidden = settingsOpen || fullScreen)
             }
             app.noti.ui.assaad.AssaadStudyBridge(notebook.id, study?.controller)
             if (pagesOpen && !fullScreen && !notebook.isCanvas) {
@@ -249,10 +262,12 @@ private fun EditorContent(notebook: Notebook, library: LibraryStore, settings: S
                     properties = androidx.compose.ui.window.PopupProperties(focusable = true),
                     onDismissRequest = { pagesOpen = false }) {
                     GlassSurface(Modifier.padding(10.dp).fillMaxHeight(0.7f), MaterialTheme.shapes.extraLarge) {
+                        val selectPage: (Int) -> Unit = { pages.goTo(it); pagesOpen = false }
+                        val jump = { pagesOpen = false; jumping = true }
                         if (pdf != null) {
-                            PdfPagesPanel(pdf, currentPage, pages::goTo, onClose = { pagesOpen = false })
+                            PdfPagesPanel(pdf, currentPage, selectPage, onJump = jump, onClose = { pagesOpen = false })
                         } else {
-                            PagesPanel(notebook, currentPage, pageBusy, pages::goTo, onClose = { pagesOpen = false },
+                            PagesPanel(notebook, currentPage, pageBusy, selectPage, onClose = { pagesOpen = false }, onJump = jump,
                                 onAdd = { changePages(0, notebook.pageCount) }, onDuplicate = { changePages(1, it) },
                                 onDelete = { deletingPage = it }, onChangePaper = { choosingPaper = true })
                         }
@@ -261,7 +276,10 @@ private fun EditorContent(notebook: Notebook, library: LibraryStore, settings: S
             }
         }
     }
-    TranscribeTool(layer, pages.documentState, settings.handwritingLanguage, canvas = notebook.isCanvas)
+    if (jumping) JumpToPageDialog(currentPage, pageCount, onDismiss = { jumping = false }) {
+        pages.goTo(it)
+        jumping = false
+    }
     if (restoreError) AlertDialog(onDismissRequest = {}, title = { Text("Couldn't read saved ink") },
         text = { Text("The saved file has been kept without changes. Return to the library to keep your original ink safe.") },
         confirmButton = { app.noti.ui.common.NotiButton(onClick = onBack) { Text("Back to library") } })
@@ -293,7 +311,7 @@ private fun EditorContent(notebook: Notebook, library: LibraryStore, settings: S
 
 @Composable
 private fun PagesPanel(notebook: Notebook, current: Int, busy: Boolean, onPage: (Int) -> Unit,
-    onClose: () -> Unit, onAdd: () -> Unit, onDuplicate: (Int) -> Unit, onDelete: (Int) -> Unit, onChangePaper: () -> Unit) {
+    onClose: () -> Unit, onJump: () -> Unit, onAdd: () -> Unit, onDuplicate: (Int) -> Unit, onDelete: (Int) -> Unit, onChangePaper: () -> Unit) {
     val list = rememberLazyListState()
     LaunchedEffect(current) {
         if (current !in list.layoutInfo.visibleItemsInfo.map { it.index }) list.animateScrollToItem(current.coerceAtLeast(0))
@@ -301,6 +319,7 @@ private fun PagesPanel(notebook: Notebook, current: Int, busy: Boolean, onPage: 
     Column(Modifier.width(184.dp).fillMaxHeight().padding(12.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("Pages", style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
+            IconButton(onClick = onJump, enabled = !busy) { Icon(Icons.Outlined.Numbers, "Go to page") }
             IconButton(onClick = onClose) { Icon(Icons.Outlined.Close, "Close pages") }
         }
         LazyColumn(state = list, modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -333,7 +352,7 @@ private fun PagesPanel(notebook: Notebook, current: Int, busy: Boolean, onPage: 
 
 /** Page thumbnails of a PDF; tap one to go there. */
 @Composable
-private fun PdfPagesPanel(pdf: PdfDocument, current: Int, onPage: (Int) -> Unit, onClose: () -> Unit) {
+private fun PdfPagesPanel(pdf: PdfDocument, current: Int, onPage: (Int) -> Unit, onJump: () -> Unit, onClose: () -> Unit) {
     val list = rememberLazyListState()
     LaunchedEffect(current) { if (current !in list.layoutInfo.visibleItemsInfo.map { it.index }) list.animateScrollToItem(current) }
     @Suppress("UNUSED_VARIABLE") val v = pdf.version  // recompose when thumbnails land
@@ -345,6 +364,7 @@ private fun PdfPagesPanel(pdf: PdfDocument, current: Int, onPage: (Int) -> Unit,
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("Pages", style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
+            IconButton(onClick = onJump) { Icon(Icons.Outlined.Numbers, "Go to page") }
             IconButton(onClick = onClose) { Icon(Icons.Outlined.Close, contentDescription = "Close pages") }
         }
         LazyColumn(state = list, verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxSize()) {
@@ -377,6 +397,35 @@ private fun PdfPagesPanel(pdf: PdfDocument, current: Int, onPage: (Int) -> Unit,
 }
 
 private const val THUMB_PX = 320
+
+@Composable
+internal fun JumpToPageDialog(current: Int, count: Int, onDismiss: () -> Unit, onPage: (Int) -> Unit) {
+    var input by rememberSaveable { mutableStateOf("") }
+    val focus = remember { FocusRequester() }
+    val number = input.toIntOrNull()?.takeIf { it in 1..count }
+    val submit = { number?.let { onPage(it - 1) }; Unit }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Go to page") },
+        text = {
+            OutlinedTextField(
+                value = input,
+                onValueChange = { input = it },
+                label = { Text("Page number") },
+                placeholder = { Text("${current + 1}") },
+                supportingText = { Text("Enter a page from 1 to $count") },
+                isError = input.isNotEmpty() && number == null,
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number, imeAction = ImeAction.Go),
+                keyboardActions = KeyboardActions(onGo = { submit() }),
+                modifier = Modifier.fillMaxWidth().focusRequester(focus),
+            )
+            LaunchedEffect(Unit) { focus.requestFocus() }
+        },
+        confirmButton = { NotiButton(onClick = submit, enabled = number != null) { Text("Go") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
+}
 
 /** Hides the status and navigation bars while [hidden] (full screen); a swipe shows them briefly. */
 @Composable

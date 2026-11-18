@@ -65,6 +65,32 @@ class BrandLayoutTest {
         compose.onNodeWithText("Small bright things").assertIsDisplayed()
     }
 
+    @Test fun folderSearchAndListSurviveSettingsAndTrashCanBeUndone() {
+        val library = libraryWithNotes()
+        val settings = SettingsStore(context)
+        val notebook = library.notebooks.first { it.name == "Small bright things" }
+        val folder = library.createFolder("Ideas")
+        library.move(setOf(notebook.id), folder.id)
+        render(inspection = true) { NotiApp(library, settings) }
+
+        compose.onNode(hasSetTextAction()).performTextInput("Ideas bright")
+        compose.onNodeWithText(notebook.name).assertIsDisplayed()
+        compose.onNodeWithText("Sunday scribbles").assertDoesNotExist()
+        compose.onNodeWithContentDescription("View options").performClick()
+        compose.onNodeWithText("Show list view").performClick()
+        screenshot("tablet-library-list")
+        compose.onNodeWithText("Settings", useUnmergedTree = true).performClick()
+        compose.onNodeWithContentDescription("Back").performClick()
+        compose.onNodeWithText("Ideas bright").assertIsDisplayed()
+        compose.runOnIdle { assertTrue(SettingsStore(context).libraryList) }
+
+        compose.onNodeWithContentDescription("Options for ${notebook.name}").performClick()
+        compose.onNodeWithText("Move to trash").performClick()
+        compose.onNodeWithText("Nothing found").assertIsDisplayed()
+        compose.onNodeWithText("Undo").performClick()
+        compose.onNodeWithText(notebook.name).assertIsDisplayed()
+    }
+
     @Test
     @Config(qualifiers = "w412dp-h915dp-mdpi")
     fun emptyLibraryIntroducesDotiAndCreatesFirstNotebook() {
@@ -131,7 +157,7 @@ class BrandLayoutTest {
         compose.runOnIdle { assertEquals("A happier title", library.notebook(id)?.name) }
         compose.onNodeWithText("A happier title").performTouchInput { longClick() }
         compose.onNodeWithContentDescription("Selection actions").performClick()
-        compose.onNodeWithText("Delete", substring = false).performClick()
+        compose.onNodeWithText("Move to trash", substring = false).performClick()
         compose.onNodeWithText("Trash", substring = false, useUnmergedTree = true).performClick()
         compose.onNodeWithText("A happier title").performClick()
         compose.onNodeWithContentDescription("Selection actions").performClick()

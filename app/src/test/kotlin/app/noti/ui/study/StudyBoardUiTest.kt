@@ -23,7 +23,6 @@ import app.noti.study.*
 import app.noti.ui.captureRenderedView
 import app.noti.ui.common.DocumentBackground
 import app.noti.ui.theme.NotiTheme
-import kotlinx.coroutines.MainScope
 import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Rule
@@ -73,11 +72,9 @@ class StudyBoardUiTest {
             ), current = "q1")
         }
         val library = LibraryStore(context)
-        val settings = SettingsStore(context)
         val res = context.resources
         fonts = CardFace.Fonts(res.getFont(R.font.nunito_regular), res.getFont(R.font.nunito_semibold), res.getFont(R.font.nunito_bold))
-        val nb = Notebook("board", "Physics 1", Paper(PaperTemplate.Grid, PaperColor.White, PaperSize.Endless), createdAt = now, openedAt = now, board = true)
-        study = StudyController(nb, library, store, {}, now = { now })
+        study = StudyController(library, store, {}, now = { now })
         layer = BoardLayer(store, library, fonts)
         study.board = layer
     }
@@ -92,7 +89,7 @@ class StudyBoardUiTest {
             PinnedCard("c2", "q2", (40f + 7500f) / 16f, (90f + 1000f) / 16f, 380f, 1f / 16f, now),
             PinnedCard("c3", "q3", (40f + 7500f) / 16f, (560f + 1000f) / 16f, 300f, 1f / 16f, now),
         )) }
-        study.select(study.data.current!!)
+        study.data.current?.let(study::select)
         study.open = open
         val geometry = SheetGeometry()
         compose.setContent {
@@ -100,7 +97,8 @@ class StudyBoardUiTest {
             NotiTheme(ThemeMode.Light) {
                 BoxWithConstraints(Modifier.size(w.dp, h.dp).testTag("board").onGloballyPositioned { geometry.editor = it }) {
                     DocumentBackground(Paper(PaperTemplate.Grid), null, { placement }, Modifier.fillMaxSize(), sheet = true, board = layer)
-                    StudySheet(study, geometry, fonts, { placement }, 0L, maxWidth, maxHeight, {}, floating = false)
+                    StudySheet(study, geometry, fonts, { placement }, maxWidth, maxHeight, floating = false)
+                    StudyDialogs(study, geometry, { placement })
                 }
             }
         }
@@ -119,6 +117,38 @@ class StudyBoardUiTest {
         compose.onNodeWithContentDescription("Study sheet. Drag to move.").assertIsDisplayed()
         compose.onNodeWithText(" of 4", substring = true).assertExists()
         screenshot("board-tablet")
+    }
+
+    @Test fun emptyBoardCreatesAndReviewsAFlashCardOffline() {
+        study.store.update { BoardStudy() }
+        render(1280, 900, open = false)
+        compose.runOnIdle { study.show() }
+        compose.onNodeWithText("Add flash card").performClick()
+        compose.onNodeWithText("Add card", substring = false).assertIsNotEnabled()
+        compose.onNode(hasSetTextAction() and hasText("Front")).performTextInput("What is impulse?")
+        compose.onNode(hasSetTextAction() and hasText("Back")).performTextInput("Change in momentum")
+        compose.onNodeWithText("Add card", substring = false).performClick()
+
+        compose.onNodeWithContentDescription("What is impulse?").assertIsDisplayed()
+        compose.onNodeWithText("Show answer").performClick()
+        compose.onNodeWithContentDescription("Change in momentum", substring = true).assertIsDisplayed()
+        compose.onNodeWithText("Good", substring = false).performClick()
+        compose.runOnIdle {
+            val card = study.data.items.single()
+            assertNotNull(study.data.progressOf(card.id).srs)
+            assertFalse(study.data.progressOf(card.id).flipped)
+        }
+    }
+
+    @Test fun dueMultipleChoiceStartsFreshAndKeepsItsSchedule() {
+        val previous = Srs.review(null, Rating.Again, now - Srs.RELEARN_MS)
+        study.store.update { d -> d.withProgress("q1") { Progress(chosen = 2, hintsShown = 1, attempts = 1, srs = previous) } }
+        study.show()
+        assertEquals("q1", study.current?.id)
+        assertEquals(Progress(attempts = 1, srs = previous), study.data.progressOf("q1"))
+        study.choose(1)
+        assertEquals(2, study.data.progressOf("q1").attempts)
+        assertEquals(0, study.dueCount)
     }
 
     @Test fun choosingAnOptionChecksItOnTheDevice() {
@@ -191,11 +221,63 @@ class StudyBoardUiTest {
         screenshot("board-phone")
     }
 
-    @Test fun writtenAnswersCanBeSelfAssessedLocally() {
-        study.select("q4")
-        study.selfAssess(app.noti.study.Verdict.Partial)
-        assertEquals(app.noti.study.Verdict.Partial, study.data.progressOf("q4").grade?.verdict)
-        assertEquals("Self-assessed", study.data.progressOf("q4").grade?.feedback)
+    @Test fun writtenQuestionCanBeAuthoredAndSelfAssessed() {
+        study.store.update { BoardStudy() }
+        render(1280, 900, open = false)
+        compose.runOnIdle { study.show() }
+        compose.onNodeWithText("Add question", substring = false).performClick()
+        compose.onNode(hasSetTextAction() and hasText("Question")).performTextInput("What is impulse?")
+        compose.onNode(hasSetTextAction() and hasText("Answer")).performTextInput("Change in momentum")
+        compose.onNode(hasText("Add question") and hasAnyAncestor(isDialog())).performClick()
+        compose.onNodeWithText("Answer", substring = false).performClick()
+        compose.onNodeWithText("Partly right", substring = false).performClick()
+        compose.runOnIdle {
+            val question = study.data.items.single()
+            val progress = study.data.progressOf(question.id)
+            assertEquals(ItemKind.Short, question.kind)
+            assertEquals(Verdict.Partial, progress.outcome(question))
+            assertNotNull(progress.srs)
+        }
+    }
+
+    @Test fun aManualMultipleChoiceQuestionUsesTheSelectedCorrectOption() {
+        study.store.update { BoardStudy() }
+        render(1280, 900, open = false)
+        compose.runOnIdle { study.show() }
+        compose.onNodeWithText("Add question", substring = false).performClick()
+        compose.onNodeWithText("Multiple choice", substring = false).performClick()
+        compose.onNode(hasSetTextAction() and hasText("Question")).performTextInput("Which number is prime?")
+        listOf("4", "7", "8", "9").forEachIndexed { index, answer ->
+            compose.onNode(hasSetTextAction() and hasText("Choice ${'A' + index}")).performScrollTo().performTextInput(answer)
+        }
+        compose.onNodeWithContentDescription("Mark choice B as correct").performScrollTo().performClick()
+        compose.onNode(hasText("Add question") and hasAnyAncestor(isDialog())).performClick()
+        compose.runOnIdle {
+            val item = study.data.items.single()
+            assertEquals(ItemKind.Choice, item.kind)
+            assertEquals(1, item.correctChoice)
+            study.choose(1)
+            assertEquals(Verdict.Correct, study.data.progressOf(item.id).outcome(item))
+        }
+    }
+
+    @Test fun writtenExamAnswersCanBeAssessedAfterTheTimerAndTheirResultsPersist() {
+        val item = items.first { it.id == "q4" }
+        study.startExam(count = 1, minutes = 10, topics = setOf(item.topic))
+        val examId = study.exam!!.id
+        study.toggleExamAnswer()
+        study.assessExamAnswer(examId, item.id, Verdict.Correct)
+        assertNull(study.data.progressOf(item.id).srs)
+        study.finishExam()
+        assertTrue(study.data.exam(examId)!!.needsAssessment(item.id))
+        assertNull(study.data.progressOf(item.id).srs)
+        study.assessExamAnswer(examId, item.id, Verdict.Correct)
+        study.assessExamAnswer(examId, item.id, Verdict.Incorrect)
+        study.reset(item.id)
+        val saved = BoardStudy.decode(study.data.encode())
+        assertFalse(saved.exam(examId)!!.needsAssessment(item.id))
+        assertEquals(Verdict.Correct, saved.exam(examId)!!.outcome(item, saved))
+        assertEquals(1, saved.progressOf(item.id).attempts)
     }
 
     @Test fun anExamHidesItsResultsUntilTheEndThenSchedulesThem() {
