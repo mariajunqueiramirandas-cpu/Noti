@@ -48,7 +48,7 @@ internal fun EditorToolbar(
     onUndo: () -> Unit = {}, onRedo: () -> Unit = {}, onExport: () -> Unit = {},
     onAddPage: (() -> Unit)? = null, saveStatus: String = "Autosave on", onSave: () -> Unit = {},
     selectionCount: Int = 0, isPdf: Boolean = false,
-    zoom: Float = 1f, scrollFraction: () -> Float = { 0f }, viewportFraction: Float = 1f,
+    zoom: () -> Float = { 1f }, scrollFraction: () -> Float = { 0f }, viewportFraction: () -> Float = { 1f },
     onResetZoom: () -> Unit = {}, onScroll: (Float) -> Unit = {},
     floatingWindows: Boolean = true,
     dial: PenDialState = remember { PenDialState() },
@@ -78,7 +78,7 @@ internal fun EditorToolbar(
                 Box(Modifier.padding(horizontal = 4.dp).width(1.dp).height(20.dp).background(colors.outlineVariant))
                 Box {
                     ToolbarButton(Icons.Outlined.MoreHoriz, "More", { menuOpen = true })
-                    DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                    if (menuOpen) DropdownMenu(expanded = true, onDismissRequest = { menuOpen = false }) {
                         DropdownMenuItem(text = { Text(saveStatus) }, leadingIcon = {
                             Icon(if (saveFailed) Icons.Outlined.ErrorOutline else Icons.Outlined.Check, null)
                         }, onClick = { menuOpen = false; onSave() })
@@ -153,8 +153,9 @@ internal fun EditorToolbar(
                 }
             }
         }
-        if (viewportFraction < 0.999f && !fullScreen) FloatingIsland(Alignment.CenterEnd, IntOffset(px((-4).dp), 0), floatingWindows, halo = 0.dp) {
-            ScrollIndicator(scrollFraction, viewportFraction, onScroll, Modifier.height((maxHeight * 0.25f).coerceIn(96.dp, 180.dp)))
+        if (!fullScreen) {
+            FloatingScrollControl(viewportFraction, scrollFraction, onScroll, IntOffset(px((-4).dp), 0), floatingWindows,
+                Modifier.height((maxHeight * 0.25f).coerceIn(96.dp, 180.dp)))
         }
         RadialToolSelector(settings, selectionCount, maxWidth, maxHeight, floatingWindows,
             expanded = toolsExpanded, onExpandedChange = { toolsExpanded = it },
@@ -168,12 +169,13 @@ private fun DockDivider() {
 }
 
 @Composable
-private fun ZoomControl(zoom: Float, onResetZoom: () -> Unit) {
+private fun ZoomControl(zoom: () -> Float, onResetZoom: () -> Unit) {
+    val percent = (zoom() * 100).roundToInt()
     TextButton(onClick = onResetZoom, contentPadding = PaddingValues(horizontal = 12.dp),
         modifier = Modifier.heightIn(min = 48.dp).semantics {
-            contentDescription = "Zoom ${(zoom * 100).roundToInt()} percent. Reset to fit width"
+            contentDescription = "Zoom $percent percent. Reset to fit width"
         }) {
-        Text("${(zoom * 100).roundToInt()}%", style = MaterialTheme.typography.labelLarge,
+        Text("$percent%", style = MaterialTheme.typography.labelLarge,
             color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
@@ -210,7 +212,17 @@ private fun BoxScope.FloatingIsland(alignment: Alignment, offset: IntOffset, flo
 }
 
 @Composable
-internal fun ScrollIndicator(fraction: () -> Float, visible: Float, onScroll: (Float) -> Unit, modifier: Modifier = Modifier) {
+private fun BoxScope.FloatingScrollControl(visible: () -> Float, fraction: () -> Float, onScroll: (Float) -> Unit,
+    offset: IntOffset, floating: Boolean, modifier: Modifier) {
+    val source by rememberUpdatedState(visible)
+    val scrollable by remember { derivedStateOf { source() < 0.999f } }
+    if (scrollable) FloatingIsland(Alignment.CenterEnd, offset, floating, halo = 0.dp) {
+        ScrollIndicator(fraction, source(), onScroll, modifier)
+    }
+}
+
+@Composable
+private fun ScrollIndicator(fraction: () -> Float, visible: Float, onScroll: (Float) -> Unit, modifier: Modifier) {
     // Read in semantics, gestures and drawing only: scrolling moves the thumb without recomposing.
     val source by rememberUpdatedState(fraction)
     fun current() = source().coerceIn(0f, 1f)
@@ -223,12 +235,12 @@ internal fun ScrollIndicator(fraction: () -> Float, visible: Float, onScroll: (F
         progressBarRangeInfo = ProgressBarRangeInfo(percent, 0f..1f)
         setProgress { action(it.coerceIn(0f, 1f)); true }
     }.pointerInput(thumbFraction) {
-        var start = 0f
-        var travel = 0f
-        detectVerticalDragGestures(onDragStart = { start = current(); travel = 0f }) { change, delta ->
-            change.consume(); travel += delta
-            val range = (size.height * (1f - thumbFraction) - 16.dp.toPx()).coerceAtLeast(1f)
-            action((start + travel / range).coerceIn(0f, 1f))
+        var target = 0f
+        detectVerticalDragGestures(onDragStart = { target = current() }) { change, delta ->
+            change.consume()
+            val range = ((size.height - 16.dp.toPx()) * (1f - thumbFraction)).coerceAtLeast(1f)
+            target = (target + delta / range).coerceIn(0f, 1f)
+            action(target)
         }
     }) {
         Canvas(Modifier.fillMaxSize().padding(horizontal = 21.5.dp, vertical = 8.dp)) {

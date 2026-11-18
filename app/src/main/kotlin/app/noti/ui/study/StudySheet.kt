@@ -4,7 +4,6 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -35,15 +34,18 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntRect
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Popup
-import androidx.compose.ui.window.PopupProperties
 import app.noti.pdf.PagePlacement
 import app.noti.study.CardFace
 import app.noti.study.ItemKind
 import app.noti.study.Rating
 import app.noti.study.StudyItem
 import app.noti.study.Verdict
+import app.noti.ui.common.FloatingOverlay
+import app.noti.ui.common.clampTo
+import app.noti.ui.common.dragFloatingOverlay
 import app.noti.ui.theme.Noti
 import kotlinx.coroutines.delay
 import kotlin.math.roundToInt
@@ -89,7 +91,7 @@ private val Halo = 10.dp
  * board and compare your work with the saved answer when you are ready.
  */
 @Composable
-internal fun StudySheet(
+internal fun BoxScope.StudySheet(
     study: StudyController,
     geometry: SheetGeometry,
     fonts: CardFace.Fonts,
@@ -101,38 +103,32 @@ internal fun StudySheet(
 ) {
     if (!study.open) return
     val density = LocalDensity.current
+    fun px(dp: Dp) = with(density) { dp.roundToPx() }
     val compact = maxWidth < 600.dp
     val sheetWidth = if (compact) maxWidth - 16.dp else (maxWidth * 0.42f).coerceIn(340.dp, 440.dp)
     val maxSheetHeight = if (compact) maxHeight * 0.58f else (maxHeight - 140.dp).coerceAtLeast(260.dp)
-    val boundsW = with(density) { maxWidth.roundToPx() }
-    val boundsH = with(density) { maxHeight.roundToPx() }
-    val windowW = with(density) { (sheetWidth + Halo * 2).roundToPx() }
-    var windowH by remember { mutableIntStateOf(with(density) { 200.dp.roundToPx() }) }
-    val default = if (compact) IntOffset((boundsW - windowW) / 2, boundsH - windowH - with(density) { 4.dp.roundToPx() })
-        else IntOffset(boundsW - windowW - with(density) { 6.dp.roundToPx() }, with(density) { 66.dp.roundToPx() })
-    val offset = if (compact) default else (study.offset ?: default).let {
-        IntOffset(it.x.coerceIn(-with(density) { Halo.roundToPx() }, (boundsW - windowW).coerceAtLeast(0)),
-            it.y.coerceIn(0, (boundsH - with(density) { 56.dp.roundToPx() }).coerceAtLeast(0)))
+    val width = px(maxWidth)
+    val height = px(maxHeight)
+    val expandedWidth = px(sheetWidth) + 2 * px(Halo)
+    val default = IntOffset(width - expandedWidth - px(6.dp), px(66.dp))
+    val bounds = IntRect(-px(Halo), 0, (width - expandedWidth).coerceAtLeast(0), (height - px(56.dp)).coerceAtLeast(0))
+    val bottomInset = px(4.dp)
+    val offset = remember(compact, study, width, height, expandedWidth, default, bounds, bottomInset) {
+        { size: IntSize ->
+            if (compact) IntOffset((width - expandedWidth) / 2, height - size.height - bottomInset)
+            else (study.offset ?: default).clampTo(bounds)
+        }
     }
 
-    val content: @Composable () -> Unit = {
-        Box(Modifier.padding(Halo).onGloballyPositioned { geometry.window = it; windowH = it.size.height + with(density) { (Halo * 2).roundToPx() } }) {
-            val drag = Modifier.pointerInput(compact) {
-                if (!compact) detectDragGestures { change, amount ->
-                    change.consume()
-                    val o = study.offset ?: offset
-                    study.offset = IntOffset(o.x + amount.x.roundToInt(), o.y + amount.y.roundToInt())
-                }
+    FloatingOverlay(floating, position = offset, clippingEnabled = false) {
+        Box(Modifier.padding(Halo).onGloballyPositioned { geometry.window = it }) {
+            val drag = if (compact) Modifier else Modifier.pointerInput(study, bounds, default) {
+                dragFloatingOverlay(bounds, position = { study.offset ?: default }, moveTo = { study.offset = it })
             }
             if (study.collapsed) CollapsedSheet(study, drag) else ExpandedSheet(study, geometry, fonts, placement,
                 sheetWidth, maxSheetHeight, drag)
         }
     }
-    // TYPE_APPLICATION_SUB_PANEL (Compose Popup) sorts above the ink's panel, so taps reach the sheet.
-    if (floating) Popup(alignment = Alignment.TopStart, offset = offset,
-        properties = PopupProperties(focusable = false, dismissOnBackPress = false, dismissOnClickOutside = false, clippingEnabled = false),
-        content = content)
-    else Box(Modifier.offset { offset }) { content() }
 }
 
 @Composable
@@ -392,7 +388,7 @@ private fun SheetMenu(study: StudyController) {
     val item = study.current
     Box {
         SmallIcon(Icons.Outlined.MoreHoriz, "Study options") { open = true }
-        app.noti.ui.common.NotiDropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+        if (open) app.noti.ui.common.NotiDropdownMenu(expanded = true, onDismissRequest = { open = false }) {
             @Composable fun entry(label: String, icon: ImageVector, enabled: Boolean = true, destructive: Boolean = false, action: () -> Unit) =
                 app.noti.ui.common.NotiMenuItem(text = { Text(label) }, leadingIcon = { Icon(icon, null) }, enabled = enabled,
                     destructive = destructive, onClick = { open = false; action() })

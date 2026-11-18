@@ -51,6 +51,7 @@ import app.noti.pdf.PdfDocument
 import app.noti.ui.common.*
 import app.noti.ui.brand.DotiMascot
 import app.noti.ui.settings.SettingsScreen
+import app.noti.ui.study.StudyOverlay
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -246,14 +247,14 @@ private fun EditorContent(notebook: Notebook, library: LibraryStore, settings: S
                 onUndo = { layer?.documentAction(0) }, onRedo = { layer?.documentAction(1) },
                 onExport = { if (!exporting && layer != null) export.launch("${notebook.name.replace(Regex("[^a-zA-Z0-9 ._-]"), "_")}.pdf") },
                 onAddPage = if (notebook.isPdf || notebook.isCanvas) null else { { changePages(0, notebook.pageCount) } },
-                zoom = zoom, scrollFraction = { pages.placement?.scrollFraction ?: 0f },
-                viewportFraction = viewportFraction, onResetZoom = pages::resetZoom, onScroll = pages::scrollTo,
+                zoom = { zoom }, scrollFraction = { pages.placement?.scrollFraction ?: 0f },
+                viewportFraction = { viewportFraction }, onResetZoom = pages::resetZoom, onScroll = pages::scrollTo,
                 saveStatus = saveStatus, onSave = { layer?.saveNow() }, selectionCount = pages.documentState[3].toInt(), isPdf = notebook.isPdf,
                 dial = dial, fullScreen = fullScreen,
                 studyButton = study?.let { b -> { compact -> app.noti.ui.study.StudyButton(b.controller, compact) } },
             )
             if (study != null) BoxWithConstraints(Modifier.fillMaxSize()) {
-                app.noti.ui.study.StudyOverlay(study, { pages.placement }, maxWidth, maxHeight, hidden = settingsOpen || fullScreen)
+                StudyOverlay(study, { pages.placement }, maxWidth, maxHeight, hidden = settingsOpen || fullScreen)
             }
             app.noti.ui.assaad.AssaadStudyBridge(notebook.id, study?.controller)
             if (pagesOpen && !fullScreen && !notebook.isCanvas) {

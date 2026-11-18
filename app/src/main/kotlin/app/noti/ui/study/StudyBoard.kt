@@ -72,7 +72,7 @@ internal fun rememberStudyBoard(notebook: Notebook, library: LibraryStore): Stud
 
 /** Shows the study deck and its dialogs over the board's ink window. */
 @Composable
-internal fun StudyOverlay(board: StudyBoard, placement: () -> PagePlacement?,
+internal fun BoxScope.StudyOverlay(board: StudyBoard, placement: () -> PagePlacement?,
     maxWidth: androidx.compose.ui.unit.Dp, maxHeight: androidx.compose.ui.unit.Dp, hidden: Boolean) {
     if (hidden) return
     StudySheet(board.controller, board.geometry, board.fonts, placement, maxWidth, maxHeight)

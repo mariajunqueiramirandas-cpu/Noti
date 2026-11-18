@@ -1,6 +1,7 @@
 package app.noti.ui.editor
 
 import android.view.View
+import android.view.ViewConfiguration
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.runtime.SideEffect
 import app.noti.ui.captureRenderedView
@@ -267,17 +268,39 @@ class EditorToolbarTest {
     private fun assertDrag(floating: Boolean) {
         render(800, ThemeMode.Light, floating = floating)
         val before = compose.onNodeWithContentDescription("Brush options").fetchSemanticsNode().positionOnScreen
-        compose.onNodeWithContentDescription("Brush options").performTouchInput { swipe(center, center + Offset(220f, 150f), 600) }
+        val distance = Offset(220f, 150f)
+        val touchSlop = ViewConfiguration.get(compose.activity).scaledTouchSlop
+        val expected = before + distance * (1f - touchSlop / distance.getDistance())
+        compose.onNodeWithContentDescription("Brush options").performTouchInput { swipe(center, center + distance, 600) }
         val after = compose.onNodeWithContentDescription("Brush options").fetchSemanticsNode().positionOnScreen
-        assertEquals(before.x + 220f, after.x, 32f)
-        assertEquals(before.y + 150f, after.y, 32f)
+        assertEquals(expected.x, after.x, 2f)
+        assertEquals(expected.y, after.y, 2f)
         compose.onNodeWithContentDescription("Pen").assertIsDisplayed()
         compose.onNodeWithContentDescription("Lasso").performClick()
         compose.runOnIdle { assertEquals(Tool.Lasso, settings.tool) }
-        // Large drags stop at the reserved header, footer and action gutter.
-        compose.onNodeWithContentDescription("Brush options").performTouchInput { swipe(center, center + Offset(2000f, 2000f), 600) }
-        val pen = compose.onNodeWithContentDescription("Pen").fetchSemanticsNode().positionOnScreen
-        assertTrue(pen.x < 800f - 48f && pen.y < 800f - 68f)
+        // Drag past both edges, then reverse without lifting.
+        val hub = compose.onNodeWithContentDescription("Brush options")
+        hub.performTouchInput {
+            down(center)
+            moveBy(Offset(500f, 500f))
+            moveBy(Offset(-40f, -60f))
+            up()
+        }
+        val reversed = hub.fetchSemanticsNode().positionOnScreen
+        assertEquals(before.x + (800f - 208f - 60f) - 40f, reversed.x, 2f)
+        assertEquals(before.y + (800f - 400f) - 60f, reversed.y, 2f)
+    }
+
+    @Test fun scrollThumbReversesWithoutLiftingAtTheEnd() {
+        render(800, ThemeMode.Light, floating = true)
+        compose.onNodeWithContentDescription("Document scroll").performTouchInput {
+            down(center)
+            moveBy(Offset(0f, 200f))
+            moveBy(Offset(0f, -35f))
+            up()
+        }
+        val trackTravel = (180f - 16f) * (1f - 0.15f)
+        compose.runOnIdle { assertEquals(1f - 35f / trackTravel, scrolled, 0.01f) }
     }
 
     @Test fun realPopupActionsExposeLiveIndicators() {
@@ -321,9 +344,9 @@ class EditorToolbarTest {
                             EditorToolbar(
                                 title = "Untitled notebook", settings = settings, pagesOpen = false,
                                 onBack = {}, onRename = {}, onTogglePages = {}, onPagePaper = { papers++ }, onFullScreen = {}, onSettings = { precision++ },
-                                pdfPage = 2 to 30, onPage = { requestedPage = it }, canUndo = true, canRedo = true, zoom = 1.75f,
+                                pdfPage = 2 to 30, onPage = { requestedPage = it }, canUndo = true, canRedo = true, zoom = { 1.75f },
                                 saveStatus = saveStatus, onSave = { saves++ }, onExport = { exports++ },
-                                scrollFraction = { 0.3f }, viewportFraction = 0.15f, onResetZoom = { resets++ }, onScroll = { scrolled = it },
+                                scrollFraction = { 0.3f }, viewportFraction = { 0.15f }, onResetZoom = { resets++ }, onScroll = { scrolled = it },
                                 onUndo = { undos++ }, onRedo = { redos++ }, floatingWindows = floating, dial = dial,
                             )
                         }
