@@ -29,9 +29,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
@@ -115,6 +112,8 @@ private fun EditorContent(notebook: Notebook, library: LibraryStore, settings: S
     var exporting by remember { mutableStateOf(false) }
     var leaving by remember { mutableStateOf(false) }
     var pageBusy by remember { mutableStateOf(false) }
+    var annotationsEnabled by remember { mutableStateOf(false) }
+    val readOnly = notebook.isPdf && !annotationsEnabled
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     DisposableEffect(inkFile) {
@@ -164,7 +163,7 @@ private fun EditorContent(notebook: Notebook, library: LibraryStore, settings: S
     val pdf = remember(notebook.pdf) { library.pdfFile(notebook)?.let { PdfDocument(it) } }
     DisposableEffect(pdf) { onDispose { pdf?.close() } }
     val pages = remember { PageController(if (notebook.isCanvas) null else library.lastPage(notebook.id)) }
-    val pageCount = if (pdf != null) pdf.pageCount.takeIf { it > 0 } ?: notebook.pageCount else notebook.pageCount
+    val pageCount = pdf?.pageCount ?: notebook.pageCount
     LaunchedEffect(pages, notebook.isCanvas) {
         if (!notebook.isCanvas) snapshotFlow { pages.placement?.takeIf { it.settled }?.page }.collect { page ->
             if (page != null) library.rememberPage(notebook.id, page)
@@ -201,7 +200,7 @@ private fun EditorContent(notebook: Notebook, library: LibraryStore, settings: S
             }
         }
     }
-    val buttonsEnabled = !settingsOpen && !renaming && !choosingPaper && !confirmingLeave && !restoreError &&
+    val buttonsEnabled = !readOnly && !settingsOpen && !renaming && !choosingPaper && !confirmingLeave && !restoreError &&
         deletingPage == null && !leaving && !exporting && !pageBusy && !pagesOpen && !jumping
     // Holding the writing button and touching the page summons the dial instead of drawing.
     val dialGesture = buttonsEnabled && settings.penButtonsEnabled && settings.penButtonHold == PenHold.Dial
@@ -230,6 +229,7 @@ private fun EditorContent(notebook: Notebook, library: LibraryStore, settings: S
                 },
                 board = study?.layer,
                 onTap = study?.let { b -> { x, y -> b.tap(x, y, pages.placement) } },
+                readOnly = readOnly,
             )
             EditorToolbar(
                 title = notebook.name, settings = settings, pagesOpen = pagesOpen,
@@ -241,23 +241,29 @@ private fun EditorContent(notebook: Notebook, library: LibraryStore, settings: S
                 },
                 // The Endless canvas has no pages to count, add or turn.
                 onSettings = { settingsOpen = true },
-                pdfPage = if (notebook.isCanvas) null else currentPage to pageCount, onPage = pages::goTo,
+                pdfPage = if (notebook.isCanvas || pageCount == 0) null else currentPage to pageCount, onPage = pages::goTo,
                 onJumpPage = { jumping = true }, onCanvasHome = if (notebook.isCanvas) ({ pages.goTo(0) }) else null,
                 canUndo = pages.canUndo, canRedo = pages.canRedo,
                 onUndo = { layer?.documentAction(0) }, onRedo = { layer?.documentAction(1) },
                 onExport = { if (!exporting && layer != null) export.launch("${notebook.name.replace(Regex("[^a-zA-Z0-9 ._-]"), "_")}.pdf") },
                 onAddPage = if (notebook.isPdf || notebook.isCanvas) null else { { changePages(0, notebook.pageCount) } },
                 zoom = { zoom }, scrollFraction = { pages.placement?.scrollFraction ?: 0f },
-                viewportFraction = { viewportFraction }, onResetZoom = pages::resetZoom, onScroll = pages::scrollTo,
+                viewportFraction = { viewportFraction }, onResetZoom = pages::resetZoom, onFitPage = pages::fitPage,
+                onScroll = pages::scrollTo,
                 saveStatus = saveStatus, onSave = { layer?.saveNow() }, selectionCount = pages.documentState[3].toInt(), isPdf = notebook.isPdf,
                 dial = dial, fullScreen = fullScreen,
+                annotationsEnabled = annotationsEnabled,
+                onToggleAnnotations = {
+                    annotationsEnabled = !annotationsEnabled
+                    if (!annotationsEnabled) dial.dismiss()
+                },
                 studyButton = study?.let { b -> { compact -> app.noti.ui.study.StudyButton(b.controller, compact) } },
             )
             if (study != null) BoxWithConstraints(Modifier.fillMaxSize()) {
                 StudyOverlay(study, { pages.placement }, maxWidth, maxHeight, hidden = settingsOpen || fullScreen)
             }
             app.noti.ui.assaad.AssaadStudyBridge(notebook.id, study?.controller)
-            if (pagesOpen && !fullScreen && !notebook.isCanvas) {
+            if (pagesOpen && !fullScreen && !notebook.isCanvas && !notebook.isPdf) {
                 androidx.compose.ui.window.Popup(alignment = Alignment.TopStart,
                     offset = with(androidx.compose.ui.platform.LocalDensity.current) { androidx.compose.ui.unit.IntOffset(2.dp.roundToPx(), 62.dp.roundToPx()) },
                     properties = androidx.compose.ui.window.PopupProperties(focusable = true),
@@ -265,19 +271,19 @@ private fun EditorContent(notebook: Notebook, library: LibraryStore, settings: S
                     GlassSurface(Modifier.padding(10.dp).fillMaxHeight(0.7f), MaterialTheme.shapes.extraLarge) {
                         val selectPage: (Int) -> Unit = { pages.goTo(it); pagesOpen = false }
                         val jump = { pagesOpen = false; jumping = true }
-                        if (pdf != null) {
-                            PdfPagesPanel(pdf, currentPage, selectPage, onJump = jump, onClose = { pagesOpen = false })
-                        } else {
-                            PagesPanel(notebook, currentPage, pageBusy, selectPage, onClose = { pagesOpen = false }, onJump = jump,
-                                onAdd = { changePages(0, notebook.pageCount) }, onDuplicate = { changePages(1, it) },
-                                onDelete = { deletingPage = it }, onChangePaper = { choosingPaper = true })
-                        }
+                        PagesPanel(notebook, currentPage, pageBusy, selectPage, onClose = { pagesOpen = false }, onJump = jump,
+                            onAdd = { changePages(0, notebook.pageCount) }, onDuplicate = { changePages(1, it) },
+                            onDelete = { deletingPage = it }, onChangePaper = { choosingPaper = true })
                     }
                 }
             }
         }
     }
-    if (jumping) JumpToPageDialog(currentPage, pageCount, onDismiss = { jumping = false }) {
+    if (pdf != null && pageCount > 0 && pagesOpen && !fullScreen) {
+        PdfPagesDialog(pageCount, currentPage, onPage = { pages.goTo(it); pagesOpen = false },
+            onClose = { pagesOpen = false }, thumbnail = { pdf.thumbnail(it) })
+    }
+    if (jumping && pageCount > 0) JumpToPageDialog(currentPage, pageCount, onDismiss = { jumping = false }) {
         pages.goTo(it)
         jumping = false
     }
@@ -350,54 +356,6 @@ private fun PagesPanel(notebook: Notebook, current: Int, busy: Boolean, onPage: 
         }
     }
 }
-
-/** Page thumbnails of a PDF; tap one to go there. */
-@Composable
-private fun PdfPagesPanel(pdf: PdfDocument, current: Int, onPage: (Int) -> Unit, onJump: () -> Unit, onClose: () -> Unit) {
-    val list = rememberLazyListState()
-    LaunchedEffect(current) { if (current !in list.layoutInfo.visibleItemsInfo.map { it.index }) list.animateScrollToItem(current) }
-    @Suppress("UNUSED_VARIABLE") val v = pdf.version  // recompose when thumbnails land
-    Column(
-        Modifier
-            .width(200.dp)
-            .fillMaxHeight()
-            .padding(horizontal = 16.dp, vertical = 8.dp),
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("Pages", style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
-            IconButton(onClick = onJump) { Icon(Icons.Outlined.Numbers, "Go to page") }
-            IconButton(onClick = onClose) { Icon(Icons.Outlined.Close, contentDescription = "Close pages") }
-        }
-        LazyColumn(state = list, verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxSize()) {
-            items(pdf.pageCount) { i ->
-                Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
-                    val shape = MaterialTheme.shapes.small
-                    Box(
-                        Modifier
-                            .fillMaxWidth()
-                            .aspectRatio(1f / pdf.aspect(i))
-                            .clip(shape)
-                            .background(Color.White)
-                            .border(
-                                if (i == current) 2.dp else 1.dp,
-                                if (i == current) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
-                                shape,
-                            )
-                            .clickable { onPage(i) },
-                    ) {
-                        pdf.thumbnail(i, THUMB_PX)?.let { bmp ->
-                            Image(bmp.asImageBitmap(), contentDescription = "Page ${i + 1}", contentScale = ContentScale.Fit, modifier = Modifier.fillMaxSize())
-                        }
-                    }
-                    Spacer(Modifier.height(4.dp))
-                    Text("${i + 1}", style = MaterialTheme.typography.labelMedium)
-                }
-            }
-        }
-    }
-}
-
-private const val THUMB_PX = 320
 
 @Composable
 internal fun JumpToPageDialog(current: Int, count: Int, onDismiss: () -> Unit, onPage: (Int) -> Unit) {

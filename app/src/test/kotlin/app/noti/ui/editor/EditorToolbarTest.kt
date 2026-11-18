@@ -8,6 +8,10 @@ import android.graphics.Bitmap
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.geometry.Offset
@@ -190,6 +194,51 @@ class EditorToolbarTest {
         compose.runOnIdle { assertEquals(13, requestedPage) }
     }
 
+    @Test
+    @Config(qualifiers = "w360dp-h640dp-mdpi")
+    fun pdfReaderKeepsNavigationVisibleAndAnnotationToolsOptIn() {
+        render(360, ThemeMode.Dark, fontScale = 1.5f, height = 640, isPdf = true, alwaysVisible = false)
+        assertTargetsApart(listOf("Back to library", "Annotate PDF", "More", "Previous page",
+            "Next page", "Pages", "Zoom 175 percent. Reset to fit width"))
+        tools.forEach { compose.onNodeWithContentDescription(it).assertDoesNotExist() }
+        compose.onNodeWithContentDescription("Document scroll").assertDoesNotExist()
+        compose.onNodeWithContentDescription("Next page").performClick()
+        compose.runOnIdle { assertEquals(3, requestedPage) }
+        compose.onNodeWithContentDescription("More").performClick()
+        compose.onNodeWithText("Collapse tools").assertDoesNotExist()
+        compose.onNodeWithText("Undo").assertDoesNotExist()
+        compose.onNodeWithText("Export PDF").assertIsDisplayed()
+        compose.onNodeWithText("Settings").performClick()
+        compose.onNodeWithContentDescription("Annotate PDF").performClick()
+        compose.onNodeWithContentDescription("Show tools").performClick()
+        compose.onNodeWithContentDescription("Pen").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Done annotating").performClick()
+        compose.onNodeWithContentDescription("Pen").assertDoesNotExist()
+        compose.onNodeWithContentDescription("Annotate PDF").assertIsDisplayed()
+    }
+
+    @Test
+    @Config(qualifiers = "w860dp-h390dp-mdpi")
+    fun pdfPagePickerSupportsThumbnailsAndDirectJumpsInLandscape() {
+        compose.setContent {
+            NotiTheme(ThemeMode.Light) {
+                PdfPagesDialog(200, 11, { requestedPage = it }, onClose = {}, thumbnail = { null })
+            }
+        }
+        compose.onNodeWithContentDescription("Page 12").assertIsDisplayed().assertIsSelected()
+        compose.onNodeWithContentDescription("Page 12").performClick()
+        compose.runOnIdle { assertEquals(11, requestedPage) }
+        val field = compose.onNode(hasSetTextAction())
+        field.performTextInput("201")
+        compose.onNodeWithText("Go").assertIsNotEnabled()
+        field.performTextReplacement("195")
+        compose.onNodeWithText("Go").performClick()
+        compose.runOnIdle { assertEquals(194, requestedPage) }
+        field.performTextReplacement("75")
+        field.performImeAction()
+        compose.runOnIdle { assertEquals(74, requestedPage) }
+    }
+
     @Test fun toolsCanBeCollapsedAndExpandedFromMore() {
         render(360, ThemeMode.Light)
         compose.onNodeWithContentDescription("More").performClick()
@@ -362,7 +411,7 @@ class EditorToolbarTest {
     }
 
     private fun render(width: Int, theme: ThemeMode, fontScale: Float = 1f, floating: Boolean = false, saveStatus: String = "Autosave on", height: Int = 800,
-        dial: PenDialState = PenDialState(), alwaysVisible: Boolean = true) {
+        dial: PenDialState = PenDialState(), alwaysVisible: Boolean = true, isPdf: Boolean = false) {
         settings = SettingsStore(RuntimeEnvironment.getApplication()).also {
             it.tool = Tool.Pen; it.penSlots = SettingsStore.DEFAULT_PEN; it.highlighterSlots = SettingsStore.DEFAULT_HIGHLIGHTER
             it.toolDialAlways = alwaysVisible
@@ -370,6 +419,7 @@ class EditorToolbarTest {
         val page = PagePlacement(2, 16f, -160f, width - 32f, width * 1.4f, 1f, width, 600, true)
         compose.setContent {
             val view = LocalView.current
+            var annotationsEnabled by remember { mutableStateOf(false) }
             SideEffect { renderView = view }
             CompositionLocalProvider(LocalDensity provides Density(1f, fontScale)) {
                 NotiTheme(theme) {
@@ -387,6 +437,8 @@ class EditorToolbarTest {
                                 saveStatus = saveStatus, onSave = { saves++ }, onExport = { exports++ },
                                 scrollFraction = { 0.3f }, viewportFraction = { 0.15f }, onResetZoom = { resets++ }, onScroll = { scrolled = it },
                                 onUndo = { undos++ }, onRedo = { redos++ }, floatingWindows = floating, dial = dial,
+                                isPdf = isPdf, annotationsEnabled = annotationsEnabled,
+                                onToggleAnnotations = { annotationsEnabled = !annotationsEnabled },
                             )
                         }
                     }
