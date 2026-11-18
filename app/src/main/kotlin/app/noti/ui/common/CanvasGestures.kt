@@ -4,20 +4,20 @@ import app.noti.ink.GestureListener
 import app.noti.ink.NotiInk
 import app.noti.pdf.PageViewport
 import android.view.Choreographer
+import android.view.ViewConfiguration
 import kotlin.math.hypot
 import kotlin.math.pow
 import kotlin.math.max
 
 /**
- * Turns the palm filter's stream of deliberate touches into canvas gestures:
+ * Turns touches into canvas gestures:
  *  - one finger scrolls continuously with momentum,
  *  - two fingers pinch-zoom and pan,
  *  - a two-finger double tap calls [onTwoFingerDoubleTap],
  *  - a one-finger tap calls [onTap] (on the main thread) with where it was.
  *
- * Palms never get here: the native filter only passes on contacts it has confirmed,
- * replaying the samples it held back meanwhile, and cancels a contact it later finds
- * was a palm (which aborts the tap). Runs on the ink thread.
+ * Annotation gestures come from the palm filter. Reading mode uses Android's
+ * touch stream directly and adds one-finger double-tap zoom. Runs on the ink thread.
  */
 internal class CanvasGestures(
     private val slopPx: Float,
@@ -25,6 +25,8 @@ internal class CanvasGestures(
     private val onTwoFingerTap: () -> Unit = {},
     private val onTwoFingerDoubleTap: () -> Unit,
     private val onTap: ((Float, Float) -> Unit)? = null,
+    private val readOnly: () -> Boolean = { false },
+    private val doubleTapSlopPx: Float = slopPx,
 ) : GestureListener {
     private val main = android.os.Handler(android.os.Looper.getMainLooper())
     private val tapAction = Runnable { onTwoFingerTap() }
@@ -80,6 +82,9 @@ internal class CanvasGestures(
     private var cancelled = false
     private var engaged = false
     private var lastTapEnd = 0L
+    private var readingTapEnd = 0L
+    private var readingTapX = 0f
+    private var readingTapY = 0f
     private var upX = 0f
     private var upY = 0f
     // Transform tracking between batches.
@@ -176,7 +181,20 @@ internal class CanvasGestures(
             viewport?.begin()
             startFling()
         } else viewport?.end()
-        if (!cancelled && maxPointers == 1 && !moved && t - sessionStart < TAP_NS && onTap != null) {
+        val singleTap = !cancelled && maxPointers == 1 && !moved && t - sessionStart < TAP_NS
+        val reading = readOnly()
+        if (reading && singleTap) {
+            if (readingTapEnd != 0L && t - readingTapEnd < READING_DOUBLE_TAP_NS &&
+                hypot(upX - readingTapX, upY - readingTapY) < doubleTapSlopPx) {
+                readingTapEnd = 0L
+                viewport?.toggleZoomAt(upX, upY)
+            } else {
+                readingTapEnd = t
+                readingTapX = upX
+                readingTapY = upY
+            }
+        } else readingTapEnd = 0L
+        if (singleTap && onTap != null) {
             val x = upX; val y = upY
             main.post { onTap.invoke(x, y) }
         }
@@ -188,7 +206,7 @@ internal class CanvasGestures(
             onTwoFingerDoubleTap()
         } else {
             lastTapEnd = t
-            main.postDelayed(tapAction, DOUBLE_TAP_NS / 1_000_000)
+            if (!reading) main.postDelayed(tapAction, DOUBLE_TAP_NS / 1_000_000)
         }
     }
 
@@ -196,5 +214,6 @@ internal class CanvasGestures(
         const val FRICTION_PER_16MS = 0.91f
         const val TAP_NS = 300_000_000L
         const val DOUBLE_TAP_NS = 450_000_000L
+        val READING_DOUBLE_TAP_NS = ViewConfiguration.getDoubleTapTimeout() * 1_000_000L
     }
 }

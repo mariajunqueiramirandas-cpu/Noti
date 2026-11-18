@@ -200,6 +200,8 @@ internal fun TypeTool(
     source: LineSource?,
     blocks: TextBlockStore?,
     settings: SettingsStore,
+    /** Off while a PDF is only being read (not annotated): an open session is placed and closed. */
+    enabled: Boolean = true,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -399,7 +401,11 @@ internal fun TypeTool(
         open(TypeSession(page, fields, mm, form = true, color = TypeState.penColor(settings.penSlots.currentColor), style = startStyle()))
     }
 
+    // Leaving annotation mode places what's open, like tapping Place.
+    LaunchedEffect(enabled) { if (!enabled) state.session?.let { finish(it, keep = true) } }
+
     val s = state.session ?: return
+    if (!enabled) return
     TypePanel(
         session = s,
         settings = settings,

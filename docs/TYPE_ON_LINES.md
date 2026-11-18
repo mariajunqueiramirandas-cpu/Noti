@@ -35,6 +35,8 @@ does before checking it.
 
 ## 2. Using it
 
+- On a PDF, tap **Annotate PDF** first (PDFs open for reading), then pick Type. **Fill this page** turns annotating on
+  by itself, and leaving annotation mode places whatever is open in the Type panel.
 - **Loop** the lines you want with the Type tool, or **tap** a single line. A loop that covers most of a line takes all
   of it. A loop around part of a long line takes just that part, so you can write on half a line.
 - The lines found are **highlighted and numbered**. Lines Noti isn't sure about, such as an underlined heading, a

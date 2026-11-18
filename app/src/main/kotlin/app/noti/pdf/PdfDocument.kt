@@ -203,7 +203,8 @@ class PdfDocument(file: File) : PageImages {
     }
 
     /** The page's preview, for the pages panel; requested (at low priority) if missing. */
-    fun thumbnail(index: Int, @Suppress("UNUSED_PARAMETER") widthPx: Int): Bitmap? {
+    fun thumbnail(index: Int): Bitmap? {
+        @Suppress("UNUSED_VARIABLE") val v = version  // redraw the thumbnail when it lands
         if (closed || index !in pageSizes.indices) return null
         val key = Key(false, index, 0, PREVIEW_WIDTH, 0, 0)
         cache[key]?.let { it.used = frame; return it.bitmap }

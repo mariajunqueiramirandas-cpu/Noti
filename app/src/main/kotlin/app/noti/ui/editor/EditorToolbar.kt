@@ -49,13 +49,15 @@ internal fun EditorToolbar(
     onAddPage: (() -> Unit)? = null, saveStatus: String = "Autosave on", onSave: () -> Unit = {},
     selectionCount: Int = 0, isPdf: Boolean = false,
     zoom: () -> Float = { 1f }, scrollFraction: () -> Float = { 0f }, viewportFraction: () -> Float = { 1f },
-    onResetZoom: () -> Unit = {}, onScroll: (Float) -> Unit = {},
+    onResetZoom: () -> Unit = {}, onFitPage: () -> Unit = {}, onScroll: (Float) -> Unit = {},
     floatingWindows: Boolean = true,
     dial: PenDialState = remember { PenDialState() },
     /** Full screen hides the chrome; the pen can still summon the dial. */
     fullScreen: Boolean = false,
     /** A Study board's Study button, shown in the header. */
     studyButton: (@Composable (compact: Boolean) -> Unit)? = null,
+    annotationsEnabled: Boolean = false,
+    onToggleAnnotations: () -> Unit = {},
     /** Type on every blank of the current page, as a form (PDFs). */
     onFillPage: (() -> Unit)? = null,
 ) {
@@ -63,6 +65,7 @@ internal fun EditorToolbar(
     var toolsExpanded by rememberSaveable { mutableStateOf(true) }
     val colors = MaterialTheme.colorScheme
     val saveFailed = saveStatus.contains("failed", true)
+    val toolsEnabled = !isPdf || annotationsEnabled
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val density = LocalDensity.current
         fun px(value: Dp) = with(density) { value.roundToPx() }
@@ -72,45 +75,56 @@ internal fun EditorToolbar(
         val halo = (12f - Halo).dp
         val headerWidth = if (wide) (maxWidth - 260.dp).coerceAtMost(440.dp) else maxWidth - 24.dp
         val dockWidth = maxWidth - 24.dp
+        val more: @Composable () -> Unit = {
+            Box {
+                ToolbarButton(Icons.Outlined.MoreHoriz, "More", { menuOpen = true })
+                if (menuOpen) DropdownMenu(expanded = true, onDismissRequest = { menuOpen = false }) {
+                    if (toolsEnabled || saveFailed) DropdownMenuItem(text = { Text(saveStatus) }, leadingIcon = {
+                        Icon(if (saveFailed) Icons.Outlined.ErrorOutline else Icons.Outlined.Check, null)
+                    }, onClick = { menuOpen = false; onSave() })
+                    if (isPdf && annotationsEnabled) {
+                        DropdownMenuItem(text = { Text("Undo") }, enabled = canUndo,
+                            leadingIcon = { Icon(Icons.AutoMirrored.Outlined.Undo, null) }, onClick = { menuOpen = false; onUndo() })
+                        DropdownMenuItem(text = { Text("Redo") }, enabled = canRedo,
+                            leadingIcon = { Icon(Icons.AutoMirrored.Outlined.Redo, null) }, onClick = { menuOpen = false; onRedo() })
+                    }
+                    DropdownMenuItem(text = { Text("Rename") }, leadingIcon = { Icon(Icons.Outlined.Edit, null) },
+                        onClick = { menuOpen = false; onRename() })
+                    HorizontalDivider(Modifier.padding(vertical = 4.dp), color = colors.outlineVariant)
+                    if (pdfPage != null) {
+                        DropdownMenuItem(text = { Text("Go to page…") }, leadingIcon = { Icon(Icons.Outlined.Numbers, null) },
+                            onClick = { menuOpen = false; onJumpPage() })
+                    }
+                    onCanvasHome?.let { home -> DropdownMenuItem(text = { Text("Return to canvas start") },
+                        leadingIcon = { Icon(Icons.Outlined.CenterFocusStrong, null) }, onClick = { menuOpen = false; home() }) }
+                    onAddPage?.let { add -> DropdownMenuItem(text = { Text("Add page") }, leadingIcon = { Icon(Icons.Outlined.Add, null) },
+                        onClick = { menuOpen = false; add() }) }
+                    if (!isPdf) DropdownMenuItem(text = { Text("Page paper") }, leadingIcon = { Icon(Icons.Outlined.Description, null) },
+                        onClick = { menuOpen = false; onPagePaper() })
+                    if (isPdf && pdfPage != null) DropdownMenuItem(text = { Text("Fit page") },
+                        leadingIcon = { Icon(Icons.Outlined.FitScreen, null) }, onClick = { menuOpen = false; onFitPage() })
+                    onFillPage?.let { fill -> DropdownMenuItem(text = { Text("Fill this page") },
+                        leadingIcon = { Icon(Icons.Outlined.Keyboard, null) }, onClick = { menuOpen = false; fill() }) }
+                    DropdownMenuItem(text = { Text("Export PDF") }, leadingIcon = { Icon(Icons.Outlined.IosShare, null) },
+                        onClick = { menuOpen = false; onExport() })
+                    HorizontalDivider(Modifier.padding(vertical = 4.dp), color = colors.outlineVariant)
+                    if (toolsEnabled && !settings.toolDialOnHold) DropdownMenuItem(text = { Text(if (toolsExpanded) "Collapse tools" else "Expand tools") },
+                        leadingIcon = { Icon(if (toolsExpanded) Icons.Outlined.UnfoldLess else Icons.Outlined.UnfoldMore, null) },
+                        onClick = { menuOpen = false; toolsExpanded = !toolsExpanded })
+                    if (!wide || isPdf) DropdownMenuItem(text = { Text("Full screen") }, leadingIcon = { Icon(Icons.Outlined.Fullscreen, null) },
+                        onClick = { menuOpen = false; onFullScreen() })
+                    DropdownMenuItem(text = { Text("Settings") }, leadingIcon = { Icon(Icons.Outlined.Settings, null) },
+                        onClick = { menuOpen = false; onSettings() })
+                }
+            }
+        }
         val history: @Composable () -> Unit = {
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
                 ToolbarButton(Icons.AutoMirrored.Outlined.Undo, "Undo", onUndo, canUndo)
                 ToolbarButton(Icons.AutoMirrored.Outlined.Redo, "Redo", onRedo, canRedo)
                 if (wide) ToolbarButton(Icons.Outlined.Fullscreen, "Full screen", onFullScreen)
                 Box(Modifier.padding(horizontal = 4.dp).width(1.dp).height(20.dp).background(colors.outlineVariant))
-                Box {
-                    ToolbarButton(Icons.Outlined.MoreHoriz, "More", { menuOpen = true })
-                    if (menuOpen) DropdownMenu(expanded = true, onDismissRequest = { menuOpen = false }) {
-                        DropdownMenuItem(text = { Text(saveStatus) }, leadingIcon = {
-                            Icon(if (saveFailed) Icons.Outlined.ErrorOutline else Icons.Outlined.Check, null)
-                        }, onClick = { menuOpen = false; onSave() })
-                        DropdownMenuItem(text = { Text("Rename") }, leadingIcon = { Icon(Icons.Outlined.Edit, null) },
-                            onClick = { menuOpen = false; onRename() })
-                        HorizontalDivider(Modifier.padding(vertical = 4.dp), color = colors.outlineVariant)
-                        if (pdfPage != null) {
-                            DropdownMenuItem(text = { Text("Go to page…") }, leadingIcon = { Icon(Icons.Outlined.Numbers, null) },
-                                onClick = { menuOpen = false; onJumpPage() })
-                        }
-                        onCanvasHome?.let { home -> DropdownMenuItem(text = { Text("Return to canvas start") },
-                            leadingIcon = { Icon(Icons.Outlined.CenterFocusStrong, null) }, onClick = { menuOpen = false; home() }) }
-                        onAddPage?.let { add -> DropdownMenuItem(text = { Text("Add page") }, leadingIcon = { Icon(Icons.Outlined.Add, null) },
-                            onClick = { menuOpen = false; add() }) }
-                        if (!isPdf) DropdownMenuItem(text = { Text("Page paper") }, leadingIcon = { Icon(Icons.Outlined.Description, null) },
-                            onClick = { menuOpen = false; onPagePaper() })
-                        onFillPage?.let { fill -> DropdownMenuItem(text = { Text("Fill this page") },
-                            leadingIcon = { Icon(Icons.Outlined.Keyboard, null) }, onClick = { menuOpen = false; fill() }) }
-                        DropdownMenuItem(text = { Text("Export PDF") }, leadingIcon = { Icon(Icons.Outlined.IosShare, null) },
-                            onClick = { menuOpen = false; onExport() })
-                        HorizontalDivider(Modifier.padding(vertical = 4.dp), color = colors.outlineVariant)
-                        if (!settings.toolDialOnHold) DropdownMenuItem(text = { Text(if (toolsExpanded) "Collapse tools" else "Expand tools") },
-                            leadingIcon = { Icon(if (toolsExpanded) Icons.Outlined.UnfoldLess else Icons.Outlined.UnfoldMore, null) },
-                            onClick = { menuOpen = false; toolsExpanded = !toolsExpanded })
-                        if (!wide) DropdownMenuItem(text = { Text("Full screen") }, leadingIcon = { Icon(Icons.Outlined.Fullscreen, null) },
-                            onClick = { menuOpen = false; onFullScreen() })
-                        DropdownMenuItem(text = { Text("Settings") }, leadingIcon = { Icon(Icons.Outlined.Settings, null) },
-                            onClick = { menuOpen = false; onSettings() })
-                    }
-                }
+                more()
             }
         }
         if (!fullScreen) FloatingIsland(Alignment.TopStart, IntOffset(px(halo), px(halo)), floatingWindows) {
@@ -123,17 +137,24 @@ internal fun EditorToolbar(
                         style = MaterialTheme.typography.titleSmall, color = colors.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     if (saveFailed) ToolbarButton(Icons.Outlined.ErrorOutline, saveStatus, onSave, tint = colors.error)
                     studyButton?.invoke(compactStudy)
-                    if (!wide) history()
+                    if (isPdf) {
+                        ToolbarButton(
+                            if (annotationsEnabled) Icons.Outlined.Check else Icons.Outlined.Create,
+                            if (annotationsEnabled) "Done annotating" else "Annotate PDF",
+                            onToggleAnnotations, enabled = pdfPage != null || annotationsEnabled, tint = colors.primary,
+                        )
+                        more()
+                    } else if (!wide) history()
                 }
             }
         }
-        if (wide && !fullScreen) FloatingIsland(Alignment.TopEnd, IntOffset(-px(halo), px(halo)), floatingWindows) {
+        if (wide && !fullScreen && !isPdf) FloatingIsland(Alignment.TopEnd, IntOffset(-px(halo), px(halo)), floatingWindows) {
             GlassSurface { Box(Modifier.padding(4.dp)) { history() } }
         }
-        if (!fullScreen) FloatingIsland(Alignment.BottomCenter, IntOffset(0, -px(halo)), floatingWindows) {
+        if (!fullScreen && (!isPdf || pdfPage != null)) FloatingIsland(Alignment.BottomCenter, IntOffset(0, -px(halo)), floatingWindows) {
             GlassSurface(Modifier.widthIn(max = dockWidth)) {
                 Row(Modifier.padding(4.dp), verticalAlignment = Alignment.CenterVertically) {
-                    if (settings.toolDialOnHold) {
+                    if (toolsEnabled && settings.toolDialOnHold) {
                         val open = dial.phase == PenDialState.Phase.Locked
                         ToolbarButton(settings.tool.icon(), if (open) "Hide tools" else "Show tools", {
                             if (open) dial.dismiss() else dial.open()
@@ -157,11 +178,11 @@ internal fun EditorToolbar(
                 }
             }
         }
-        if (!fullScreen) {
+        if (!fullScreen && toolsEnabled) {
             FloatingScrollControl(viewportFraction, scrollFraction, onScroll, IntOffset(px((-4).dp), 0), floatingWindows,
                 Modifier.height((maxHeight * 0.25f).coerceIn(96.dp, 180.dp)))
         }
-        RadialToolSelector(settings, selectionCount, maxWidth, maxHeight, floatingWindows,
+        if (toolsEnabled) RadialToolSelector(settings, selectionCount, maxWidth, maxHeight, floatingWindows,
             expanded = toolsExpanded, onExpandedChange = { toolsExpanded = it },
             dial = dial, docked = !fullScreen && !settings.toolDialOnHold)
     }

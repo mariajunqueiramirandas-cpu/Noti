@@ -8,6 +8,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -79,6 +80,8 @@ data class PalmSpec(
  */
 @Stable
 class PageController(internal val initialPage: Int? = null) {
+    internal enum class Zoom { FitWidth, FitPage }
+
     var placement by mutableStateOf<PagePlacement?>(null)
         internal set
     var documentState by mutableStateOf(DoubleArray(8))
@@ -89,10 +92,11 @@ class PageController(internal val initialPage: Int? = null) {
     internal var requestedPage by mutableStateOf<Int?>(null)
 
     internal var requestedScroll by mutableStateOf<Float?>(null)
-    internal var resetZoomRequested by mutableStateOf(false)
+    internal var requestedZoom by mutableStateOf<Zoom?>(null)
 
     fun scrollTo(fraction: Float) { requestedScroll = fraction }
-    fun resetZoom() { resetZoomRequested = true }
+    fun resetZoom() { requestedZoom = Zoom.FitWidth }
+    fun fitPage() { requestedZoom = Zoom.FitPage }
 
     fun goTo(page: Int) {
         requestedPage = page
@@ -107,8 +111,8 @@ class PageController(internal val initialPage: Int? = null) {
  * Compose Popup sub-panel windows above the ink panel. Each
  * InkCanvas owns one engine instance and writes canonical snapshots through [inkFile].
  *
- * Fingers go through the engine's palm rejection first: only deliberate touches pan,
- * zoom or turn PDF pages (or draw, with [PalmSpec.fingerDrawing]).
+ * In annotation mode, fingers go through the engine's palm rejection before they
+ * pan, zoom or draw. In [readOnly] mode, pen and touch navigate while saved ink stays visible.
  *
  * Pages scroll continuously; ink stays in page coordinates through zoom, pan and rotation.
  * With a [sheetAspect] there are no pages: the Endless paper's free canvas, one sheet
@@ -143,6 +147,7 @@ fun InkCanvas(
     board: app.noti.study.BoardLayer? = null,
     /** A one-finger tap on the canvas, in its px (main thread). */
     onTap: ((Float, Float) -> Unit)? = null,
+    readOnly: Boolean = false,
     /** Drawn over the pages and under the ink (Type on lines: lines found, the text being typed). */
     overlay: (androidx.compose.ui.graphics.drawscope.DrawScope.(PagePlacement) -> Unit)? = null,
 ) {
@@ -152,13 +157,14 @@ fun InkCanvas(
         return
     }
     val context = LocalContext.current
-    val marginPx = with(LocalDensity.current) { 16.dp.toPx() }
+    val marginPx = with(LocalDensity.current) { (if (pdf != null) 8.dp else 16.dp).toPx() }
     val screenPx = with(LocalDensity.current) { EndlessCanvas.BASE_DP.dp.toPx() }
     val sheet = sheetAspect != null && pdf == null
     val anchor = remember { View(context) }
     val doubleTap = rememberUpdatedState(onTwoFingerDoubleTap)
     val onModel = rememberUpdatedState(palm.onModel)
-    val undoTap = rememberUpdatedState(tapUndo)
+    val undoTap = rememberUpdatedState(tapUndo && !readOnly)
+    val reading = rememberUpdatedState(readOnly)
     val documentState = rememberUpdatedState(onDocumentState)
     val restoreError = rememberUpdatedState(onRestoreError)
     val buttonClick = rememberUpdatedState(onButtonClick)
@@ -186,16 +192,19 @@ fun InkCanvas(
         // Not drawn yet (no canvas size or document), so safe before the ink thread owns it.
         if (sheet) viewport.setSheet(screenPx, EndlessCanvas.SPAN, EndlessCanvas.HOME_Y, EndlessCanvas.GROW)
         controller.initialPage?.let(viewport::goTo)
+        val touchConfiguration = ViewConfiguration.get(context)
         val gestures = CanvasGestures(
-            ViewConfiguration.get(context).scaledTouchSlop.toFloat(), viewport,
+            touchConfiguration.scaledTouchSlop.toFloat(), viewport,
             onTwoFingerTap = { if (undoTap.value) created.documentAction(0) },
             onTwoFingerDoubleTap = { main.post { doubleTap.value?.invoke() } },
             onTap = { x, y -> tap.value?.invoke(x, y) },
+            readOnly = { reading.value },
+            doubleTapSlopPx = touchConfiguration.scaledDoubleTapSlop.toFloat(),
         )
         created = InkLayer(
             anchor,
             gestures = gestures,
-            fingerDrawing = palm.fingerDrawing,
+            fingerDrawing = palm.fingerDrawing && !readOnly,
             palmModel = palm.model,
             onPalmModel = { m -> main.post { onModel.value?.invoke(m) } },
             initialInk = inkFile?.initial,
@@ -206,6 +215,7 @@ fun InkCanvas(
             onButtonClick = { buttonClick.value?.invoke(it) },
             // Normal writing never formats or posts diagnostic events.
             onButtonDiagnostic = if (onButtonDiagnostic == null) null else { line -> buttonDiagnostic.value?.invoke(line) },
+            readOnly = readOnly,
         )
         Rig(created, viewport, gestures)
     }
@@ -229,11 +239,12 @@ fun InkCanvas(
             brush.alpha,
         )
         layer.setWidth(brush.widthPx)
-        layer.setTool(brush.tool.ordinal)
+        layer.setTool(if (readOnly) Tool.Pen.ordinal else brush.tool.ordinal)
         if (brush.pressureGamma == null) layer.setPressureCurve(1f, 1f) else layer.setPressureCurve(brush.pressureGamma, 0.12f)
         layer.setPredictor(engine.predictor)
         layer.setDisplayTiming(panelMs = engine.inkFeelMs)
-        layer.setFingerDrawing(palm.fingerDrawing)
+        layer.setReadOnly(readOnly)
+        layer.setFingerDrawing(palm.fingerDrawing && !readOnly)
         layer.setStylusOptions(buttons)
     }
 
@@ -275,10 +286,12 @@ fun InkCanvas(
         // Read in the draw phase only: scrolling and zooming redraw, never recompose.
         DocumentBackground(paper, pdf, { controller.placement }, Modifier.fillMaxSize(), sheet = sheet, board = board)
         if (pdf != null) {
-            pdf.error?.let { Text(it, modifier = Modifier.align(Alignment.Center), color = MaterialTheme.colorScheme.error) }
+            val error = pdf.error
+            if (error != null) Text(error, modifier = Modifier.align(Alignment.Center), color = MaterialTheme.colorScheme.error)
+            else if (pdf.pageCount == 0) CircularProgressIndicator(Modifier.align(Alignment.Center), strokeWidth = 2.dp)
         }
         val selection = controller.documentState
-        if (selection[3] > 0) {
+        if (!readOnly && selection[3] > 0) {
             Canvas(Modifier.fillMaxSize()) {
                 drawRect(Color(0xFF4167C4), Offset(selection[4].toFloat() - 6, selection[5].toFloat() - 6),
                     Size((selection[6] - selection[4]).toFloat() + 12, (selection[7] - selection[5]).toFloat() + 12),
@@ -306,16 +319,20 @@ private class Rig(val layer: InkLayer, val viewport: PageViewport, val gestures:
 /** Keep scroll thumb movement from recomposing the canvas for each input sample. */
 @Composable
 private fun ApplyScrollRequests(controller: PageController, rig: Rig) {
-    LaunchedEffect(controller.requestedScroll, controller.resetZoomRequested) {
+    LaunchedEffect(controller.requestedScroll, controller.requestedZoom) {
         val scroll = controller.requestedScroll
-        val reset = controller.resetZoomRequested
-        if (scroll != null || reset) rig.layer.runOnInkThread {
+        val zoom = controller.requestedZoom
+        if (scroll != null || zoom != null) rig.layer.runOnInkThread {
             rig.gestures.stopMotion()
-            if (reset) rig.viewport.resetZoom()
+            when (zoom) {
+                PageController.Zoom.FitWidth -> rig.viewport.resetZoom()
+                PageController.Zoom.FitPage -> rig.viewport.fitPage()
+                null -> Unit
+            }
             if (scroll != null) rig.viewport.scrollTo(scroll)
         }
         controller.requestedScroll = null
-        controller.resetZoomRequested = false
+        controller.requestedZoom = null
     }
 }
 

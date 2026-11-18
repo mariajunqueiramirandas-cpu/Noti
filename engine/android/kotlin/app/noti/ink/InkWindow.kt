@@ -63,6 +63,7 @@ internal class InkWindow(
     private val onIdle: () -> Unit = {},
     /** Pen streams that open the tool dial instead of drawing. */
     private val dial: PenDialRelay? = null,
+    var readOnly: Boolean = false,
 ) : SurfaceView(context), SurfaceHolder.Callback {
 
     private val wm = context.getSystemService(WindowManager::class.java)
@@ -85,6 +86,9 @@ internal class InkWindow(
     // What the current pen stream does: draws, drives the tool dial, or is swallowed
     // because it closed a locked dial.
     private var penMode = PEN_INK
+    // Latch the route on down so a mode change cannot turn a pan into ink or strand a stroke.
+    private var readingStream = false
+    private val readingTouch = ReadingTouch(gestures)
 
     // Housekeeping timer (GPU keep-alive, deferred power changes, palm filter timers).
     private var idleAtMs = 0L
@@ -185,9 +189,15 @@ internal class InkWindow(
     // ---- input (ink thread) ----
 
     override fun dispatchTouchEvent(e: MotionEvent): Boolean {
-        val recv = System.nanoTime()
         // Samsung S Pen: a stroke drawn with the side button held may arrive as actions 211–214.
         val action = SamsungPenActions.action(e.actionMasked)
+        if (action == MotionEvent.ACTION_DOWN) readingStream = readOnly
+        if (readingStream) {
+            readingTouch.dispatch(e, action, time(e, -1))
+            if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) readingStream = false
+            return true
+        }
+        val recv = System.nanoTime()
         val buttonState = SamsungPenActions.buttons(e.actionMasked, e.buttonState)
         for (i in 0 until e.pointerCount) {
             if (isPen(e, i)) { buttons.motion(e.deviceId, buttonState, e.eventTime, contact = true); break }
@@ -285,7 +295,7 @@ internal class InkWindow(
     }
 
     override fun dispatchGenericMotionEvent(e: MotionEvent): Boolean {
-        if (!isPen(e, 0)) return false
+        if (readOnly || !isPen(e, 0)) return false
         // A hover exit also comes just before the nib touches down; either way, a button held
         // across it is not a click (S Pen clicks come from these flags, see StylusButtons).
         buttons.motion(e.deviceId, e.buttonState, e.eventTime, leaving = e.actionMasked == MotionEvent.ACTION_HOVER_EXIT)
@@ -474,5 +484,50 @@ internal class InkWindow(
         ink.removeCallbacks(idleTick)
         idleAtMs = at
         ink.postAtTime(idleTick, at)
+    }
+}
+
+/** Delivers reading gestures immediately, including stylus pans, using Android's palm cancellations. */
+internal class ReadingTouch(private val gestures: GestureListener?) {
+    private var active = 0
+
+    fun dispatch(event: MotionEvent, action: Int, timeNanos: Long) {
+        val listener = gestures ?: return
+        fun send(index: Int, kind: Int) {
+            listener.onGesture(kind, event.getPointerId(index), event.getX(index), event.getY(index), timeNanos)
+        }
+        when (action) {
+            MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> {
+                val index = event.actionIndex
+                // Android reports TOOL_TYPE_PALM as 5; it is hidden in the public SDK.
+                if (event.getToolType(index) == TOOL_TYPE_PALM) return
+                active = active or (1 shl event.getPointerId(index))
+                send(index, NotiInk.GESTURE_DOWN)
+            }
+            MotionEvent.ACTION_MOVE -> {
+                for (index in 0 until event.pointerCount) {
+                    val bit = 1 shl event.getPointerId(index)
+                    if (active and bit == 0) continue
+                    send(index, NotiInk.GESTURE_MOVE)
+                }
+            }
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_POINTER_UP, MotionEvent.ACTION_CANCEL -> {
+                val cancelled = action == MotionEvent.ACTION_CANCEL || event.flags and MotionEvent.FLAG_CANCELED != 0
+                val kind = if (cancelled) NotiInk.GESTURE_CANCEL else NotiInk.GESTURE_UP
+                val indices = if (action == MotionEvent.ACTION_CANCEL) 0 until event.pointerCount else event.actionIndex..event.actionIndex
+                for (index in indices) {
+                    val bit = 1 shl event.getPointerId(index)
+                    if (active and bit == 0) continue
+                    active = active and bit.inv()
+                    send(index, kind)
+                }
+            }
+            else -> return
+        }
+        listener.onGestureBatchEnd()
+    }
+
+    private companion object {
+        const val TOOL_TYPE_PALM = 5
     }
 }
