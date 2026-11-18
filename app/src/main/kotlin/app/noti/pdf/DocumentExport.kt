@@ -43,7 +43,14 @@ object DocumentExport {
             finally { output.close() }
             return
         }
-        val strokes = InkArchive.decode(bytes).groupBy { it.page }
+        val archive = InkArchive.decode(bytes)
+        val strokes = archive.groupBy { it.page }
+        // Text typed on lines goes in as searchable text as well as ink.
+        val typed = app.noti.lines.TextBlockStore.read(library.typeFile(notebook))
+        val typedInk = if (typed.isEmpty()) emptyList() else app.noti.lines.SearchableText.strokes(archive)
+        val fonts = if (typed.isEmpty()) null else library.appContext.resources.let {
+            it.getFont(app.noti.R.font.nunito_regular) to it.getFont(app.noti.R.font.nunito_bold)
+        }
         val source = library.pdfFile(notebook)?.let {
             PdfRenderer(ParcelFileDescriptor.open(it, ParcelFileDescriptor.MODE_READ_ONLY))
         }
@@ -72,6 +79,8 @@ object DocumentExport {
                         canvas.clipRect(0, 0, width, height)
                         canvas.scale(width / 1000f, width / 1000f)
                         strokes[index]?.forEach { drawInk(canvas, it) }
+                        if (fonts != null) app.noti.lines.SearchableText.draw(canvas, index, typedInk, typed, fonts.first, fonts.second,
+                            width * 25.4f / 72f / 1000f)
                         canvas.restoreToCount(save)
                         output.finishPage(page)
                     } finally { original?.close() }

@@ -370,6 +370,38 @@ class InkLayer(
         }
     }
 
+    /** The Type tool's last loop or tap (see [NotiInk.nativeTypeLoop]), delivered on the main thread. */
+    fun typeLoop(onResult: (FloatArray) -> Unit) {
+        ink.post {
+            if (released) return@post
+            val data = NotiInk.nativeTypeLoop(handle)
+            main.post { if (!released) onResult(data) }
+        }
+    }
+
+    /** Every visible stroke of [page] (see [NotiInk.nativePageInk]), delivered on the main thread. */
+    fun pageInk(page: Int, onResult: (FloatArray) -> Unit) {
+        ink.post {
+            if (released) return@post
+            val data = NotiInk.nativePageInk(handle, page)
+            main.post { if (!released) onResult(data) }
+        }
+    }
+
+    /**
+     * Swaps strokes [ids] of [page] for new ones: [capsules] (x0 y0 r0 x1 y1 r1 in page units)
+     * cut into strokes by [sizes], all in [color] (premultiplied RGBA). One undo step; saved at once.
+     */
+    fun replaceStrokes(ids: IntArray, page: Int, color: FloatArray, capsules: FloatArray, sizes: IntArray,
+        onDone: (Boolean) -> Unit) {
+        ink.post {
+            if (released) return@post
+            val ok = NotiInk.nativeReplaceStrokes(handle, ids, page, color, capsules, sizes)
+            if (ok && persistenceEnabled) onSnapshot?.invoke(NotiInk.nativeSnapshot(handle))
+            main.post { onDone(ok) }
+        }
+    }
+
     fun snapshot(onDone: (ByteArray) -> Unit) {
         ink.post {
             if (released) return@post

@@ -79,6 +79,9 @@ class LibraryStore(context: Context) {
     /** A Study board's study material (app.noti.study.StudyStore). */
     val studyDir = File(context.filesDir, "study").apply { mkdirs() }
     fun studyFile(nb: Notebook) = File(studyDir, "${nb.id}.json")
+    /** Text typed on lines in a notebook (Type tool), next to its ink. */
+    val typeDir = File(context.filesDir, "type").apply { mkdirs() }
+    fun typeFile(nb: Notebook) = File(typeDir, "${nb.id}.json")
 
     fun pdfFile(nb: Notebook): File? = nb.pdf?.let { File(pdfDir, it) }
     fun thumbnailFile(nb: Notebook): File? = nb.pdf?.let { File(pdfDir, it.removeSuffix(".pdf") + ".png") }
@@ -158,6 +161,7 @@ class LibraryStore(context: Context) {
         deleted.forEach { nb ->
             InkFile.delete(inkFile(nb))
             if (nb.board) app.noti.study.StudyStore.delete(studyFile(nb))
+            app.noti.lines.TextBlockStore.delete(typeFile(nb))
             pdfFile(nb)?.delete()
             thumbnailFile(nb)?.delete()
             positions.remove(nb.id)
@@ -183,10 +187,12 @@ class LibraryStore(context: Context) {
                     }
                     InkFile.open(inkFile(nb)).initial?.let { InkFile.replace(inkFile(copy), it) }
                     if (nb.board) app.noti.study.StudyStore.copy(studyFile(nb), studyFile(copy))
+                    app.noti.lines.TextBlockStore.copy(typeFile(nb), typeFile(copy))
                     copy
                 }.getOrElse {
                     InkFile.delete(inkFile(copy))
                     if (nb.board) app.noti.study.StudyStore.delete(studyFile(copy))
+                    app.noti.lines.TextBlockStore.delete(typeFile(copy))
                     pdfFile(copy)?.delete()
                     thumbnailFile(copy)?.delete()
                     null

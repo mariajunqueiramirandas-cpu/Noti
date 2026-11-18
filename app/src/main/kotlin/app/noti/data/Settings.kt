@@ -17,7 +17,12 @@ enum class Predictor(val label: String, val engineId: Int) {
 /** The engine takes a tool by [ordinal] (InkEngine::set_tool): keep this order. */
 enum class Tool(val label: String) {
     Pen("Pen"), Highlighter("Highlighter"), Eraser("Eraser"), Lasso("Lasso"),
+    /** A loop or tap on lines (a PDF's, or lined paper's) to type onto them (Type on lines). */
+    Type("Type"),
 }
+
+/** Something typed into forms again and again ("Name" → "Ada Lovelace"), offered as a chip. */
+data class QuickFill(val label: String, val value: String)
 
 /** The three quick color slots and three quick width slots of a drawing tool. */
 data class ToolSlots(
@@ -103,6 +108,21 @@ class SettingsStore(context: Context) {
 
     var tapUndo by pref(true, { prefs.getBoolean("tapUndo", it) }) { putBoolean("tapUndo", it) }
 
+    /**
+     * Type on lines: the alignment and weight new text starts with. Not the size: sizes are
+     * page units, which differ between notebooks, so new text always starts fitted to its lines.
+     */
+    var typeStyle by pref(app.noti.lines.TypeStyle(), { decodeTypeStyle(prefs.getString("typeStyle", null)) ?: it }) {
+        putString("typeStyle", "|${it.align.name}|${it.bold}")
+    }
+
+    /** Type on lines: things typed into forms often, offered as chips. */
+    var quickFills by pref(emptyList<QuickFill>(), { decodeQuickFills(prefs.getString("quickFills", null)) ?: it }) {
+        putString("quickFills", org.json.JSONArray().apply {
+            for (f in it) put(org.json.JSONObject().put("label", f.label).put("value", f.value))
+        }.toString())
+    }
+
     private var storedTool by pref(Tool.Pen, { enumOr(prefs.getString("tool", null), it) }) { putString("tool", it.name) }
     var lastDrawingTool by pref(Tool.Pen, {
         enumOr(prefs.getString("lastDrawingTool", null), if (storedTool == Tool.Highlighter) Tool.Highlighter else it)
@@ -165,6 +185,16 @@ class SettingsStore(context: Context) {
         )
     }
 }
+
+private fun decodeTypeStyle(s: String?): app.noti.lines.TypeStyle? = runCatching {
+    val p = s!!.split("|")
+    app.noti.lines.TypeStyle(size = null, align = app.noti.lines.TextAlign.valueOf(p[1]), bold = p[2].toBoolean())
+}.getOrNull()
+
+private fun decodeQuickFills(s: String?): List<QuickFill>? = runCatching {
+    val a = org.json.JSONArray(s!!)
+    (0 until a.length()).map { a.getJSONObject(it).let { o -> QuickFill(o.getString("label"), o.getString("value")) } }
+}.getOrNull()
 
 private fun decodeFloats(s: String?): FloatArray? =
     s?.split(",")?.mapNotNull { it.toFloatOrNull() }?.toFloatArray()?.takeIf { it.isNotEmpty() }

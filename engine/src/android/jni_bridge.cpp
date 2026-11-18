@@ -250,8 +250,31 @@ jdoubleArray nativeDocumentState(JNIEnv* env, jclass, jlong h) {
   const auto& e = inst(h)->engine;
   const auto b = e.selection_bounds();
   const jdouble values[] = {double(e.revision()), double(e.can_undo()), double(e.can_redo()), double(e.selection_count()),
-    b.empty() ? 0.0 : b.x0, b.empty() ? 0.0 : b.y0, b.empty() ? 0.0 : b.x1, b.empty() ? 0.0 : b.y1, double(e.document_busy())};
-  auto out = env->NewDoubleArray(9); env->SetDoubleArrayRegion(out, 0, 9, values); return out;
+    b.empty() ? 0.0 : b.x0, b.empty() ? 0.0 : b.y0, b.empty() ? 0.0 : b.x1, b.empty() ? 0.0 : b.y1, double(e.document_busy()),
+    double(e.type_serial())};
+  auto out = env->NewDoubleArray(10); env->SetDoubleArrayRegion(out, 0, 10, values); return out;
+}
+jfloatArray floats(JNIEnv* env, const std::vector<float>& data) {
+  auto out = env->NewFloatArray(jsize(data.size()));
+  if (out) env->SetFloatArrayRegion(out, 0, jsize(data.size()), data.data());
+  return out;
+}
+jfloatArray nativeTypeLoop(JNIEnv* env, jclass, jlong h) { return floats(env, inst(h)->engine.type_loop()); }
+jfloatArray nativePageInk(JNIEnv* env, jclass, jlong h, jint page) {
+  if (page < 0) return floats(env, {0.f});
+  return floats(env, inst(h)->engine.page_ink(uint32_t(page)));
+}
+jboolean nativeReplaceStrokes(JNIEnv* env, jclass, jlong h, jintArray ids, jint page, jfloatArray color,
+                              jfloatArray capsules, jintArray sizes) {
+  if (page < 0 || env->GetArrayLength(color) != 4 || env->GetArrayLength(capsules) % 6 != 0) return JNI_FALSE;
+  std::vector<uint32_t> idv(env->GetArrayLength(ids)), sizev(env->GetArrayLength(sizes));
+  if (!idv.empty()) env->GetIntArrayRegion(ids, 0, jsize(idv.size()), reinterpret_cast<jint*>(idv.data()));
+  if (!sizev.empty()) env->GetIntArrayRegion(sizes, 0, jsize(sizev.size()), reinterpret_cast<jint*>(sizev.data()));
+  float rgba[4]; env->GetFloatArrayRegion(color, 0, 4, rgba);
+  std::vector<Capsule> caps(size_t(env->GetArrayLength(capsules)) / 6);
+  static_assert(sizeof(Capsule) == 6 * sizeof(float));
+  if (!caps.empty()) env->GetFloatArrayRegion(capsules, 0, jsize(caps.size() * 6), reinterpret_cast<float*>(caps.data()));
+  return inst(h)->engine.replace_strokes(idv, uint32_t(page), rgba, caps, sizev) ? JNI_TRUE : JNI_FALSE;
 }
 void nativeSurfaceChanged(JNIEnv* env, jclass, jlong h, jobject surface, jint w, jint hh) {
   Command c{CommandType::kSurfaceChanged};
@@ -418,6 +441,9 @@ const JNINativeMethod kMethods[] = {
     M(nativeRestore, "(J[B)Z"),
     M(nativeDocumentAction, "(JII)Z"),
     M(nativeDocumentState, "(J)[D"),
+    M(nativeTypeLoop, "(J)[F"),
+    M(nativePageInk, "(JI)[F"),
+    M(nativeReplaceStrokes, "(J[II[F[F[I)Z"),
     M(nativeTouch, "(JI)J"),
     M(nativeProcess, "(JIZZ)J"),
     M(nativeIdle, "(J)J"),

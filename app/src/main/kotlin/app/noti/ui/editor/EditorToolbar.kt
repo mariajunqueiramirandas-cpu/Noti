@@ -58,6 +58,8 @@ internal fun EditorToolbar(
     studyButton: (@Composable (compact: Boolean) -> Unit)? = null,
     annotationsEnabled: Boolean = false,
     onToggleAnnotations: () -> Unit = {},
+    /** Type on every blank of the current page, as a form (PDFs). */
+    onFillPage: (() -> Unit)? = null,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
     var toolsExpanded by rememberSaveable { mutableStateOf(true) }
@@ -101,6 +103,8 @@ internal fun EditorToolbar(
                         onClick = { menuOpen = false; onPagePaper() })
                     if (isPdf && pdfPage != null) DropdownMenuItem(text = { Text("Fit page") },
                         leadingIcon = { Icon(Icons.Outlined.FitScreen, null) }, onClick = { menuOpen = false; onFitPage() })
+                    onFillPage?.let { fill -> DropdownMenuItem(text = { Text("Fill this page") },
+                        leadingIcon = { Icon(Icons.Outlined.Keyboard, null) }, onClick = { menuOpen = false; fill() }) }
                     DropdownMenuItem(text = { Text("Export PDF") }, leadingIcon = { Icon(Icons.Outlined.IosShare, null) },
                         onClick = { menuOpen = false; onExport() })
                     HorizontalDivider(Modifier.padding(vertical = 4.dp), color = colors.outlineVariant)
@@ -277,6 +281,7 @@ internal fun Tool.icon(): ImageVector = when (this) {
     Tool.Highlighter -> Icons.Outlined.BorderColor
     Tool.Eraser -> EraserIcon
     Tool.Lasso -> Icons.Outlined.Gesture
+    Tool.Type -> Icons.Outlined.Keyboard
 }
 
 /** Material Icons has no eraser; a simple outlined one in the same 24 dp grid. */

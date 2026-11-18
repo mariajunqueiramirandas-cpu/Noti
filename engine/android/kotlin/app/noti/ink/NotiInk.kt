@@ -92,6 +92,14 @@ internal object NotiInk {
     @JvmStatic external fun nativeRestore(handle: Long, data: ByteArray): Boolean
     @JvmStatic external fun nativeDocumentAction(handle: Long, action: Int, page: Int): Boolean
     @JvmStatic external fun nativeDocumentState(handle: Long): DoubleArray
+    /** The Type tool's last loop or tap: [page, then x y per point] in page units (InkEngine::type_loop). */
+    @JvmStatic external fun nativeTypeLoop(handle: Long): FloatArray
+    /** Every visible stroke of a page, as [count, then per stroke: id, page, rgba, n, n capsules] (InkEngine::page_ink). */
+    @JvmStatic external fun nativePageInk(handle: Long, page: Int): FloatArray
+    /** Hides [ids] and adds strokes on [page], as one undoable edit (InkEngine::replace_strokes). */
+    @JvmStatic external fun nativeReplaceStrokes(handle: Long, ids: IntArray, page: Int, color: FloatArray,
+        capsules: FloatArray, sizes: IntArray): Boolean
+
     // Host-frame sync (Android 14+, see GlFrontBufferRenderer::host_frame). Main thread.
     /** Adds the ink layer's buffer/geometry for a host frame showing [pages] to [transaction]. */
     @JvmStatic external fun nativeHostFrame(handle: Long, transaction: android.view.SurfaceControl.Transaction, pages: FloatArray): Boolean

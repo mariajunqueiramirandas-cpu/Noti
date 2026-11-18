@@ -121,17 +121,14 @@ class EditorToolbarTest {
     }
 
     @Test fun everySegmentMapsToItsOwnSlot() {
-        assertEquals(10, DialSegments)
-        assertEquals(4, DialColors)
-        assertEquals(7, DialWidths)
-        val sweep = 360f / 10
-        // The top four tools straddle twelve o'clock. Color and width presets follow clockwise.
-        assertEquals(0, segmentAt(-144f))
-        assertEquals(3, segmentAt(-36f))
-        assertEquals(DialColors, segmentAt(0f))
-        assertEquals(DialWidths, segmentAt(108f))
+        assertEquals(11, DialSegments); assertEquals(5, DialColors); assertEquals(8, DialWidths)
+        val sweep = 360f / 11
+        // Five tools across the top, the middle one (the eraser) straight up. Colors and widths follow clockwise.
+        assertEquals(2, segmentAt(-90f)); assertEquals(0, segmentAt(-90f - 2 * sweep)); assertEquals(4, segmentAt(-90f + 2 * sweep))
+        assertEquals(DialColors, segmentAt(-90f + 3 * sweep)); assertEquals(DialWidths, segmentAt(-90f + 6 * sweep))
+        // Each segment owns half a sweep either side of its centre, wrapping at ±180°.
         (0 until DialSegments).forEach { i ->
-            val centre = -144f + i * sweep
+            val centre = -90f + (i - (DialColors - 1) / 2f) * sweep
             assertEquals(i, segmentAt(centre - sweep / 2 + 0.5f)); assertEquals(i, segmentAt(centre + sweep / 2 - 0.5f))
             assertEquals(i, segmentAt(centre + 360f)); assertEquals(i, segmentAt(centre - 360f))
         }
@@ -451,7 +448,8 @@ class EditorToolbarTest {
 
     /** dp from the dial's centre to the middle of segment [index]. */
     private fun segment(index: Int): Offset {
-        val angle = Math.toRadians(-144.0 + 360.0 / DialSegments * index)
+        // The tools are centred on straight up.
+        val angle = Math.toRadians(-90.0 + 360.0 / DialSegments * (index - (DialColors - 1) / 2.0))
         return Offset((76 * kotlin.math.cos(angle)).toFloat(), (76 * kotlin.math.sin(angle)).toFloat())
     }
 

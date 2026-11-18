@@ -148,6 +148,8 @@ fun InkCanvas(
     /** A one-finger tap on the canvas, in its px (main thread). */
     onTap: ((Float, Float) -> Unit)? = null,
     readOnly: Boolean = false,
+    /** Drawn over the pages and under the ink (Type on lines: lines found, the text being typed). */
+    overlay: (androidx.compose.ui.graphics.drawscope.DrawScope.(PagePlacement) -> Unit)? = null,
 ) {
     // Previews and screenshot tests have no native engine: paper only.
     if (LocalInspectionMode.current) {
@@ -296,6 +298,7 @@ fun InkCanvas(
                     style = Stroke(2f, pathEffect = androidx.compose.ui.graphics.PathEffect.dashPathEffect(floatArrayOf(8f, 5f))))
             }
         }
+        if (overlay != null) Canvas(Modifier.fillMaxSize()) { controller.placement?.let { overlay(it) } }
         AndroidView(factory = { anchor }, modifier = Modifier.fillMaxSize())
     }
 }

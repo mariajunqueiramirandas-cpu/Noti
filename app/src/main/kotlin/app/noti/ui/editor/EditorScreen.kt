@@ -163,6 +163,14 @@ private fun EditorContent(notebook: Notebook, library: LibraryStore, settings: S
     val pdf = remember(notebook.pdf) { library.pdfFile(notebook)?.let { PdfDocument(it) } }
     DisposableEffect(pdf) { onDispose { pdf?.close() } }
     val pages = remember { PageController(if (notebook.isCanvas) null else library.lastPage(notebook.id)) }
+    // Type on lines: text typed on lines (kept to edit later), where lines come from, and the open session.
+    val typeBlocks by produceState<app.noti.lines.TextBlockStore?>(null, notebook.id) {
+        value = withContext(Dispatchers.IO) { app.noti.lines.TextBlockStore.load(library.typeFile(notebook)) }
+    }
+    val lineSource = remember(pdf, notebook.paper, notebook.isCanvas) {
+        if (pdf != null) app.noti.lines.PdfLines(pdf) else app.noti.lines.PaperLines(notebook.paper, notebook.isCanvas)
+    }
+    val typeState = remember { TypeState() }
     val pageCount = pdf?.pageCount ?: notebook.pageCount
     LaunchedEffect(pages, notebook.isCanvas) {
         if (!notebook.isCanvas) snapshotFlow { pages.placement?.takeIf { it.settled }?.page }.collect { page ->
@@ -230,6 +238,7 @@ private fun EditorContent(notebook: Notebook, library: LibraryStore, settings: S
                 board = study?.layer,
                 onTap = study?.let { b -> { x, y -> b.tap(x, y, pages.placement) } },
                 readOnly = readOnly,
+                overlay = { p -> typeState.draw(this, p) },
             )
             EditorToolbar(
                 title = notebook.name, settings = settings, pagesOpen = pagesOpen,
@@ -258,6 +267,7 @@ private fun EditorContent(notebook: Notebook, library: LibraryStore, settings: S
                     if (!annotationsEnabled) dial.dismiss()
                 },
                 studyButton = study?.let { b -> { compact -> app.noti.ui.study.StudyButton(b.controller, compact) } },
+                onFillPage = if (pdf == null) null else { { annotationsEnabled = true; settings.tool = Tool.Type; typeState.requestFill(currentPage) } },
             )
             if (study != null) BoxWithConstraints(Modifier.fillMaxSize()) {
                 StudyOverlay(study, { pages.placement }, maxWidth, maxHeight, hidden = settingsOpen || fullScreen)
@@ -279,6 +289,7 @@ private fun EditorContent(notebook: Notebook, library: LibraryStore, settings: S
             }
         }
     }
+    TypeTool(typeState, layer, pages.documentState, lineSource, typeBlocks, settings, enabled = !readOnly)
     if (pdf != null && pageCount > 0 && pagesOpen && !fullScreen) {
         PdfPagesDialog(pageCount, currentPage, onPage = { pages.goTo(it); pagesOpen = false },
             onClose = { pagesOpen = false }, thumbnail = { pdf.thumbnail(it) })
