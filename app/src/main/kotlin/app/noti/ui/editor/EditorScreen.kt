@@ -255,10 +255,7 @@ private fun EditorContent(notebook: Notebook, library: LibraryStore, settings: S
                 annotationsEnabled = annotationsEnabled,
                 onToggleAnnotations = {
                     annotationsEnabled = !annotationsEnabled
-                    if (!annotationsEnabled) {
-                        dial.dismiss()
-                        layer?.documentAction(6) // Clear selection while keeping its ink.
-                    }
+                    if (!annotationsEnabled) dial.dismiss()
                 },
                 studyButton = study?.let { b -> { compact -> app.noti.ui.study.StudyButton(b.controller, compact) } },
             )

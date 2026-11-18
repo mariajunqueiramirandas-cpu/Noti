@@ -237,7 +237,7 @@ fun InkCanvas(
             brush.alpha,
         )
         layer.setWidth(brush.widthPx)
-        layer.setTool(brush.tool.ordinal)
+        layer.setTool(if (readOnly) Tool.Pen.ordinal else brush.tool.ordinal)
         if (brush.pressureGamma == null) layer.setPressureCurve(1f, 1f) else layer.setPressureCurve(brush.pressureGamma, 0.12f)
         layer.setPredictor(engine.predictor)
         layer.setDisplayTiming(panelMs = engine.inkFeelMs)
