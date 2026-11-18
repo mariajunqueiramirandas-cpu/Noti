@@ -122,6 +122,28 @@ class PageViewportTest {
         assertEquals(before.top, f.state.top, 1f)
     }
 
+    @Test fun doubleTapZoomTogglesAtTheTappedPoint() {
+        val f = Fixture(FloatArray(10) { 1.4f })
+        f.viewport.goTo(5)
+        val before = f.state
+        f.viewport.toggleZoomAt(150f, 180f)
+        assertEquals(2f, f.state.zoom, 0f)
+        assertEquals((180f - before.top) / before.width, (180f - f.state.top) / f.state.width, 0.001f)
+        f.viewport.toggleZoomAt(150f, 180f)
+        assertEquals(1f, f.state.zoom, 0f)
+        assertEquals(before.top, f.state.top, 1f)
+    }
+
+    @Test fun fitPageKeepsAnEntirePageBetweenTheReaderControls() {
+        val f = Fixture(FloatArray(10) { 2f })
+        f.viewport.setVerticalInsets(60f, 80f)
+        f.viewport.goTo(5)
+        f.viewport.fitPage()
+        assertEquals(5, f.state.page)
+        assertEquals(60f, f.state.top, 1f)
+        assertEquals(260f, f.state.height, 1f)
+    }
+
     @Test fun resizeKeepsLocationInPageCoordinates() {
         val f = Fixture(FloatArray(10) { 1.4f })
         f.viewport.goTo(4); f.viewport.pan(0f, -80f)

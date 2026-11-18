@@ -210,7 +210,7 @@ unless it's assigned and delivered to the app. Configure everything in **Setting
 
 ## ✋ Palm rejection, but make it math
 
-Every finger contact goes through a native filter before it's allowed to do *anything*. Each contact carries a score (the
+When the writing tools are on, every finger contact goes through a native filter. Each contact carries a score (the
 log-odds that it's a palm) built from independent evidence: what the pen is doing, a learned two-handed model of where
 *your* palm rests relative to the nib, whether the contact moves rigidly with the pen, its size and shape over the first
 25 ms, and which contacts landed together. It's decided as soon as the score leaves its band. That's Wald's sequential
@@ -221,10 +221,12 @@ two-finger double tap, no matter how confident it looks. [Read the whole thing](
 
 ## 📄 Pages & PDFs
 
-Notebooks and imported PDFs scroll vertically as one continuous document. Drag to scroll, **pinch from 25% to 600%**,
-drag the scroll indicator on the right, or use the arrows by the page count. Tap the count for thumbnails or use
-**More → Go to page** to enter a page number. Paged documents reopen at the last page you visited. Tap the zoom percentage to fit width.
-Momentum stops the instant the pen touches down, because you clearly meant to write.
+Imported PDFs open in reading mode with saved annotations visible. Drag to scroll, **pinch from 25% to 600%**, or
+double-tap to zoom in and out. Tap the page count for thumbnails or to enter a page number. Tap the zoom percentage
+to fit the width, or choose **More → Fit page** to see the whole page.
+
+Tap the pencil to annotate and the checkmark to return to reading. If your tool dial opens on demand, tap the
+tool button to show it. Paged notebooks and PDFs reopen at the last page you visited.
 
 <details>
 <summary><b>🧩 How PDFs open instantly and stay sharp</b></summary>

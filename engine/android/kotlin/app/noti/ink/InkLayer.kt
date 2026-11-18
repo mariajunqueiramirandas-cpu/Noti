@@ -58,6 +58,8 @@ class InkLayer(
     stylusOptions: StylusButtonOptions = StylusButtonOptions(),
     private val onButtonClick: ((PenButton) -> Unit)? = null,
     private val onButtonDiagnostic: ((String) -> Unit)? = null,
+    /** Keep rendering saved strokes, with pen and touch routed to navigation. */
+    readOnly: Boolean = false,
 ) {
     private val thread = HandlerThread("noti-ink", Process.THREAD_PRIORITY_URGENT_DISPLAY).apply { start() }
     private val ink = Handler(thread.looper)
@@ -65,6 +67,7 @@ class InkLayer(
     private val handle = NotiInk.nativeCreate(initialHorizonMs, gpuTiming, flipY, probe)
     private var window: InkWindow? = null  // ink thread only
     @Volatile private var released = false
+    @Volatile private var readOnly = readOnly
     @Volatile private var stylusOptions = stylusOptions
     @Volatile private var buttonGeneration = 0
     private var buttonEventGeneration = 0 // ink thread: generation of the key being processed
@@ -161,7 +164,8 @@ class InkLayer(
             ink.post(documentPoll)
             initialModel?.let { NotiInk.nativeSetPalmModel(handle, it) }
             NotiInk.nativeSetFingerInk(handle, fingerDrawing)
-            window = InkWindow(context, handle, ink, windowGestures, ::flushPage, buttons, onIdle = ::requestHostFrame, dial = dial)
+            window = InkWindow(context, handle, ink, windowGestures, ::flushPage, buttons, onIdle = ::requestHostFrame,
+                dial = dial, readOnly = readOnly)
                 .also { it.add(token, bounds) }
         }
         anchor.viewTreeObserver.addOnPreDrawListener(preDraw)
@@ -249,6 +253,12 @@ class InkLayer(
         NotiInk.nativeSetDisplay(handle, panelMs, gpuMs, scanAxis, reversed)
 
     // ---- palm rejection ----
+
+    fun setReadOnly(on: Boolean) {
+        if (readOnly == on) return
+        readOnly = on
+        ink.post { if (!released) window?.readOnly = on }
+    }
 
     /** A single deliberate finger draws (on) or only gestures (off). */
     fun setFingerDrawing(on: Boolean) {

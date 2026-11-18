@@ -100,10 +100,11 @@ class PageViewport(private val marginPx: Float, private val onChange: (PagePlace
             return
         }
         val local = if (starts.isNotEmpty()) (-documentTop / zoom - starts[page]) / baseWidth else 0f
+        val centreX = if (canvasW > 0) (canvasW / 2f - left) / (baseWidth * zoom) else 0.5f
         canvasW = width; canvasH = height
         layout()
         if (starts.isNotEmpty()) documentTop = -(starts[page] + local * baseWidth) * zoom
-        left = (canvasW - baseWidth * zoom) / 2
+        left = canvasW / 2f - centreX * baseWidth * zoom
         emit()
     }
 
@@ -145,6 +146,17 @@ class PageViewport(private val marginPx: Float, private val onChange: (PagePlace
         emit()
     }
 
+    fun fitPage() {
+        if (!ready() || isSheet) return
+        val availableHeight = (canvasH - topInset - bottomInset).coerceAtLeast(1f)
+        val pageHeight = baseWidth * aspects[page]
+        zoom = (availableHeight / pageHeight).coerceIn(MIN_ZOOM, 1f)
+        left = (canvasW - baseWidth * zoom) / 2
+        documentTop = topInset + (availableHeight - pageHeight * zoom) / 2 - starts[page] * zoom
+        selectedPage = page
+        emit()
+    }
+
     fun begin() { moving = true }
     fun pan(dx: Float, dy: Float) {
         if (!ready() || !dx.isFinite() || !dy.isFinite()) return
@@ -162,6 +174,11 @@ class PageViewport(private val marginPx: Float, private val onChange: (PagePlace
         documentTop = cy - (cy - documentTop - dy) * k
         zoom = nextZoom
         emit()
+    }
+
+    fun toggleZoomAt(x: Float, y: Float) {
+        val target = if (zoom > 1.01f) 1f else 2f
+        pinch(x, y, target / zoom, 0f, 0f)
     }
 
     fun end() {
