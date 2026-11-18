@@ -1,40 +1,33 @@
 package app.noti.ui.study
 
 import android.graphics.Bitmap
-import android.widget.Toast
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
-import app.noti.data.Notebook
 import app.noti.pdf.PagePlacement
-import app.noti.pdf.PdfImport
 import app.noti.study.BoardLayer
 import app.noti.study.CardFace
 import app.noti.study.ItemKind
@@ -48,12 +41,14 @@ import app.noti.ui.common.NotiIconButton
 import app.noti.ui.common.NotiOutlinedButton
 import app.noti.ui.common.NotiTextButton
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /** Every dialog and menu the Study board opens, driven by [study]'s state. */
 @Composable
-internal fun StudyDialogs(study: StudyController, geometry: SheetGeometry, placement: () -> PagePlacement?, serial: Long) {
+internal fun StudyDialogs(study: StudyController, geometry: SheetGeometry, placement: () -> PagePlacement?) {
+    study.editorKind?.let { kind ->
+        StudyItemDialog(kind, study.editingItem, onClose = study::closeItemEditor, onSave = study::saveItem)
+    }
     if (study.deckOpen) DeckDialog(study) { study.deckOpen = false }
     if (study.examSetupOpen) ExamSetupDialog(study) { study.examSetupOpen = false }
     study.examResults?.let { id -> ExamResultsDialog(study, id, geometry, placement) { study.examResults = null } }
@@ -61,7 +56,70 @@ internal fun StudyDialogs(study: StudyController, geometry: SheetGeometry, place
     study.menu?.let { (hit, at) -> BoardMenu(study, hit, at, geometry, placement) { study.menu = null } }
 }
 
-// ---- make questions ----
+@Composable
+private fun StudyItemDialog(initialKind: ItemKind, item: StudyItem?, onClose: () -> Unit, onSave: (StudyItem) -> Unit) {
+    var kind by rememberSaveable(item?.id, initialKind) { mutableStateOf(initialKind) }
+    var prompt by rememberSaveable(item?.id) { mutableStateOf(item?.prompt.orEmpty()) }
+    var answer by rememberSaveable(item?.id) { mutableStateOf(item?.answer.orEmpty()) }
+    var topic by rememberSaveable(item?.id) { mutableStateOf(item?.topic.orEmpty()) }
+    var choices by rememberSaveable(item?.id) { mutableStateOf(ArrayList(List(4) { item?.choices?.getOrNull(it).orEmpty() })) }
+    var correct by rememberSaveable(item?.id) { mutableIntStateOf(item?.correctChoice ?: -1) }
+    val flash = kind == ItemKind.Flash
+    val multipleChoice = kind == ItemKind.Choice
+    val validAnswer = if (multipleChoice) choices.all(String::isNotBlank) && correct in choices.indices else answer.isNotBlank()
+    val title = if (flash) {
+        if (item == null) "New flash card" else "Edit flash card"
+    } else {
+        if (item == null) "New question" else "Edit question"
+    }
+    NotiDialogFrame(onClose, title = { Text(title) }, actions = {
+        NotiTextButton(onClick = onClose) { Text("Cancel") }
+        NotiButton(enabled = prompt.isNotBlank() && validAnswer, onClick = {
+            val base = item ?: StudyItem("", kind, "", "")
+            onSave(base.copy(
+                kind = kind,
+                topic = topic.trim(),
+                prompt = prompt.trim(),
+                answer = if (multipleChoice) choices[correct].trim() else answer.trim(),
+                choices = if (multipleChoice) choices.map(String::trim) else emptyList(),
+                correctChoice = if (multipleChoice) correct else -1,
+            ))
+        }) {
+            Text(when {
+                flash && item == null -> "Add card"
+                flash -> "Save card"
+                item == null -> "Add question"
+                else -> "Save question"
+            })
+        }
+    }) {
+        if (!flash && item == null) {
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                NotiFilterChip(kind == ItemKind.Short, { kind = ItemKind.Short }, label = { Text("Written answer") })
+                NotiFilterChip(kind == ItemKind.Choice, { kind = ItemKind.Choice }, label = { Text("Multiple choice") })
+            }
+        }
+        OutlinedTextField(prompt, { prompt = it }, label = { Text(if (flash) "Front" else "Question") },
+            minLines = 2, maxLines = 5, modifier = Modifier.fillMaxWidth())
+        if (multipleChoice) {
+            Text("Select the correct option and fill in all four choices.")
+            choices.forEachIndexed { index, text ->
+                val letter = 'A' + index
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    RadioButton(selected = correct == index, onClick = { correct = index },
+                        modifier = Modifier.semantics { contentDescription = "Mark choice $letter as correct" })
+                    OutlinedTextField(text, { value -> choices = ArrayList(choices).apply { set(index, value) } },
+                        label = { Text("Choice $letter") }, modifier = Modifier.weight(1f))
+                }
+            }
+        } else {
+            OutlinedTextField(answer, { answer = it }, label = { Text(if (flash) "Back" else "Answer") },
+                minLines = 2, maxLines = 5, modifier = Modifier.fillMaxWidth())
+        }
+        OutlinedTextField(topic, { topic = it }, label = { Text("Topic (optional)") }, singleLine = true,
+            modifier = Modifier.fillMaxWidth())
+    }
+}
 
 // ---- the deck ----
 
@@ -71,12 +129,16 @@ private fun DeckDialog(study: StudyController, onClose: () -> Unit) {
     val now = System.currentTimeMillis()
     var confirm by remember { mutableStateOf<StudyItem?>(null) }
     NotiDialogFrame(onClose, title = { Text("Deck") }, maxWidth = 640.dp, actions = {
+        if (study.exam == null) {
+            NotiOutlinedButton(onClick = { onClose(); study.editItem(ItemKind.Flash) }) { Text("Add flash card") }
+            NotiOutlinedButton(onClick = { onClose(); study.editItem(ItemKind.Short) }) { Text("Add question") }
+        }
         NotiButton(onClick = onClose) { Text("Done") }
     }) {
         val due = data.dueCount(now)
         Text("${data.items.size} items · $due due · ${data.cards.size} on the board" +
             if (data.sources.isNotEmpty()) " · from ${data.sources.joinToString { it.name }}" else "")
-        if (data.items.isEmpty()) Text("No items yet. Send questions from Plataforma Assaad to your canvas.")
+        if (data.items.isEmpty()) Text("Add a flash card or question to start your deck.")
         data.topics().forEach { topic ->
             val items = data.items.filter { it.topic.ifBlank { "General" } == topic }
             Text(topic, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurface)
@@ -84,7 +146,9 @@ private fun DeckDialog(study: StudyController, onClose: () -> Unit) {
                 items.forEach { item ->
                     val p = data.progressOf(item.id)
                     val outcome = p.outcome(item)
-                    Row(Modifier.fillMaxWidth().clickable { onClose(); study.select(item.id); study.collapsed = false; study.open = true }
+                    Row(Modifier.fillMaxWidth().clickable(enabled = study.exam?.let { item.id in it.itemIds } ?: true) {
+                        onClose(); study.select(item.id); study.collapsed = false; study.open = true
+                    }
                         .padding(start = 16.dp, end = 4.dp, top = 6.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                         Box(Modifier.size(10.dp).clip(CircleShape).background(CardFace.statusColors(outcome)?.let { Color(it.second) } ?: Color(0xFFCFCBD3)))
                         Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
@@ -97,7 +161,9 @@ private fun DeckDialog(study: StudyController, onClose: () -> Unit) {
                                 else -> " · next in ${((due - now) / 86_400_000L).coerceAtLeast(1)} d"
                             }) + if (data.cardFor(item.id) != null) " · on the board" else "", style = MaterialTheme.typography.bodySmall)
                         }
-                        NotiIconButton(onClick = { confirm = item }) { Icon(Icons.Outlined.DeleteOutline, "Delete this item") }
+                        NotiIconButton(onClick = { confirm = item }, enabled = study.exam == null) {
+                            Icon(Icons.Outlined.DeleteOutline, "Delete this item")
+                        }
                     }
                 }
             }
@@ -131,8 +197,8 @@ private fun ExamSetupDialog(study: StudyController, onClose: () -> Unit) {
         NotiTextButton(onClick = onClose) { Text("Cancel") }
         NotiButton(onClick = { onClose(); study.startExam(count, minutes, chosen) }) { Text("Start") }
     }) {
-        Text("A timed run: no hints, answers or sources. Answer multiple choice on the sheet; work the rest on the board and " +
-            "loop it to submit. You see how it went at the end.")
+        Text("Answer multiple choice on the sheet. For written questions, work on the board and mark them answered. " +
+            "Compare your work with the answers when the timer ends.")
         Text("Questions", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurface)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             listOf(5, 10, 15, 20).forEach { n -> NotiFilterChip(selected = count == n, onClick = { count = n }, label = { Text("$n") }) }
@@ -156,13 +222,14 @@ private fun ExamResultsDialog(study: StudyController, examId: String, geometry: 
     val exam = study.data.exam(examId) ?: return onClose()
     val density = LocalDensity.current.density
     val items = exam.itemIds.mapNotNull { study.data.item(it) }
-    val verdicts = items.map { study.data.progressOf(it.id).outcome(it) }
+    val verdicts = items.map { exam.outcome(it, study.data) }
+    val pending = items.count { exam.needsAssessment(it.id) }
     val score = verdicts.sumOf { when (it) { Verdict.Correct -> 1.0; Verdict.Partial -> 0.5; else -> 0.0 } }
     NotiDialogFrame(onClose, title = { Text("Exam done") }, maxWidth = 560.dp, actions = {
         NotiTextButton(onClick = onClose) { Text("Close") }
-        val wrong = items.filterIndexed { i, _ -> verdicts[i] != Verdict.Correct }
+        val wrong = items.filterIndexed { i, item -> !exam.needsAssessment(item.id) && verdicts[i] != Verdict.Correct }
         if (wrong.isNotEmpty()) NotiOutlinedButton(onClick = { onClose(); study.select(wrong.first().id); study.collapsed = false; study.open = true }) { Text("Review mistakes") }
-        NotiButton(onClick = {
+        NotiButton(enabled = pending == 0, onClick = {
             val sheet = placement()?.visiblePages?.firstOrNull()
             if (sheet != null) {
                 val at = geometry.sheetInEditor() ?: androidx.compose.ui.geometry.Offset(sheet.canvasWidth / 2f - 140 * density, sheet.canvasHeight / 3f)
@@ -173,12 +240,26 @@ private fun ExamResultsDialog(study: StudyController, examId: String, geometry: 
     }) {
         Text((if (score % 1.0 == 0.0) "${score.toInt()}" else "%.1f".format(score)) + " of ${items.size}",
             style = MaterialTheme.typography.displaySmall, color = MaterialTheme.colorScheme.onSurface)
+        if (pending > 0) Text("$pending written ${if (pending == 1) "answer to review" else "answers to review"}")
         items.forEachIndexed { i, item ->
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.size(10.dp).clip(CircleShape).background(CardFace.statusColors(verdicts[i])?.let { Color(it.second) } ?: Color(0xFFCFCBD3)))
-                Text("${i + 1}. ${plain(item.prompt)}", maxLines = 1, overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f).padding(start = 12.dp))
-                Text(verdicts[i]?.label ?: "Not answered", style = MaterialTheme.typography.labelMedium)
+            if (exam.needsAssessment(item.id)) {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("${i + 1}. ${plain(item.prompt)}", style = MaterialTheme.typography.titleSmall)
+                    Text(plain(item.answer), style = MaterialTheme.typography.bodyMedium)
+                    item.solution.forEach { step -> Text(plain(step), style = MaterialTheme.typography.bodySmall) }
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Verdict.entries.forEach { verdict ->
+                            NotiTextButton(onClick = { study.assessExamAnswer(examId, item.id, verdict) }) { Text(verdict.label) }
+                        }
+                    }
+                }
+            } else {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.size(10.dp).clip(CircleShape).background(CardFace.statusColors(verdicts[i])?.let { Color(it.second) } ?: Color(0xFFCFCBD3)))
+                    Text("${i + 1}. ${plain(item.prompt)}", maxLines = 1, overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f).padding(start = 12.dp))
+                    Text(verdicts[i]?.label ?: "Not answered", style = MaterialTheme.typography.labelMedium)
+                }
             }
         }
         Text("Each answer counts toward its review schedule.", style = MaterialTheme.typography.bodySmall)

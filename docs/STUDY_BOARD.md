@@ -1,20 +1,49 @@
 # Study boards
 
-Study boards combine an endless native ink canvas with saved study material.
-Cloud generation and grading services, their upload flows, and API-key settings
-have been removed. On-device handwriting-to-text (Transcribe) remains available.
-Existing saved content and drawings are retained.
+A Study board is an endless canvas with a floating sheet for flash cards and practice questions.
+The canvas, deck, and review history stay on your device.
 
-## Local study
+## Build a deck
 
-- Review existing multiple-choice items and flip/rate flash cards.
-- Reveal saved hints, answers, and source-page previews.
-- Self-assess a written answer with Mark correct / Mark partly right / Mark not yet.
-- Use spaced reviews, timed practice exams, and printable score cards.
-- Pin questions and source pages to the canvas, arrange cards by topic, and export PDF.
+1. Choose **New → Study board** in the library. The board starts on grid paper.
+2. Tap **Study** in the editor. Use **Add flash card** or **Add question** to create an item.
+3. For a flash card, enter the front and back. For a question, choose a written answer or four
+   multiple-choice options and mark the correct one. Add a topic if you want to group related items.
 
-These actions use local study state; there is no remote model or cloud grading.
-Previously saved feedback remains historical data, not a new model invocation.
+The sheet’s **⋯** menu lets you edit the current item or open the whole **Deck**. Tap a deck
+item to open it on the sheet. Delete an item from the deck to remove its printed card from the
+board. Your handwriting stays on the canvas.
+
+## Practice and review
+
+- **Flash cards.** Try to recall the answer, tap **Show answer**, and choose **Again**, **Hard**,
+  **Good**, or **Easy**.
+- **Multiple choice.** Tap an option to check it against the saved answer.
+- **Written questions.** Work on the canvas, then tap **Answer** to compare your work with the
+  saved answer. Rate your work as **Correct**, **Partly right**, or **Not yet**.
+- **Existing decks.** Saved hints and worked solutions are available where present. **Source**
+  opens a cited PDF page still in your library, and **Place on board** pins it next to your ink.
+
+Reviews are scheduled using FSRS. **Study** opens due items first, followed by new items. Arrows
+move through the deck. **Try this one again** clears the current attempt and keeps the review schedule.
+
+## Use the canvas
+
+Tap **Print** to pin the current study card as it appears on the floating sheet. Drag the sheet
+by its header on tablets, or collapse it when you need more writing room. Tap a pinned card on
+the canvas to reopen it, move it, or remove it. **Arrange cards by topic** groups the pinned
+cards in columns. PDF export includes pinned cards, source pages, and exam scores.
+
+## Take an exam
+
+Choose **Start an exam** from the sheet’s **⋯** menu, then pick a time, question count, and
+optional topics. Choose answers for multiple-choice questions on the sheet. For written
+questions, work on the canvas and tap **Mark answered** for each one you attempt.
+
+Finished exams show multiple-choice results and the saved answers for written questions you
+marked. Compare your written answers and record the results. Use **Last exam results** in the
+sheet’s menu to return to the review. When you finish assessing the written answers, you can
+print a score card on the board.
 
 ## Plataforma Assaad
 
@@ -48,6 +77,14 @@ attempt. Pairing renewal or relay expiry does not erase the device’s saved set
 Read [the endpoint investigation](integrations/plataforma-assaad-api.md),
 [extension guide](../extensions/assaad-reader/README.md), and
 [deployment guide](../server/README.md) for contracts, retention, limits, and validation.
+
+## Saved data
+
+Decks, review history, source references, and printed materials are saved in a JSON file beside
+the board’s ink. Previously saved boards, cards, grades, citations, and printed pages use the
+same file format and remain readable. The deck and exam models live in `study/Deck.kt`, the
+canvas layer and PDF export in `study/BoardLayer.kt` and `study/BoardExport.kt`, and the
+floating sheet in `ui/study/`.
 
 ## Implementation
 

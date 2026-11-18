@@ -81,7 +81,7 @@ class AssaadUiTest {
         val notebook = library.notebook(id)!!
         val file = library.studyFile(notebook).apply { parentFile?.mkdirs(); delete() }
         val store = StudyStore.load(file)
-        study = StudyController(notebook, library, store, {})
+        study = StudyController(library, store, {})
         val res = context.resources
         val fonts = CardFace.Fonts(res.getFont(R.font.nunito_regular), res.getFont(R.font.nunito_semibold), res.getFont(R.font.nunito_bold))
         compose.setContent {
@@ -90,7 +90,7 @@ class AssaadUiTest {
             NotiTheme(ThemeMode.Light) { CompositionLocalProvider(LocalAssaadSession provides session) {
                 BoxWithConstraints(Modifier.size(w.dp, h.dp).testTag("platform")) {
                     AssaadStudyBridge(id, study)
-                    StudySheet(study, SheetGeometry(), fonts, { null }, 0L, maxWidth, maxHeight, {}, floating = false)
+                    StudySheet(study, SheetGeometry(), fonts, { null }, maxWidth, maxHeight, floating = false)
                 }
             } }
         }

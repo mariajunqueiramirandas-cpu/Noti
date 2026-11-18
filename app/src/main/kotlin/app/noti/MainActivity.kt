@@ -7,6 +7,10 @@ import android.view.KeyEvent
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.viewmodel.initializer
+import androidx.lifecycle.viewmodel.viewModelFactory
 import app.noti.data.LibraryStore
 import app.noti.data.SettingsStore
 import app.noti.ui.NotiApp
@@ -64,7 +68,8 @@ class MainActivity : ComponentActivity(), StylusKeyHost {
         XiaomiStylusWindow.applyBeforeAdd(window, xiaomiWindowHijack && stylusKeys.hijackXiaomiOsShortcuts)
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        val library = LibraryStore(this)
+        val factory = viewModelFactory { initializer { LibraryModel(LibraryStore(application)) } }
+        val library = ViewModelProvider(this, factory)[LibraryModel::class.java].library
         setContent { NotiApp(library, settings) }
     }
 
@@ -98,3 +103,5 @@ class MainActivity : ComponentActivity(), StylusKeyHost {
         const val BROKEN = "broken"
     }
 }
+
+internal class LibraryModel(val library: LibraryStore) : ViewModel()

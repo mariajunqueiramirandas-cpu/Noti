@@ -37,20 +37,21 @@ class StudyStore private constructor(private val file: File, initial: BoardStudy
         private val main = Handler(Looper.getMainLooper())
 
         /** IO. */
-        fun load(file: File): StudyStore {
+        fun load(file: File): StudyStore = writer.submit<StudyStore> {
             val atomic = AtomicFile(file)
-            if (!file.exists() && !File(file.path + ".bak").exists()) return StudyStore(file, BoardStudy(), false)
-            return try {
+            if (!file.exists() && !File(file.path + ".bak").exists()) return@submit StudyStore(file, BoardStudy(), false)
+            try {
                 StudyStore(file, BoardStudy.decode(String(atomic.readFully(), Charsets.UTF_8)), false)
             } catch (e: Exception) {
                 runCatching { file.copyTo(File(file.path + ".broken"), overwrite = true) }
                 StudyStore(file, BoardStudy(), true)
             }
-        }
+        }.get()
 
         /** IO: what's due on a board, without keeping it open (library badges). */
-        fun dueCount(file: File, now: Long): Int =
+        fun dueCount(file: File, now: Long): Int = writer.submit<Int> {
             runCatching { BoardStudy.decode(String(AtomicFile(file).readFully(), Charsets.UTF_8)).dueCount(now) }.getOrDefault(0)
+        }.get()
 
         /** IO, in order with saves. */
         fun delete(file: File) { writer.execute { AtomicFile(file).delete(); File(file.path + ".broken").delete() } }
@@ -58,7 +59,9 @@ class StudyStore private constructor(private val file: File, initial: BoardStudy
         /** IO, in order with saves. */
         fun copy(from: File, to: File) {
             writer.submit {
-                if (from.exists()) runCatching { write(to, String(AtomicFile(from).readFully(), Charsets.UTF_8)) }
+                if (from.exists() || File(from.path + ".bak").exists()) {
+                    check(write(to, String(AtomicFile(from).readFully(), Charsets.UTF_8)))
+                }
             }.get()
         }
 

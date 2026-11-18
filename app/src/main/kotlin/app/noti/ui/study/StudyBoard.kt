@@ -21,8 +21,6 @@ import androidx.compose.ui.unit.dp
 import app.noti.R
 import app.noti.data.LibraryStore
 import app.noti.data.Notebook
-import app.noti.data.SettingsStore
-import app.noti.ink.InkLayer
 import app.noti.pdf.PagePlacement
 import app.noti.study.BoardLayer
 import app.noti.study.CardFace
@@ -45,7 +43,7 @@ internal class StudyBoard(val controller: StudyController, val layer: BoardLayer
 
 /** Loads a board's study material (null while it loads, and for other notebooks). */
 @Composable
-internal fun rememberStudyBoard(notebook: Notebook, library: LibraryStore, settings: SettingsStore): StudyBoard? {
+internal fun rememberStudyBoard(notebook: Notebook, library: LibraryStore): StudyBoard? {
     if (!notebook.board) return null
     val context = LocalContext.current
     val store by produceState<StudyStore?>(null, notebook.id) {
@@ -56,7 +54,7 @@ internal fun rememberStudyBoard(notebook: Notebook, library: LibraryStore, setti
         val res = context.resources
         val fonts = CardFace.Fonts(res.getFont(R.font.nunito_regular), res.getFont(R.font.nunito_semibold), res.getFont(R.font.nunito_bold))
         val toast: (String) -> Unit = { Toast.makeText(context, it, Toast.LENGTH_SHORT).show() }
-        val controller = StudyController(notebook, library, loaded, toast)
+        val controller = StudyController(library, loaded, toast)
         val layer = BoardLayer(loaded, library, fonts)
         controller.board = layer
         StudyBoard(controller, layer, fonts)
@@ -72,36 +70,31 @@ internal fun rememberStudyBoard(notebook: Notebook, library: LibraryStore, setti
     return board
 }
 
-/**
- * Wires a board into the editor: the floating sheet, its dialogs, and loops on the board
- * that the sheet asked for. [serial] is the engine's loop count (document state [9]).
- */
+/** Shows the study deck and its dialogs over the board's ink window. */
 @Composable
-internal fun StudyOverlay(board: StudyBoard, layer: InkLayer?, placement: () -> PagePlacement?, serial: Long,
-    maxWidth: androidx.compose.ui.unit.Dp, maxHeight: androidx.compose.ui.unit.Dp, hidden: Boolean, onSettings: () -> Unit) {
-    val study = board.controller
-    if (!hidden) StudySheet(study, board.geometry, board.fonts, placement, serial, maxWidth, maxHeight, onSettings)
-    StudyDialogs(study, board.geometry, placement, serial)
+internal fun StudyOverlay(board: StudyBoard, placement: () -> PagePlacement?,
+    maxWidth: androidx.compose.ui.unit.Dp, maxHeight: androidx.compose.ui.unit.Dp, hidden: Boolean) {
+    if (hidden) return
+    StudySheet(board.controller, board.geometry, board.fonts, placement, maxWidth, maxHeight)
+    StudyDialogs(board.controller, board.geometry, placement)
 }
-
-/** InkLayer.documentAction: drop the selection (jni_bridge.cpp nativeDocumentAction). */
-private const val CLEAR_SELECTION = 6
 
 /** The top bar's Study button: brings the sheet back (or hides it), with what's due. */
 @Composable
-internal fun StudyButton(study: StudyController) {
+internal fun StudyButton(study: StudyController, compact: Boolean = false) {
     val colors = MaterialTheme.colorScheme
     val due = study.dueCount
     val active = study.open
-    Row(Modifier.heightIn(min = 40.dp).clip(CircleShape)
+    Row(Modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp).clip(CircleShape)
         .background(if (active) colors.primaryContainer else colors.primary)
         .clickable { if (study.open) study.hide() else study.show() }
         .semantics { contentDescription = "Study" + if (due > 0) ", $due due" else ""; selected = active }
-        .padding(start = 12.dp, end = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+        .padding(horizontal = if (compact) 6.dp else 12.dp),
+        horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
         val fg = if (active) colors.onPrimaryContainer else colors.onPrimary
         Icon(Icons.Outlined.School, null, Modifier.size(18.dp), tint = fg)
-        Text("Study", style = MaterialTheme.typography.labelLarge, color = fg, modifier = Modifier.padding(start = 6.dp))
-        if (due > 0) Text("$due", style = MaterialTheme.typography.labelSmall, color = if (active) colors.onPrimary else colors.primary,
+        if (!compact) Text("Study", style = MaterialTheme.typography.labelLarge, color = fg, modifier = Modifier.padding(start = 6.dp))
+        if (due > 0 && !compact) Text("$due", style = MaterialTheme.typography.labelSmall, color = if (active) colors.onPrimary else colors.primary,
             modifier = Modifier.padding(start = 6.dp).background(if (active) colors.primary else colors.onPrimary, CircleShape)
                 .padding(horizontal = 6.dp, vertical = 1.dp))
     }

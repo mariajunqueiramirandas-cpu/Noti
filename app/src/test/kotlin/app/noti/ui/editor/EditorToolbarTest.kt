@@ -49,7 +49,7 @@ class EditorToolbarTest {
     private var exports = 0
     private var papers = 0
     private var precision = 0
-    private val tools = listOf("Pen", "Highlighter", "Eraser", "Lasso", "Transcribe")
+    private val tools = listOf("Pen", "Highlighter", "Eraser", "Lasso")
     private val controls = listOf("Undo", "Redo", "Back to library", "Pages", "More",
         "Document scroll", "Zoom 175 percent. Reset to fit width")
     private val quickSlots = listOf("Brush options", "Collapse tools") + (1..3).map { "Quick color $it" } +
@@ -117,15 +117,17 @@ class EditorToolbarTest {
     }
 
     @Test fun everySegmentMapsToItsOwnSlot() {
-        assertEquals(11, DialSegments); assertEquals(5, DialColors); assertEquals(8, DialWidths)
-        val sweep = 360f / 11
-        // Five tools across the top, the middle one (lasso's neighbour, eraser) straight up.
-        assertEquals(2, segmentAt(-90f)); assertEquals(0, segmentAt(-90f - 2 * sweep)); assertEquals(4, segmentAt(-90f + 2 * sweep))
-        assertEquals(5, segmentAt(-90f + 3 * sweep)); assertEquals(7, segmentAt(-90f + 5 * sweep))
-        assertEquals(8, segmentAt(-90f + 6 * sweep)); assertEquals(10, segmentAt(-90f + 8 * sweep))
-        // Each segment owns half a sweep either side of its centre, wrapping at ±180°.
+        assertEquals(10, DialSegments)
+        assertEquals(4, DialColors)
+        assertEquals(7, DialWidths)
+        val sweep = 360f / 10
+        // The top four tools straddle twelve o'clock. Color and width presets follow clockwise.
+        assertEquals(0, segmentAt(-144f))
+        assertEquals(3, segmentAt(-36f))
+        assertEquals(DialColors, segmentAt(0f))
+        assertEquals(DialWidths, segmentAt(108f))
         (0 until DialSegments).forEach { i ->
-            val centre = -90f + (i - 2) * sweep
+            val centre = -144f + i * sweep
             assertEquals(i, segmentAt(centre - sweep / 2 + 0.5f)); assertEquals(i, segmentAt(centre + sweep / 2 - 0.5f))
             assertEquals(i, segmentAt(centre + 360f)); assertEquals(i, segmentAt(centre - 360f))
         }
@@ -161,16 +163,31 @@ class EditorToolbarTest {
         screenshot("radial-narrow")
     }
 
-    @Test fun overflowKeepsSaveStatusAndPageActionsAccessible() {
+    @Test fun saveStatusAndDirectPageActionsStayAccessible() {
         render(360, ThemeMode.Light)
         compose.onNodeWithText("Autosave on").assertDoesNotExist()
         compose.onNodeWithContentDescription("More").performClick()
         compose.onNodeWithText("Autosave on").assertIsDisplayed()
-        compose.onNodeWithText("Next page").performClick()
+        compose.onNodeWithText("Go to page…").assertIsDisplayed()
+        compose.onNodeWithText("Go to page…").performClick()
+        compose.onNodeWithContentDescription("Next page").performClick()
         compose.runOnIdle { assertEquals(3, requestedPage) }
-        compose.onNodeWithContentDescription("More").performClick()
-        compose.onNodeWithText("Previous page").performClick()
+        compose.onNodeWithContentDescription("Previous page").performClick()
         compose.runOnIdle { assertEquals(1, requestedPage) }
+    }
+
+    @Test fun jumpDialogValidatesPageNumbersAndUsesOneBasedInput() {
+        compose.setContent {
+            NotiTheme(ThemeMode.Light) {
+                JumpToPageDialog(1, 14, onDismiss = {}) { requestedPage = it }
+            }
+        }
+        compose.onNodeWithText("Go", substring = false).assertIsNotEnabled()
+        compose.onNode(hasSetTextAction()).performTextInput("15")
+        compose.onNodeWithText("Go", substring = false).assertIsNotEnabled()
+        compose.onNode(hasSetTextAction()).performTextReplacement("14")
+        compose.onNodeWithText("Go", substring = false).assertIsEnabled().performClick()
+        compose.runOnIdle { assertEquals(13, requestedPage) }
     }
 
     @Test fun toolsCanBeCollapsedAndExpandedFromMore() {
@@ -320,7 +337,7 @@ class EditorToolbarTest {
 
     /** dp from the dial's centre to the middle of segment [index]. */
     private fun segment(index: Int): Offset {
-        val angle = Math.toRadians(-90.0 + 360.0 / DialSegments * (index - 2))
+        val angle = Math.toRadians(-144.0 + 360.0 / DialSegments * index)
         return Offset((76 * kotlin.math.cos(angle)).toFloat(), (76 * kotlin.math.sin(angle)).toFloat())
     }
 
@@ -430,12 +447,10 @@ class EditorToolbarTest {
         compose.onNodeWithContentDescription("Pen").assertDoesNotExist()
     }
 
-    @Test fun showToolsOpensTheHiddenDialFromMore() {
+    @Test fun showToolsOpensTheHiddenDialFromTheDock() {
         val dial = PenDialState()
         render(360, ThemeMode.Light, dial = dial, alwaysVisible = false)
-        compose.onNodeWithContentDescription("More").performClick()
-        compose.onNodeWithText("Collapse tools").assertDoesNotExist()
-        compose.onNodeWithText("Show tools").performClick()
+        compose.onNodeWithContentDescription("Show tools").assertIsDisplayed().performClick()
         compose.onNodeWithContentDescription("Close tools").assertIsDisplayed()
         assertTargetsApart(tools + listOf("Close tools"))
         compose.runOnIdle { dial.dismiss() }

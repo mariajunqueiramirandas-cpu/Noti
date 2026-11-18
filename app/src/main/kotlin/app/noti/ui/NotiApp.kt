@@ -7,6 +7,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -56,6 +57,7 @@ fun NotiApp(library: LibraryStore, settings: SettingsStore) {
         SystemBarIcons(settings.theme)
         XiaomiStylusHostSync(settings.penButtonsEnabled && settings.penLegacyKeys)
         var route by rememberSaveable { mutableStateOfRoute() }
+        val destinations = rememberSaveableStateHolder()
         AssaadPairingDialog(platform, onOpenBoard = { route = EDITOR + it })
         when {
             route == SETTINGS -> SettingsScreen(settings, onBack = { route = LIBRARY })
@@ -69,12 +71,9 @@ fun NotiApp(library: LibraryStore, settings: SettingsStore) {
                     EditorScreen(notebook, library, settings, onBack = { route = LIBRARY })
                 }
             }
-            else -> LibraryScreen(
-                library = library,
-                settings = settings,
-                onOpen = { route = EDITOR + it },
-                onSettings = { route = SETTINGS },
-            )
+            else -> destinations.SaveableStateProvider(LIBRARY) {
+                LibraryScreen(library, settings, onOpen = { route = EDITOR + it }, onSettings = { route = SETTINGS })
+            }
         }
         AssaadTabletBrowserHost(platform, onCanvas = { route = EDITOR + platform.openBoard() })
     }

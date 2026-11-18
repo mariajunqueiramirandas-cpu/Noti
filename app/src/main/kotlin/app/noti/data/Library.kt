@@ -4,6 +4,9 @@ import android.content.Context
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -67,6 +70,7 @@ class LibraryStore(context: Context) {
     /** For resources (fonts) when exporting outside the UI. */
     val appContext: Context = context.applicationContext
     private val file = File(context.filesDir, "library.json")
+    private val readingPositions = context.getSharedPreferences("reading_positions", Context.MODE_PRIVATE)
     val pdfDir = File(context.filesDir, "pdfs").apply { mkdirs() }
 
     val inkDir = File(context.filesDir, "ink").apply { mkdirs() }
@@ -89,6 +93,12 @@ class LibraryStore(context: Context) {
     }
 
     fun notebook(id: String): Notebook? = notebooks.firstOrNull { it.id == id }
+
+    fun lastPage(id: String): Int = readingPositions.getInt(id, 0).coerceAtLeast(0)
+
+    fun rememberPage(id: String, page: Int) {
+        if (page != lastPage(id)) readingPositions.edit().putInt(id, page).apply()
+    }
 
     /** A [board] is always an Endless canvas. */
     fun create(name: String, paper: Paper, folderId: String?, board: Boolean = false): Notebook {
@@ -143,33 +153,52 @@ class LibraryStore(context: Context) {
     fun restore(ids: Set<String>) = updateAll(ids) { it.copy(trashedAt = null) }
 
     fun deleteForever(ids: Set<String>) {
-        notebooks.filter { it.id in ids }.forEach { nb ->
+        val deleted = notebooks.filter { it.id in ids && it.trashedAt != null }
+        val positions = readingPositions.edit()
+        deleted.forEach { nb ->
             InkFile.delete(inkFile(nb))
             if (nb.board) app.noti.study.StudyStore.delete(studyFile(nb))
             pdfFile(nb)?.delete()
             thumbnailFile(nb)?.delete()
+            positions.remove(nb.id)
         }
-        notebooks = notebooks.filterNot { it.id in ids }
+        positions.apply()
+        notebooks = notebooks - deleted.toSet()
         save()
     }
 
-    fun duplicate(ids: Set<String>) {
+    /** Main thread. Each copy is added to the library only after its files are ready. */
+    suspend fun duplicate(ids: Set<String>): Int = withContext(NonCancellable) {
         val now = System.currentTimeMillis()
-        val copies = notebooks.filter { it.id in ids }.mapNotNull { nb ->
-            val id = UUID.randomUUID().toString()
-            // A copy of an annotated PDF gets its own copy of the file; skip it if that fails.
-            val pdf = if (nb.pdf == null) null else runCatching {
-                pdfFile(nb)!!.copyTo(File(pdfDir, "$id.pdf"))
-                thumbnailFile(nb)?.takeIf(File::exists)?.copyTo(File(pdfDir, "$id.png"))
-                "$id.pdf"
-            }.getOrNull() ?: return@mapNotNull null
-            runCatching { InkFile.open(inkFile(nb)).initial?.let { File(inkDir, "$id.noti").writeBytes(it) } }
-                .getOrElse { return@mapNotNull null }
-            if (nb.board) runCatching { app.noti.study.StudyStore.copy(studyFile(nb), File(studyDir, "$id.json")) }
-            nb.copy(id = id, name = "${nb.name} (copy)", createdAt = now, openedAt = now, pdf = pdf)
+        val sources = notebooks.filter { it.id in ids }
+        val copies = withContext(Dispatchers.IO) {
+            sources.mapNotNull { nb ->
+                val id = UUID.randomUUID().toString()
+                val copy = nb.copy(id = id, name = "${nb.name} (copy)", createdAt = now, openedAt = now,
+                    pdf = if (nb.isPdf) "$id.pdf" else null)
+                runCatching {
+                    if (nb.isPdf) {
+                        pdfFile(nb)!!.copyTo(pdfFile(copy)!!)
+                        thumbnailFile(nb)?.takeIf(File::exists)?.copyTo(thumbnailFile(copy)!!)
+                    }
+                    InkFile.open(inkFile(nb)).initial?.let { InkFile.replace(inkFile(copy), it) }
+                    if (nb.board) app.noti.study.StudyStore.copy(studyFile(nb), studyFile(copy))
+                    copy
+                }.getOrElse {
+                    InkFile.delete(inkFile(copy))
+                    if (nb.board) app.noti.study.StudyStore.delete(studyFile(copy))
+                    pdfFile(copy)?.delete()
+                    thumbnailFile(copy)?.delete()
+                    null
+                }
+            }
         }
-        notebooks = notebooks + copies
-        save()
+        if (copies.isNotEmpty()) {
+            val folderIds = folders.mapTo(mutableSetOf()) { it.id }
+            notebooks = notebooks + copies.map { if (it.folderId in folderIds) it else it.copy(folderId = null) }
+            save()
+        }
+        copies.size
     }
 
     fun createFolder(name: String): Folder {

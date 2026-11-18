@@ -64,9 +64,9 @@ import kotlin.math.roundToInt
 import kotlin.math.sin
 
 /*
- * Geometry, in dp. Eleven equal segments (DialSegments) in three groups, read clockwise
+ * Geometry, in dp. Ten equal segments (DialSegments) in three groups, read clockwise
  * from the upper left:
- *   tools   (pen, highlighter, eraser, lasso, transcribe) across the top, centred on -90°
+ *   tools   (pen, highlighter, eraser, lasso) across the top, centred on -90°
  *   colors  (the three quick color slots) down the right
  *   widths  (the three quick widths) back up the left
  * Wider gaps separate the groups. The hub is a small page that previews the brush.
@@ -248,7 +248,6 @@ private fun ToolDial(
                 contentDescription = "Brush options"
                 stateDescription = when (settings.tool) {
                     Tool.Lasso -> "$selectionCount selected. Drag ink to move"
-                    Tool.Transcribe -> "Transcribe. Draw a loop around handwriting to turn it into text"
                     else -> "${settings.tool.label}. Drag to move tools"
                 }
             }, contentAlignment = Alignment.Center) {

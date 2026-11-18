@@ -191,7 +191,7 @@ class CardFace private constructor(
             }
 
             // Flash card back.
-            if (item.kind == ItemKind.Flash && (progress.flipped || progress.srs != null) && !exam) {
+            if (item.kind == ItemKind.Flash && (progress.flipped || mode == Mode.Board && progress.srs != null) && !exam) {
                 val dash = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = LINE; strokeWidth = 1.2f; pathEffect = DashPathEffect(floatArrayOf(5f, 4f), 0f) }
                 val ly = y
                 ops += { it.drawLine(PAD, ly, w - PAD, ly, dash) }
@@ -363,7 +363,7 @@ object ScoreFace {
         val w = max(widthDp, 200f)
         val pad = CardFace.PAD
         val items = exam.itemIds.mapNotNull { study.item(it) }
-        val verdicts = items.map { study.progressOf(it.id).outcome(it) }
+        val verdicts = items.map { exam.outcome(it, study) }
         val score = verdicts.sumOf { when (it) { Verdict.Correct -> 1.0; Verdict.Partial -> 0.5; else -> 0.0 } }
         val title = Paint(Paint.ANTI_ALIAS_FLAG).apply { typeface = fonts.bold; textSize = 13f; color = 0xFF5C4A87.toInt(); letterSpacing = 0.06f }
         val big = Paint(Paint.ANTI_ALIAS_FLAG).apply { typeface = fonts.bold; textSize = 34f; color = 0xFF2A2830.toInt() }
@@ -384,7 +384,7 @@ object ScoreFace {
                 val colors = CardFace.statusColors(verdicts[i])
                 val dot = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = colors?.second ?: 0xFFB9B4BF.toInt() }
                 c.drawCircle(pad + 5f, y + 7f, 5f, dot)
-                val label = "${i + 1}. ${item.topic} · ${verdicts[i]?.label ?: "Not answered"}"
+                val label = "${i + 1}. ${item.topic.ifBlank { item.kind.label }} · ${verdicts[i]?.label ?: "Not answered"}"
                 c.drawText(label, pad + 18f, y + 12f, small)
                 y += rowH
             }
