@@ -1,14 +1,10 @@
 package app.noti.ui.editor
 
 import android.view.HapticFeedbackConstants
-import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
@@ -22,20 +18,17 @@ import androidx.compose.ui.AbsoluteAlignment
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.graphics.TransformOrigin
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalDensity
@@ -43,9 +36,6 @@ import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.*
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.*
-import androidx.compose.ui.window.Popup
-import androidx.compose.ui.window.PopupPositionProvider
-import androidx.compose.ui.window.PopupProperties
 import app.noti.data.SettingsStore
 import app.noti.data.Tool
 import app.noti.data.ToolSlots
@@ -53,6 +43,10 @@ import app.noti.data.DialColors
 import app.noti.data.DialSegments
 import app.noti.data.DialWidths
 import app.noti.data.applyDialSegment
+import app.noti.ui.common.FloatingOverlay
+import app.noti.ui.common.clampTo
+import app.noti.ui.common.dragFloatingOverlay
+import app.noti.ui.common.rememberFloatingOverlayMove
 import app.noti.ui.theme.Noti
 import app.noti.ui.theme.NotiBrand
 import kotlin.math.PI
@@ -60,7 +54,6 @@ import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.floor
 import kotlin.math.hypot
-import kotlin.math.roundToInt
 import kotlin.math.sin
 
 /*
@@ -109,7 +102,7 @@ internal fun BoxScope.RadialToolSelector(
     Spacer(Modifier.matchParentSize().onGloballyPositioned { dial.origin = it.positionInWindow() })
     SideEffect { dial.area = Size(width.value, height.value); dial.density = density.density }
     // Kept here so the docked dial returns to where it was after the pen summons it.
-    val position = remember { mutableStateOf(Offset.Zero) }
+    val position = remember { mutableStateOf(IntOffset.Zero) }
     if (dial.phase != PenDialState.Phase.Hidden) SummonedDial(settings, selectionCount, dial, floating)
     else if (docked) DockedDial(settings, selectionCount, width, height, floating, expanded, onExpandedChange, position)
 }
@@ -117,45 +110,28 @@ internal fun BoxScope.RadialToolSelector(
 @Composable
 private fun BoxScope.DockedDial(
     settings: SettingsStore, selectionCount: Int, width: Dp, height: Dp, floating: Boolean,
-    expanded: Boolean, onExpandedChange: (Boolean) -> Unit, position: MutableState<Offset>,
+    expanded: Boolean, onExpandedChange: (Boolean) -> Unit, position: MutableState<IntOffset>,
 ) {
     var options by remember { mutableStateOf(false) }
     val density = LocalDensity.current
     fun px(value: Dp) = with(density) { value.roundToPx() }
     val inset = IntOffset(px((12f - Halo).dp), px((84f - Halo).dp))
-    val isExpanded by rememberUpdatedState(expanded)
     LaunchedEffect(expanded) { if (!expanded) options = false }
     // Reserve the header, bottom dock, and native scroll gutter at every window size.
-    val maxX = px((width - DialSize - 60.dp).coerceAtLeast(0.dp)).toFloat()
-    val maxY = px((height - 400.dp).coerceAtLeast(0.dp)).toFloat()
+    val bounds = IntRect(0, 0, px((width - DialSize - 60.dp).coerceAtLeast(0.dp)),
+        px((height - 400.dp).coerceAtLeast(0.dp)))
     // The collapsed button keeps the dial's centre.
     val collapsedInset = IntOffset(px((DialCenter - CollapsedSize / 2).dp), px((DialCenter - CollapsedSize / 2).dp))
-    val provider = remember(position, maxX, maxY, inset, collapsedInset) {
-        object : PopupPositionProvider {
-            override fun calculatePosition(anchorBounds: IntRect, windowSize: IntSize,
-                layoutDirection: LayoutDirection, popupContentSize: IntSize): IntOffset =
-                anchorBounds.topLeft + inset + (if (isExpanded) IntOffset.Zero else collapsedInset) + IntOffset(
-                    position.value.x.coerceIn(0f, maxX).roundToInt(),
-                    position.value.y.coerceIn(0f, maxY).roundToInt())
-        }
+    val base = if (expanded) inset else inset + collapsedInset
+    val offset = remember(base, bounds, position) {
+        { _: IntSize -> base + position.value.clampTo(bounds) }
     }
-    var coordinates by remember { mutableStateOf<LayoutCoordinates?>(null) }
-    val drag = Modifier.onGloballyPositioned { coordinates = it }.pointerInput(maxX, maxY) {
-        var startScreen = Offset.Zero
-        var startPosition = Offset.Zero
-        detectDragGestures(onDragStart = { local ->
-            // Screen coordinates prevent the moving Popup from feeding its own movement back into the drag.
-            startScreen = coordinates?.localToScreen(local) ?: local
-            startPosition = Offset(position.value.x.coerceIn(0f, maxX), position.value.y.coerceIn(0f, maxY))
-            options = false
-        }) { change, _ ->
-            change.consume()
-            val screen = coordinates?.localToScreen(change.position) ?: change.position
-            val next = startPosition + screen - startScreen
-            position.value = Offset(next.x.coerceIn(0f, maxX), next.y.coerceIn(0f, maxY))
-        }
+    val move = rememberFloatingOverlayMove { position.value = it }
+    val drag = Modifier.pointerInput(bounds, position, move) {
+        dragFloatingOverlay(bounds, position = { position.value }, moveTo = move,
+            onStart = { options = false })
     }
-    val content: @Composable () -> Unit = {
+    FloatingOverlay(floating, position = offset) {
         if (expanded) Column(Modifier.padding(Halo.dp), horizontalAlignment = Alignment.CenterHorizontally) {
             ToolDial(settings, selectionCount, drag, onOptions = { options = !options }) {
                 if (options) ToolOptionsPopup(settings) { options = false }
@@ -164,11 +140,6 @@ private fun BoxScope.DockedDial(
             CollapseKnob { options = false; onExpandedChange(false) }
         } else Box(Modifier.padding(Halo.dp)) { CollapsedTool(settings, selectionCount, drag) { onExpandedChange(true) } }
     }
-    if (floating) Popup(popupPositionProvider = provider, properties = PopupProperties(
-        focusable = false, dismissOnBackPress = false, dismissOnClickOutside = false), content = content)
-    else Box(Modifier.align(AbsoluteAlignment.TopLeft).absoluteOffset {
-        inset + (if (expanded) IntOffset.Zero else collapsedInset) + IntOffset(position.value.x.coerceIn(0f, maxX).roundToInt(), position.value.y.coerceIn(0f, maxY).roundToInt())
-    }) { content() }
 }
 
 @Composable
@@ -184,14 +155,13 @@ private fun ToolDial(
     val slots = if (highlighter) settings.highlighterSlots else settings.penSlots
     val drawing = settings.tool == Tool.Pen || settings.tool == Tool.Highlighter
     val toolIndex = Tool.entries.indexOf(settings.tool)
-    // The highlight glides between tools, so the change reads as one motion.
-    val active by animateFloatAsState(toolIndex.toFloat(), tween(220), label = "active tool")
+    val hoveredSegment by rememberUpdatedState(hovered)
     val presetAlpha = if (drawing) 1f else 0.35f
     val dark = colors.surface.luminance() < 0.5f
 
     Box(Modifier.size(DialSize).shadow(10.dp, CircleShape, ambientColor = extras.shadow, spotColor = extras.shadow)
         .clip(CircleShape).background(colors.surface)) {
-        Canvas(Modifier.fillMaxSize().then(if (!interactive) Modifier else Modifier.pointerInput(Unit) {
+        val ringInput = if (!interactive) Modifier else Modifier.pointerInput(settings) {
             detectTapGestures { point ->
                 val unit = size.width / (DialCenter * 2f)
                 val local = point - Offset(size.width / 2f, size.height / 2f)
@@ -199,22 +169,30 @@ private fun ToolDial(
                 if (radius !in (RingInner - 2f)..(RingOuter + 4f)) return@detectTapGestures
                 settings.applyDialSegment(segmentAt(Math.toDegrees(atan2(local.y, local.x).toDouble()).toFloat()))
             }
-        })) {
+        }
+        Box(Modifier.matchParentSize().then(ringInput).drawWithCache {
             val unit = size.width / (DialCenter * 2f)
             val c = Offset(size.width / 2f, size.height / 2f)
             val rest = if (dark) colors.surfaceContainerHigh else colors.surfaceContainer
             val chosen = if (dark) Color(0xFF45424C) else colors.surfaceContainerHighest
-            repeat(DialSegments) { i ->
+            val paths = List(DialSegments) { i ->
+                segmentPath(c, unit, segmentAngle(i), segmentGap(i) * unit, segmentGap((i + 1) % DialSegments) * unit)
+            }
+            val fills = List(DialSegments) { i ->
                 val fill = when (i) {
+                    toolIndex -> colors.primary
                     in DialColors until DialWidths -> if (drawing && slots.color == i - DialColors) chosen else rest
                     in DialWidths until DialSegments -> if (drawing && slots.width == i - DialWidths) chosen else rest
                     else -> rest
                 }
-                drawSegment(c, unit, segmentAngle(i), if (i >= DialColors && !drawing) fill.copy(alpha = 0.5f) else fill)
+                if (i >= DialColors && !drawing) fill.copy(alpha = 0.5f) else fill
             }
-            if (hovered != null) drawSegment(c, unit, segmentAngle(hovered), colors.primary.copy(alpha = if (dark) 0.42f else 0.24f))
-            drawSegment(c, unit, segmentAngle(active), colors.primary)
-        }
+            val hoverFill = colors.primary.copy(alpha = if (dark) 0.42f else 0.24f)
+            onDrawBehind {
+                paths.forEachIndexed { i, path -> drawPath(path, fills[i]) }
+                hoveredSegment?.takeIf { it != toolIndex }?.let { drawPath(paths[it], hoverFill) }
+            }
+        })
 
         Tool.entries.forEachIndexed { index, tool ->
             val selected = settings.tool == tool
@@ -305,11 +283,7 @@ private fun BrushHub(tool: Tool, slots: ToolSlots, highlighter: Boolean, drawing
  * corners, and gaps that keep a constant width from the inner to the outer edge. Gaps are
  * wider where one group meets the next.
  */
-private fun DrawScope.drawSegment(center: Offset, unit: Float, centerAngle: Float, color: Color, groupGaps: Boolean = true) {
-    val index = Math.floorMod(((centerAngle - FirstSegment) / SegmentSweep).roundToInt(), DialSegments)
-    fun gapBefore(i: Int) = if (groupGaps && (i == 0 || i == DialColors || i == DialWidths)) 8f else 3f
-    drawPath(segmentPath(center, unit, centerAngle, gapBefore(index) * unit, gapBefore((index + 1) % DialSegments) * unit), color)
-}
+private fun segmentGap(index: Int) = if (index == 0 || index == DialColors || index == DialWidths) 8f else 3f
 
 private fun segmentPath(center: Offset, unit: Float, centerAngle: Float, startGap: Float, endGap: Float): Path {
     val inner = RingInner * unit
@@ -407,23 +381,20 @@ private fun BoxScope.SummonedDial(settings: SettingsStore, selectionCount: Int, 
     var options by remember { mutableStateOf(false) }
     LaunchedEffect(locked) { if (!locked) options = false }
     val view = LocalView.current
-    LaunchedEffect(hovered) { if (hovered != null) view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK) }
+    LaunchedEffect(hovered) {
+        if (hovered is DialPick.Segment || hovered == DialPick.Lock) view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+    }
     val density = LocalDensity.current
     val center = dial.center
     val topLeft = with(density) {
         IntOffset((center.x - Halo - DialCenter).dp.roundToPx(), (center.y - Halo - LabelSlot - DialCenter).dp.roundToPx())
     }
-    val appear = remember(center) { Animatable(0.85f) }
-    LaunchedEffect(appear) { appear.animateTo(1f, tween(120)) }
-    val height = Halo * 2 + LabelSlot + DialCenter * 2 + 4f + LockSize
+    val offset = remember(topLeft) { { _: IntSize -> topLeft } }
     val highlighter = settings.tool == Tool.Highlighter || (settings.tool != Tool.Pen && settings.lastDrawingTool == Tool.Highlighter)
     val label = dialLabel(hovered, if (highlighter) settings.highlighterSlots else settings.penSlots)
         ?: if (locked) "Tap outside to close" else null
-    val content: @Composable () -> Unit = {
-        Column(Modifier.graphicsLayer {
-            scaleX = appear.value; scaleY = appear.value; alpha = ((appear.value - 0.85f) / 0.15f).coerceIn(0f, 1f)
-            transformOrigin = TransformOrigin(0.5f, (Halo + LabelSlot + DialCenter) / height)
-        }.padding(Halo.dp).width(DialSize), horizontalAlignment = Alignment.CenterHorizontally) {
+    FloatingOverlay(floating, position = offset) {
+        Column(Modifier.padding(Halo.dp).width(DialSize), horizontalAlignment = Alignment.CenterHorizontally) {
             Box(Modifier.height((LabelSlot - 6f).dp), contentAlignment = Alignment.Center) { label?.let { DialLabel(it) } }
             Spacer(Modifier.height(6.dp))
             ToolDial(settings, selectionCount, Modifier, onOptions = { options = !options },
@@ -434,16 +405,6 @@ private fun BoxScope.SummonedDial(settings: SettingsStore, selectionCount: Int, 
             LockPip(locked, hovered == DialPick.Lock) { dial.dismiss() }
         }
     }
-    if (floating) {
-        val provider = remember(topLeft) {
-            object : PopupPositionProvider {
-                override fun calculatePosition(anchorBounds: IntRect, windowSize: IntSize,
-                    layoutDirection: LayoutDirection, popupContentSize: IntSize): IntOffset = anchorBounds.topLeft + topLeft
-            }
-        }
-        Popup(popupPositionProvider = provider, properties = PopupProperties(
-            focusable = false, dismissOnBackPress = false, dismissOnClickOutside = false), content = content)
-    } else Box(Modifier.align(AbsoluteAlignment.TopLeft).absoluteOffset { topLeft }) { content() }
 }
 
 /** What lifting the nib on [pick] would do, in a word or two. */

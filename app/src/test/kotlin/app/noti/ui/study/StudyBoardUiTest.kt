@@ -8,8 +8,8 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.size
-import androidx.compose.runtime.SideEffect
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
@@ -82,7 +82,7 @@ class StudyBoardUiTest {
     /** The Endless sheet at 100%: a screen is 1000 dp of a 16 000 dp sheet. */
     private fun sheet(w: Int, h: Int) = PagePlacement(0, -7500f, -1000f, 16000f, 16000f, 1f, w, h, true).let { it.copy(visiblePages = listOf(it)) }
 
-    private fun render(w: Int, h: Int, open: Boolean = true) {
+    private fun render(w: Int, h: Int, open: Boolean = true, floating: Boolean = false) {
         val placement = sheet(w, h)
         // Two cards already printed on the board, at the size they had on screen.
         study.store.update { d -> d.copy(cards = listOf(
@@ -97,7 +97,7 @@ class StudyBoardUiTest {
             NotiTheme(ThemeMode.Light) {
                 BoxWithConstraints(Modifier.size(w.dp, h.dp).testTag("board").onGloballyPositioned { geometry.editor = it }) {
                     DocumentBackground(Paper(PaperTemplate.Grid), null, { placement }, Modifier.fillMaxSize(), sheet = true, board = layer)
-                    StudySheet(study, geometry, fonts, { placement }, maxWidth, maxHeight, floating = false)
+                    StudySheet(study, geometry, fonts, { placement }, maxWidth, maxHeight, floating = floating)
                     StudyDialogs(study, geometry, { placement })
                 }
             }
@@ -117,6 +117,27 @@ class StudyBoardUiTest {
         compose.onNodeWithContentDescription("Study sheet. Drag to move.").assertIsDisplayed()
         compose.onNodeWithText(" of 4", substring = true).assertExists()
         screenshot("board-tablet")
+    }
+
+    @Test fun floatingSheetMovesBackFromTheEdgeWithoutLifting() {
+        render(1280, 900, floating = true)
+        val header = compose.onNodeWithContentDescription("Study sheet. Drag to move.")
+        val before = header.fetchSemanticsNode().positionOnScreen
+        header.performTouchInput {
+            down(center)
+            moveBy(Offset(120f, 0f))
+        }
+        assertEquals(before.x + 6f, header.fetchSemanticsNode().positionOnScreen.x, 2f)
+        // The sheet moved 6 px to the edge, so the pointer is 114 px ahead of the header.
+        header.performTouchInput { moveTo(center + Offset(114f - 45f, 0f)) }
+        val after = header.fetchSemanticsNode().positionOnScreen
+        assertEquals(before.x + 6f - 45f, after.x, 2f)
+        assertEquals(before.y, after.y, 2f)
+        header.performTouchInput { up() }
+        assertEquals(after, header.fetchSemanticsNode().positionOnScreen)
+        compose.onNodeWithContentDescription("Collapse the study sheet").performClick()
+        compose.onNodeWithContentDescription("Expand the study sheet").performClick()
+        assertEquals(after, header.fetchSemanticsNode().positionOnScreen)
     }
 
     @Test fun emptyBoardCreatesAndReviewsAFlashCardOffline() {
