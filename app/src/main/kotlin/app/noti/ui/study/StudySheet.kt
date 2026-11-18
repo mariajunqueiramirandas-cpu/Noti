@@ -33,7 +33,6 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
-import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntRect
 import androidx.compose.ui.unit.IntSize
@@ -44,11 +43,10 @@ import app.noti.study.ItemKind
 import app.noti.study.Rating
 import app.noti.study.StudyItem
 import app.noti.study.Verdict
-import app.noti.ui.common.DraggableFloatingOverlay
 import app.noti.ui.common.FloatingOverlay
-import app.noti.ui.common.FloatingOverlayDrag
 import app.noti.ui.common.clampTo
 import app.noti.ui.common.dragFloatingOverlay
+import app.noti.ui.common.rememberFloatingOverlayMove
 import app.noti.ui.theme.Noti
 import kotlinx.coroutines.delay
 import kotlin.math.roundToInt
@@ -123,19 +121,16 @@ internal fun BoxScope.StudySheet(
         }
     }
 
-    val movement = remember { FloatingOverlayDrag() }
-    val content: @Composable () -> Unit = {
+    val move = if (compact) null else rememberFloatingOverlayMove { study.offset = it }
+    FloatingOverlay(floating, position = offset, clippingEnabled = false) {
         Box(Modifier.padding(Halo).onGloballyPositioned { geometry.window = it }) {
-            val drag = if (compact) Modifier else Modifier.pointerInput(study, bounds, default, movement) {
-                dragFloatingOverlay(movement, bounds, position = { study.offset ?: default }, moveTo = { study.offset = it })
+            val drag = if (move == null) Modifier else Modifier.pointerInput(study, bounds, default, move) {
+                dragFloatingOverlay(bounds, position = { study.offset ?: default }, moveTo = move)
             }
             if (study.collapsed) CollapsedSheet(study, drag) else ExpandedSheet(study, geometry, fonts, placement,
                 sheetWidth, maxSheetHeight, drag)
         }
     }
-    if (compact) FloatingOverlay(floating, position = offset, clippingEnabled = false, content = content)
-    else DraggableFloatingOverlay(floating, DpSize(maxWidth, maxHeight), position = offset, drag = movement,
-        clippingEnabled = false, content = content)
 }
 
 @Composable
