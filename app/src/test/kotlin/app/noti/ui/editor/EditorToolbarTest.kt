@@ -1,11 +1,12 @@
 package app.noti.ui.editor
 
 import android.view.View
-import android.view.ViewConfiguration
+import android.view.WindowManager
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.runtime.SideEffect
 import app.noti.ui.captureRenderedView
 import android.graphics.Bitmap
+import android.graphics.Region
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.runtime.CompositionLocalProvider
@@ -33,6 +34,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
+import org.robolectric.util.ReflectionHelpers
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [35], qualifiers = "w1280dp-h1600dp-mdpi")
@@ -265,12 +267,49 @@ class EditorToolbarTest {
     @Test fun dialCanBeMovedInsideCanvas() = assertDrag(floating = false)
     @Test fun realPopupDragTracksScreenCoordinatesWithoutDrift() = assertDrag(floating = true)
 
+    @Test fun dialMovesUnderThePointerWithoutMovingItsWindowDuringDrag() {
+        render(800, ThemeMode.Light, floating = true)
+        val hub = compose.onNodeWithContentDescription("Brush options")
+        val node = hub.fetchSemanticsNode()
+        val window = (node.root as View).rootView
+        val before = node.positionOnScreen
+        val first = Offset(80f, 40f)
+        val second = Offset(120f, 90f)
+
+        hub.performTouchInput { down(center); moveBy(first) }
+        val draggingWindow = compose.runOnIdle {
+            val params = window.layoutParams as WindowManager.LayoutParams
+            assertEquals(800, params.width)
+            assertEquals(800, params.height)
+            val region = ReflectionHelpers.getField<Region?>(window.rootSurfaceControl, "mTouchableRegion")
+            assertTrue("The expanded popup should let new touches through", region?.isEmpty == true)
+            listOf(params.x, params.y, params.width, params.height)
+        }
+        assertEquals(before + first, hub.fetchSemanticsNode().positionOnScreen)
+
+        // The test dispatcher saved the pointer in the old popup's coordinates. Resume
+        // at an explicit point relative to the hub, which has moved with the first sample.
+        hub.performTouchInput { moveTo(center + second) }
+        val last = before + first + second
+        assertEquals(last, hub.fetchSemanticsNode().positionOnScreen)
+        compose.runOnIdle {
+            val params = window.layoutParams as WindowManager.LayoutParams
+            assertEquals(draggingWindow, listOf(params.x, params.y, params.width, params.height))
+        }
+
+        hub.performTouchInput { up() }
+        assertEquals(last, hub.fetchSemanticsNode().positionOnScreen)
+        compose.runOnIdle {
+            assertEquals(228, window.layoutParams.width)
+            assertNull(ReflectionHelpers.getField<Region?>(window.rootSurfaceControl, "mTouchableRegion"))
+        }
+    }
+
     private fun assertDrag(floating: Boolean) {
         render(800, ThemeMode.Light, floating = floating)
         val before = compose.onNodeWithContentDescription("Brush options").fetchSemanticsNode().positionOnScreen
         val distance = Offset(220f, 150f)
-        val touchSlop = ViewConfiguration.get(compose.activity).scaledTouchSlop
-        val expected = before + distance * (1f - touchSlop / distance.getDistance())
+        val expected = before + distance
         compose.onNodeWithContentDescription("Brush options").performTouchInput { swipe(center, center + distance, 600) }
         val after = compose.onNodeWithContentDescription("Brush options").fetchSemanticsNode().positionOnScreen
         assertEquals(expected.x, after.x, 2f)

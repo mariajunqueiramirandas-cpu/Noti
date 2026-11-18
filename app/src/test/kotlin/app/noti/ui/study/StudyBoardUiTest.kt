@@ -126,12 +126,15 @@ class StudyBoardUiTest {
         header.performTouchInput {
             down(center)
             moveBy(Offset(120f, 0f))
-            moveBy(Offset(-45f, 0f))
-            up()
         }
+        assertEquals(before.x + 6f, header.fetchSemanticsNode().positionOnScreen.x, 2f)
+        // The sheet moved 6 px to the edge, so the pointer is 114 px ahead of the header.
+        header.performTouchInput { moveTo(center + Offset(114f - 45f, 0f)) }
         val after = header.fetchSemanticsNode().positionOnScreen
         assertEquals(before.x + 6f - 45f, after.x, 2f)
         assertEquals(before.y, after.y, 2f)
+        header.performTouchInput { up() }
+        assertEquals(after, header.fetchSemanticsNode().positionOnScreen)
         compose.onNodeWithContentDescription("Collapse the study sheet").performClick()
         compose.onNodeWithContentDescription("Expand the study sheet").performClick()
         assertEquals(after, header.fetchSemanticsNode().positionOnScreen)

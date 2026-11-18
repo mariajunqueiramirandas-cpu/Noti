@@ -43,7 +43,9 @@ import app.noti.data.DialColors
 import app.noti.data.DialSegments
 import app.noti.data.DialWidths
 import app.noti.data.applyDialSegment
+import app.noti.ui.common.DraggableFloatingOverlay
 import app.noti.ui.common.FloatingOverlay
+import app.noti.ui.common.FloatingOverlayDrag
 import app.noti.ui.common.clampTo
 import app.noti.ui.common.dragFloatingOverlay
 import app.noti.ui.theme.Noti
@@ -125,11 +127,12 @@ private fun BoxScope.DockedDial(
     val offset = remember(base, bounds, position) {
         { _: IntSize -> base + position.value.clampTo(bounds) }
     }
-    val drag = Modifier.pointerInput(bounds, position) {
-        dragFloatingOverlay(bounds, position = { position.value }, moveTo = { position.value = it },
+    val movement = remember { FloatingOverlayDrag() }
+    val drag = Modifier.pointerInput(bounds, position, movement) {
+        dragFloatingOverlay(movement, bounds, position = { position.value }, moveTo = { position.value = it },
             onStart = { options = false })
     }
-    FloatingOverlay(floating, position = offset) {
+    DraggableFloatingOverlay(floating, DpSize(width, height), position = offset, drag = movement) {
         if (expanded) Column(Modifier.padding(Halo.dp), horizontalAlignment = Alignment.CenterHorizontally) {
             ToolDial(settings, selectionCount, drag, onOptions = { options = !options }) {
                 if (options) ToolOptionsPopup(settings) { options = false }
