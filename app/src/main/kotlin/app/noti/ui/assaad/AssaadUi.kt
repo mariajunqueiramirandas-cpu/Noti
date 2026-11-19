@@ -119,7 +119,7 @@ fun AssaadPairingDialog(session: AssaadSession, onOpenBoard: (String) -> Unit) {
             }
             OfflineImages(session)
         } else if (session.useTabletBrowser) {
-            Text("Open Assaad, search the question bank and tap Study on canvas. The questions open on your study board, ready to work through.")
+            Text("Open Assaad and sign in. Use Noti's filters to find questions, then tap Study this page on canvas.")
         }
         session.problem?.let { Text(it, color = MaterialTheme.colorScheme.error) }
         if (session.hasSession && !session.useTabletBrowser) NotiTextButton(onClick = session::disconnect, enabled = !session.busy, destructive = true,

@@ -24,7 +24,8 @@ Initial source research used a normal navigation to the supplied question page a
 
 ## Browser-only calls and fair-use limits
 
-Every Assaad HTTP request runs inside the user’s authenticated Edge page, using the
+Every Assaad HTTP request runs inside the user’s authenticated Edge page or Noti
+WebView, using the
 user’s network connection (including any VPN/proxy the user configured). The Bun relay
 never proxies those calls or stores Assaad credentials. Fixed packaged operations are
 serialized; operation starts are separated by at least five seconds, individual
@@ -39,13 +40,15 @@ limits reduce traffic; no user-agent/IP spoofing or detection bypass is used.
 `page-observer.js` runs in the Assaad page's MAIN world at document start (a
 document-start script in the tablet WebView, a `world: "MAIN"` content script in the
 extension). It remembers the website's own responses to `GET /api/auth/session`,
-`POST /api/auth/refresh` and `GET /v1/question?…` for ten minutes, and whether the
+`POST /api/auth/refresh`, `GET /v1/question/metadata` and `GET /v1/question?…`
+for ten minutes, and whether the
 website reached its API. It never sends a request or changes one. Noti reuses
 what it saw instead of asking Assaad again:
 
 | Action | Requests Noti sends |
 | --- | --- |
 | Connection check | none when the page already reached the API; otherwise the session and `GET /question/metadata` (what the question bank loads) |
+| Find questions in Noti | reuse filter options the page already loaded or read `GET /question/metadata` once. Each Search, Previous, or Next reads one published results page with `GET /question` |
 | Study on canvas (import) | none when the page's own search has the displayed questions; otherwise that same search, once |
 | Answer | `PATCH /question/answer` only, when the page has a fresh session; otherwise `GET /api/auth/session` first |
 | Pictures | each one when its card is shown, never all of a set at once |
@@ -69,10 +72,12 @@ clear obsolete connection errors when authoritative status recovers.
 ## Single-tablet browser mode
 
 Choose **Plataforma Assaad → On this tablet → Open Assaad** and sign into the real
-website. Noti notices the login on its own (Assaad is a single-page site, so the
-check also runs when its address changes without a page load). On a loaded question
-search, **Study on canvas** saves that page's questions and opens them on the Assaad
-board's study sheet. **Canvas** or Close returns to Noti and keeps that same WebView
+website. Noti opens its question finder when the connection is ready. Search by
+question text and filter by subject, topic, tag, exam, year, or difficulty. Open a
+result to preview it, or choose **Study this page on canvas** to save that page
+and open the study sheet. The globe button opens the Assaad website, where
+**Study on canvas** can also save a search page. **Canvas** or Close returns to
+Noti and keeps that same WebView
 parked, invisible, with its authenticated page alive during the foreground Noti
 session. Open, the browser is a full-screen dialog window, so editor chrome and the
 ink window can't cover it. Links that leave Assaad open in the system browser. Edge, the extension, code pairing, and the relay are unnecessary in this
@@ -156,7 +161,7 @@ All REST paths below are relative to the `/v1` base except `/api/auth/*`, which 
 | POST | `/api/auth/session` | Persist a website login | website only |
 | DELETE | `/api/auth/session` | Website logout | website only |
 | GET | `/question` | Published question search and pagination | used |
-| GET | `/question/metadata` | Filter taxonomy | tablet read-only connection check |
+| GET | `/question/metadata` | Filter taxonomy | tablet question finder and read-only connection check |
 | PATCH | `/question/answer` | Confirm an answer in the question bank | used |
 | GET | `/question/answers-key` | PDF-export answer key | not called; export flow only |
 | POST | `/question/bookmark` | Save a practice-later bookmark | documented only |

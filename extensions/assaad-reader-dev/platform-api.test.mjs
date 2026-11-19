@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { harness, imported, snapshot, command, official, observedPage, aid, bid, qid, source } from "./api-fixture.mjs";
+import { harness, imported, snapshot, command, official, observedPage, rawQuestion, aid, bid, qid, source } from "./api-fixture.mjs";
 test("imports only the requested IDs, strips solutions and credentials, and translates the website's filter names", async () => {
   const h = harness(); const value = await h.run({ operation: "import", batch: snapshot() });
   assert.equal(value.ok, true); assert.equal(value.batch.transport, "api-v1");
@@ -124,4 +124,63 @@ test("connection preflight proves the authenticated metadata request shape witho
   assert.equal(h.calls.filter(c => c.url.endsWith("/question/metadata")).length, 1);
   assert.equal(h.calls.some(c => c.method === "PATCH"), false);
   assert.doesNotMatch(JSON.stringify(result), /BROWSER_SECRET/);
+});
+
+test("finder uses the page's existing filter taxonomy and returns only visible option fields", async () => {
+  const observed = observedPage();
+  observed.metadata = () => ({
+    category_groups: [{ name: "Humanas", categories: [{ id: 567, name: "História", subcategories: [{ id: 719, name: "Idade Antiga" }] }] }],
+    lone_categories: [{ id: 36, name: "Matemática" }],
+    tags: [{ id: 422, name: "Egito", internal: "PRIVATE_VALUE" }],
+    institutions: [{ id: 4, name: "ENEM" }],
+    years: [2025, "2024"],
+  });
+  const h = harness(() => null, undefined, observed);
+  const result = await h.run({ operation: "metadata" });
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.options, {
+    categories: [{ id: "36", label: "Matemática", topics: [] }, { id: "567", label: "História", topics: [{ id: "719", label: "Idade Antiga" }] }],
+    tags: [{ id: "422", label: "Egito" }],
+    institutions: [{ id: "4", label: "ENEM" }],
+    years: [{ id: "2025", label: "2025" }, { id: "2024", label: "2024" }],
+  });
+  assert.equal(h.calls.length, 0);
+});
+
+test("finder fetches exactly one bounded published page with the selected filters", async () => {
+  const h = harness(() => new Response(JSON.stringify({ data: [rawQuestion()], meta: { total: 35, lastPage: 2 } })), undefined, observedPage());
+  const filters = { search: "Egito & Roma", category_id: "567", subcategory_id: "719", tag_ids: "422", institution_id: "4", difficulties: "3", years: "2025", is_published: "false" };
+  const result = await h.run({ operation: "search", page: 2, filters });
+  assert.equal(result.ok, true);
+  assert.equal(result.total, 35);
+  assert.equal(result.lastPage, 2);
+  assert.equal(result.batch.transport, "api-v1");
+  assert.equal(result.batch.source.page, "2");
+  assert.equal(new URL(result.batch.source.url).searchParams.get("category_id"), "567");
+  assert.equal(result.batch.questions[0].id, qid);
+  assert.doesNotMatch(JSON.stringify(result), /BROWSER_SECRET|SECRET_SOLUTION|"correct"|"explanation"/);
+  assert.equal(h.calls.length, 1);
+  assert.equal(h.calls[0].method, "GET");
+  const url = new URL(h.calls[0].url);
+  assert.equal(url.origin + url.pathname, "https://api.plataformaassaad.com.br/v1/question");
+  assert.deepEqual(Object.fromEntries(url.searchParams), {
+    page: "2", perPage: "20", is_published: "true", category_ids: "567", subcategory_ids: "719",
+    institution_ids: "4", tag_ids: "422", difficulties: "3", years: "2025", search: "Egito & Roma",
+  });
+});
+
+test("finder handles empty pages and stops after an expired session", async () => {
+  const empty = harness(() => new Response('{"data":[],"meta":{"total":0}}'), undefined, observedPage());
+  const result = await empty.run({ operation: "search" });
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.batch.questions, []);
+  assert.equal(result.lastPage, 0);
+  const observed = observedPage();
+  const expired = harness(() => new Response("{}", { status: 401 }), undefined, observed);
+  assert.equal((await expired.run({ operation: "search" })).error, "login_required");
+  assert.equal(expired.calls.length, 1);
+  assert.equal(observed.forgotten.length, 1);
+  const invalid = harness();
+  assert.equal((await invalid.run({ operation: "search", page: 0 })).error, "invalid_search");
+  assert.equal(invalid.calls.length, 0);
 });
