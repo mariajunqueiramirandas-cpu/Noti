@@ -9,7 +9,7 @@
   const origin = "https://app.plataformaassaad.com.br";
   const api = "https://api.plataformaassaad.com.br/v1/";
   const keep = 10 * 60_000;
-  let session = null, apiOkAt = 0;
+  let session = null, metadata = null, apiOkAt = 0;
   const searches = [];
   function remember(url, method, status, body) {
     try {
@@ -23,7 +23,10 @@
         if (value?.access_token) session = { value, at: Date.now() };
       } else if (target.href.startsWith(api)) {
         apiOkAt = Date.now();
-        if (target.pathname === "/v1/question") {
+        if (target.pathname === "/v1/question/metadata") {
+          const value = JSON.parse(body);
+          if (Array.isArray(value?.tags) || Array.isArray(value?.category_groups)) metadata = { value, at: Date.now() };
+        } else if (target.pathname === "/v1/question") {
           const data = JSON.parse(body)?.data;
           if (Array.isArray(data)) { searches.unshift({ at: Date.now(), data }); searches.length = Math.min(searches.length, 8); }
         }
@@ -36,10 +39,12 @@
     session: () => fresh(session) ? session.value : null,
     /** The website reached its API successfully in the last few minutes. */
     apiReachable: () => Date.now() - apiOkAt < keep,
+    /** The filter options already loaded on this page, or null. */
+    metadata: () => fresh(metadata) ? metadata.value : null,
     /** A question the website loaded recently, as the API returned it, or null. */
     question: id => { for (const s of searches) if (fresh(s)) { const q = s.data.find(q => q?.id === id); if (q) return q; } return null; },
     /** Forget the session (after Assaad refused it). */
-    forgetSession: () => { session = null; },
+    forgetSession: () => { session = null; metadata = null; },
   }) });
 
   const fetch = globalThis.fetch;

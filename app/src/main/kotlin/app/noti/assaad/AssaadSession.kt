@@ -103,16 +103,31 @@ class AssaadSession(context: Context, private val library: LibraryStore, private
                     .put("capturedAt", read.getString("capturedAt")).put("questions", read.getJSONArray("questions"))
                 val imported = browser.operation(JSONObject().put("operation", "import").put("batch", batch))
                 check(imported.optBoolean("ok")) { assaadOperationProblem(imported) }
-                val value = imported.getJSONObject("batch")
-                AssaadBatch.parse(value)
-                receive(JSONObject().put("type", "questions").put("payload", value).toString())
+                val batchToSave = AssaadBatch.parse(imported.getJSONObject("batch"))
+                check(saveQuestionPage(batchToSave)) { problem ?: "Could not save this page." }
                 tabletVerified = true; tabletNeedsLogin = false
-                tabletStatus = "Saved " + value.getJSONArray("questions").length() + " questions on this tablet."
+                tabletStatus = "Saved " + batchToSave.questions.size + " questions on this tablet."
                 then?.invoke()
             } catch (e: CancellationException) { throw e }
             catch (e: Exception) { tabletStatus = e.message ?: "Could not import this page."; tabletNotice = tabletStatus }
             finally { tabletBusy = false; pump() }
         }
+    }
+    internal fun saveQuestionPage(incoming: AssaadBatch): Boolean {
+        if (incoming.id in removedBatchIds || batches.any { it.id == incoming.id }) return false
+        if (batches.size >= 100) {
+            problem = "The saved library is full. Remove a saved set before importing another."
+            return false
+        }
+        batches = batches + incoming
+        selectedBatchId = incoming.id
+        currentIndex = 0
+        save()
+        val images = imageUrls()
+        totalImages = images.size
+        savedImages = images.count(media::contains)
+        focus = incoming.questions.first().id
+        return true
     }
     private fun canSubmit() = if (useTabletBrowser) tabletBrowser != null && tabletVerified && tabletPageLoaded && !tabletBusy else connected && paired && browserOnline
 
@@ -254,14 +269,7 @@ class AssaadSession(context: Context, private val library: LibraryStore, private
                     pump()
                 }
                 "questions" -> {
-                    val incoming = AssaadBatch.parse(payload)
-                    if (incoming.id !in removedBatchIds && batches.none { it.id == incoming.id }) {
-                        if (batches.size >= 100) { problem = "The saved library is full. Remove a saved set before importing another."; return }
-                        batches = batches + incoming; selectedBatchId = incoming.id; currentIndex = 0; save()
-                        // Pictures load when a card shows them, like a page would; not all at once on import.
-                        totalImages = imageUrls().size; savedImages = imageUrls().count(media::contains)
-                        focus = incoming.questions.first().id
-                    }
+                    saveQuestionPage(AssaadBatch.parse(payload))
                 }
                 "forgotten" -> {
                     removedBatchIds = removedBatchIds - payload.optString("batchId"); save()

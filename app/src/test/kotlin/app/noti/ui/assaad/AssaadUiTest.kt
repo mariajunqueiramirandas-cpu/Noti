@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.size
 import androidx.compose.ui.unit.dp
 import app.noti.R
+import app.noti.assaad.AssaadLocalBrowser
 import app.noti.assaad.AssaadSession
 import app.noti.assaad.assaadItemId
 import app.noti.data.*
@@ -141,6 +142,53 @@ class AssaadUiTest {
         compose.waitUntil(5_000) { compose.runOnIdle { study.open } }
         compose.onNodeWithText("Pick an option").assertIsDisplayed()
         screenshot("assaad-sheet-phone")
+    }
+
+    @Test fun tabletFinderFiltersPagesAndOpensTheFetchedQuestionsOnCanvas() {
+        session = AssaadSession(context, LibraryStore(context), scope)
+        val requests = mutableListOf<JSONObject>()
+        val batch = JSONObject(javaClass.getResource("/assaad-batch.json")!!.readText())
+        val browser = object : AssaadLocalBrowser {
+            override suspend fun readQuestions() = error("The finder should use its own search results.")
+            override suspend fun operation(input: JSONObject): JSONObject {
+                requests += input
+                return when (input.getString("operation")) {
+                    "metadata" -> JSONObject("""{"ok":true,"options":{"categories":[{"id":"567","label":"História","topics":[{"id":"719","label":"Idade Antiga"}]}]}}""")
+                    "search" -> JSONObject().put("ok", true).put("total", 21).put("lastPage", 2).put("batch", batch)
+                    else -> error("Unexpected operation")
+                }
+            }
+        }
+        var canvasOpened = false
+        compose.setContent { NotiTheme(ThemeMode.Light) { AssaadQuestionFinder(session, browser) { canvasOpened = true } } }
+        compose.onNodeWithText("Topic").assertIsNotEnabled()
+        compose.onNodeWithText("Subject").performClick()
+        compose.onNodeWithText("História").performClick()
+        compose.onNodeWithText("Topic").performClick()
+        compose.onNodeWithText("Idade Antiga").performClick()
+        compose.onNodeWithText("Search question text").performTextInput("Egito")
+        compose.onNodeWithText("Search", ignoreCase = false).performClick()
+        compose.onNodeWithText("Page 1 of 2").assertIsDisplayed()
+        compose.onNodeWithText("Next").performClick()
+        compose.onNodeWithText("Page 2 of 2").assertIsDisplayed()
+        compose.onNodeWithText("Next").assertIsNotEnabled()
+        compose.onNodeWithText("Qual rio favoreceu a agricultura egípcia?").performClick()
+        compose.onNodeWithText("A) Rio Nilo").assertIsDisplayed()
+        compose.onNodeWithText("Close").performClick()
+        compose.waitUntil(5_000) { compose.runOnIdle { session.libraryLoaded } }
+        compose.onNodeWithText("Study this page on canvas").performClick()
+        compose.runOnIdle {
+            assertTrue(canvasOpened)
+            assertEquals("q-1", session.current?.id)
+            assertEquals(listOf("metadata", "search", "search"), requests.map { it.getString("operation") })
+            assertEquals(listOf(1, 2), requests.drop(1).map { it.getInt("page") })
+            for (request in requests.drop(1)) {
+                val filters = request.getJSONObject("filters")
+                assertEquals("567", filters.getString("category_id"))
+                assertEquals("719", filters.getString("subcategory_id"))
+                assertEquals("Egito", filters.getString("search"))
+            }
+        }
     }
 
     @Test fun tabletBrowserOpensAboveEverythingAndGoesToTheCanvas() {

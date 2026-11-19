@@ -58,12 +58,15 @@ fun AssaadTabletBrowserHost(session: AssaadSession, onCanvas: () -> Unit) {
             onDispose { session.attachTabletBrowser(null); browser.destroy() }
         }
         if (session.browserOpen) {
+            var useWebsite by remember { mutableStateOf(false) }
+            val showFinder = session.tabletVerified && session.tabletPageLoaded && !useWebsite
             val keyboard = LocalSoftwareKeyboardController.current
             val close = { keyboard?.hide(); browser.view.clearFocus(); session.browserOpen = false }
-            Dialog(onDismissRequest = { if (browser.view.canGoBack()) browser.back() else close() },
+            Dialog(onDismissRequest = { if (!showFinder && browser.view.canGoBack()) browser.back() else close() },
                 properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false,
                     dismissOnClickOutside = false, dismissOnBackPress = true)) {
-                AssaadBrowserScreen(session, browser, onClose = close, onCanvas = { close(); onCanvas() })
+                AssaadBrowserScreen(session, browser, onClose = close, onCanvas = { close(); onCanvas() },
+                    showFinder = showFinder, onShowWebsite = { useWebsite = true }, onShowFinder = { useWebsite = false })
             }
         } else {
             BrowserView(browser, Modifier.size(1.dp).alpha(0f).clearAndSetSemantics { })
@@ -92,13 +95,19 @@ private fun AssaadSession.step(): Step = when {
 }
 
 @Composable
-internal fun AssaadBrowserScreen(session: AssaadSession, browser: AssaadTabletBrowser?, onClose: () -> Unit, onCanvas: () -> Unit) {
+internal fun AssaadBrowserScreen(
+    session: AssaadSession, browser: AssaadTabletBrowser?, onClose: () -> Unit, onCanvas: () -> Unit,
+    showFinder: Boolean = false, onShowWebsite: () -> Unit = {}, onShowFinder: () -> Unit = {},
+) {
     val colors = MaterialTheme.colorScheme
     Surface(Modifier.fillMaxSize(), color = colors.surface) {
         Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing)) {
-            TopBar(session, browser, onClose, onCanvas)
+            TopBar(session, browser, onClose, onCanvas, showFinder, onShowWebsite, onShowFinder)
             Box(Modifier.weight(1f).fillMaxWidth()) {
-                if (browser != null) BrowserView(browser, Modifier.fillMaxSize())
+                if (browser != null) {
+                    BrowserView(browser, if (showFinder) Modifier.size(1.dp).alpha(0f).clearAndSetSemantics { } else Modifier.fillMaxSize())
+                    if (showFinder) AssaadQuestionFinder(session, browser, onCanvas)
+                }
                 val loading = !session.tabletPageLoaded && session.tabletProgress < 100
                 val progress by animateFloatAsState(session.tabletProgress / 100f, label = "page progress")
                 androidx.compose.animation.AnimatedVisibility(loading, enter = fadeIn(), exit = fadeOut(), modifier = Modifier.align(Alignment.TopCenter)) {
@@ -106,13 +115,16 @@ internal fun AssaadBrowserScreen(session: AssaadSession, browser: AssaadTabletBr
                         color = colors.primary, trackColor = Color.Transparent, drawStopIndicator = {})
                 }
             }
-            ActionBar(session, browser, onCanvas)
+            if (!showFinder) ActionBar(session, browser, onCanvas)
         }
     }
 }
 
 @Composable
-private fun TopBar(session: AssaadSession, browser: AssaadTabletBrowser?, onClose: () -> Unit, onCanvas: () -> Unit) {
+private fun TopBar(
+    session: AssaadSession, browser: AssaadTabletBrowser?, onClose: () -> Unit, onCanvas: () -> Unit,
+    showFinder: Boolean, onShowWebsite: () -> Unit, onShowFinder: () -> Unit,
+) {
     val colors = MaterialTheme.colorScheme
     BoxWithConstraints(Modifier.fillMaxWidth()) {
         val compact = maxWidth < 600.dp
@@ -124,10 +136,17 @@ private fun TopBar(session: AssaadSession, browser: AssaadTabletBrowser?, onClos
                     overflow = TextOverflow.Ellipsis)
                 ConnectionLine(session, compact)
             }
-            NotiIconButton(onClick = { browser?.back() }) {
-                Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Back in Assaad")
+            if (showFinder) {
+                NotiIconButton(onClick = onShowWebsite) { Icon(Icons.Outlined.Language, "Open Assaad website") }
+            } else {
+                NotiIconButton(onClick = { browser?.back() }) {
+                    Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Back in Assaad")
+                }
+                NotiIconButton(onClick = { browser?.reload() }) { Icon(Icons.Outlined.Refresh, "Reload Assaad") }
+                if (browser != null && session.tabletVerified) {
+                    NotiIconButton(onClick = onShowFinder) { Icon(Icons.Outlined.Search, "Find questions in Noti") }
+                }
             }
-            NotiIconButton(onClick = { browser?.reload() }) { Icon(Icons.Outlined.Refresh, "Reload Assaad") }
             Spacer(Modifier.width(4.dp))
             NotiTonalButton(onClick = { session.studyNext(); onCanvas() }) {
                 Icon(Icons.Outlined.Draw, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text("Canvas")
