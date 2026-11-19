@@ -5,9 +5,14 @@ import android.graphics.BitmapFactory
 import android.util.LruCache
 import androidx.compose.runtime.*
 import app.noti.assaad.*
+import app.noti.study.Progress
+import app.noti.study.Srs
+import app.noti.study.StudyItem
+import app.noti.study.Verdict
 import app.noti.ui.study.RemoteChoices
 import app.noti.ui.study.RemoteState
 import app.noti.ui.study.StudyController
+import app.noti.ui.study.StudyFilterOption
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.collectLatest
@@ -15,43 +20,136 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * Puts Plataforma Assaad on its study board: every saved question is an item on the
- * board's ordinary study sheet, answers go to Assaad and come back as checked cards, and
- * a newly saved set opens the sheet on its first question. Only on the Assaad board.
+ * Connects Plataforma Assaad to ANY open notebook's study sheet: saved question sets are
+ * available right inside the Assaad tab on every canvas, answers submit live and come back
+ * onto the card, and newly imported sets open on the sheet without forcing a special board.
  */
 @Composable
-internal fun AssaadStudyBridge(notebookId: String, study: StudyController?) {
+internal fun AssaadStudyBridge(study: StudyController?) {
     val session = LocalAssaadSession.current ?: return
-    if (study == null || session.boardId != notebookId) return
+    if (study == null) return
     val scope = rememberCoroutineScope()
     val figures = remember(session) { AssaadFigures(session, scope) }
     val remote = remember(session, figures) { AssaadRemote(session, figures) }
     DisposableEffect(study, remote) {
+        val lookup: (String) -> Bitmap? = figures::get
         study.remote = remote
-        study.board?.figure = figures::get
-        onDispose { if (study.remote === remote) study.remote = null; study.board?.figure = null }
+        study.board?.figure = lookup
+        onDispose {
+            if (study.remote === remote) study.remote = null
+            if (study.board?.figure === lookup) study.board?.figure = null
+        }
     }
-    LaunchedEffect(study, session) {
+    LaunchedEffect(study, session, remote) {
         snapshotFlow {
             val questions = session.studyQuestions.map { it.second }
             Triple(questions, questions.associate { it.id to session.answerFor(it.id) }, session.libraryLoaded to session.focus)
         }.collectLatest { (questions, answers, state) ->
             val (loaded, focus) = state
             if (!loaded) return@collectLatest
-            study.store.update { it.withAssaad(questions, answers::get, System.currentTimeMillis()) }
+            // Keep any Assaad questions already pinned onto THIS canvas updated with fresh verdicts.
+            val printedIds = study.data.cards.mapTo(HashSet()) { it.itemId }
+            val pinnedQuestions = questions.filter { assaadItemId(it.id) in printedIds }
+            if (pinnedQuestions.isNotEmpty()) {
+                val now = System.currentTimeMillis()
+                study.store.update { board ->
+                    var nextItems = board.items
+                    var nextProgress = board.progress
+                    for (q in pinnedQuestions) {
+                        val id = assaadItemId(q.id)
+                        val (item, prog) = assaadStudyEntry(q, answers[q.id], board.item(id), board.progress[id], now)
+                        nextItems = nextItems.map { if (it.id == id) item else it }
+                        nextProgress = nextProgress + (id to prog)
+                    }
+                    board.copy(items = nextItems, progress = nextProgress)
+                }
+            }
             if (focus != null) {
                 session.focus = null
-                study.showItem(focus.takeIf { it.isNotEmpty() }?.let(::assaadItemId))
+                study.showAssaad(focus.takeIf { it.isNotEmpty() }?.let(::assaadItemId))
             }
         }
     }
 }
 
-/** The board's study sheet, talking to Assaad through the session. */
+private fun assaadStudyEntry(
+    q: AssaadQuestion,
+    answer: AssaadAnswer?,
+    existingItem: StudyItem?,
+    existingProgress: Progress?,
+    createdAt: Long,
+    now: Long = System.currentTimeMillis(),
+): Pair<StudyItem, Progress> {
+    val checked = answer?.takeIf { it.status == "confirmed" }
+    val chosen = checked?.let { a -> q.alternatives.indexOfFirst { it.id == a.alternativeId } } ?: -1
+    val right = checked?.correctAlternativeId?.let { rid -> q.alternatives.indexOfFirst { it.id == rid } }?.takeIf { it >= 0 }
+        ?: if (checked?.correct == true) chosen else -1
+    val item = q.studyItem(existingItem?.createdAt?.takeIf { it > 0 } ?: createdAt, right)
+    val base = existingProgress ?: Progress()
+    val updated = when {
+        chosen >= 0 && base.chosen != chosen -> base.copy(
+            chosen = chosen,
+            attempts = base.attempts + 1,
+            srs = base.srs ?: Srs.review(
+                null,
+                Srs.ratingFor(if (chosen == right) Verdict.Correct else Verdict.Incorrect, 0, false, item.difficulty),
+                now,
+            ),
+        )
+        chosen < 0 && base.chosen >= 0 -> base.copy(chosen = -1)
+        else -> base
+    }
+    return item to updated
+}
+
+/** The sheet's Assaad tab, talking directly to [AssaadSession] from any canvas. */
 @Stable
 private class AssaadRemote(private val session: AssaadSession, private val figures: AssaadFigures) : RemoteChoices {
     override val name = "Assaad"
+    private var filterBatchId by mutableStateOf<String?>(null)
+    private val srsCache = HashMap<String, Progress>()
+    private val createdCache = HashMap<String, Long>()
+
+    override val selectedFilterId: String?
+        get() = filterBatchId?.takeIf { id -> session.batches.any { it.id == id } }
+
+    override fun selectFilter(id: String?) {
+        filterBatchId = id
+        if (id != null) session.selectBatch(id)
+    }
+
+    override val filters: List<StudyFilterOption>
+        get() = session.batches.asReversed().map { batch ->
+            val label = batch.questions.firstOrNull()?.tags?.joinToString(" · ")?.takeIf { it.isNotBlank() } ?: "Assaad set"
+            val answered = batch.questions.count { session.answerFor(it.id)?.status == "confirmed" }
+            StudyFilterOption(batch.id, label, "${batch.questions.size} Q · $answered checked")
+        }
+
+    private fun entryFor(q: AssaadQuestion): Pair<StudyItem, Progress> {
+        val id = assaadItemId(q.id)
+        val createdAt = createdCache.getOrPut(id) { System.currentTimeMillis() }
+        val (item, prog) = assaadStudyEntry(q, session.answerFor(q.id), null, srsCache[id], createdAt)
+        srsCache[id] = prog
+        return item to prog
+    }
+
+    override val allItems: List<StudyItem>
+        get() = session.studyQuestions.map { (_, q) -> entryFor(q).first }
+
+    override val items: List<StudyItem>
+        get() {
+            val activeBatch = selectedFilterId?.let { id -> session.batches.find { it.id == id } }
+            val questions = activeBatch?.questions ?: session.studyQuestions.map { it.second }
+            return questions.map { q -> entryFor(q).first }
+        }
+
     override fun owns(itemId: String) = assaadQuestionId(itemId)?.let { session.question(it) } != null
+
+    override fun item(itemId: String): StudyItem? =
+        assaadQuestionId(itemId)?.let { session.question(it) }?.let { entryFor(it).first }
+
+    override fun progressOf(itemId: String): Progress =
+        assaadQuestionId(itemId)?.let { session.question(it) }?.let { entryFor(it).second } ?: Progress()
 
     override fun state(itemId: String): RemoteState? {
         val qid = assaadQuestionId(itemId) ?: return null

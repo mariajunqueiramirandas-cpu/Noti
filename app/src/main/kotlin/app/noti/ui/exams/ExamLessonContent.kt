@@ -1,4 +1,4 @@
-package app.noti.ui.fuvest
+package app.noti.ui.exams
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.layout.*
@@ -25,41 +25,41 @@ import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import app.noti.fuvest.*
+import app.noti.exams.*
 import app.noti.ui.common.NotiButton
 import app.noti.ui.common.NotiOutlinedButton
 import app.noti.ui.common.NotiTextButton
 import app.noti.ui.common.StudyText
 
 internal fun LazyListScope.lessonPathContent(
-    lesson: FuvestLesson,
-    subject: FuvestSubject,
-    completed: Set<FuvestMilestone>,
-    inProgress: FuvestMilestone?,
-    reference: FuvestReference?,
+    lesson: ExamLesson,
+    subjectLabel: String,
+    completed: Set<StudyMilestone>,
+    inProgress: StudyMilestone?,
+    reference: ExamReference?,
     examTried: Boolean,
     enabled: Boolean,
-    open: (FuvestMilestone) -> Unit,
-    practice: (FuvestReference) -> Unit,
+    open: (StudyMilestone) -> Unit,
+    practice: (ExamReference) -> Unit,
 ) {
     val milestones = lesson.milestones()
     val next = inProgress?.takeIf { it in milestones && it !in completed }
         ?: milestones.firstOrNull { it !in completed }
     val done = milestones.count { it in completed }
     item("goal") {
-        val accent = subject.accent()
+        val accent = subjectAccent(subjectLabel)
         val longGoal = lesson.goal.length > 220
         var showGoal by rememberSaveable { mutableStateOf(false) }
         LessonCard(accent.container, accent.ink) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                FuvestEmblem(if (next == null) Icons.Outlined.Check else accent.icon,
+                ExamEmblem(if (next == null) Icons.Outlined.Check else accent.icon,
                     accent.ink.copy(alpha = .12f), accent.ink)
                 Column(Modifier.weight(1f)) {
-                    FuvestHeading(if (next == null) "Aula concluída" else "Trilha da aula")
+                    ExamHeading(if (next == null) "Aula concluída" else "Trilha da aula")
                     Text("$done de ${milestones.size} etapas concluídas", style = MaterialTheme.typography.labelMedium)
                 }
             }
-            FuvestProgressRail(done.toFloat() / milestones.size.coerceAtLeast(1), accent.ink,
+            ExamProgressRail(done.toFloat() / milestones.size.coerceAtLeast(1), accent.ink,
                 accent.ink.copy(alpha = .16f), Modifier.fillMaxWidth())
             if (!longGoal) LessonText(lesson.goal)
             if (longGoal && next != null) {
@@ -81,7 +81,7 @@ internal fun LazyListScope.lessonPathContent(
             }
             AnimatedVisibility(longGoal && showGoal) {
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    FuvestHeading("Objetivo da aula")
+                    ExamHeading("Objetivo da aula")
                     LessonText(lesson.goal)
                 }
             }
@@ -91,26 +91,26 @@ internal fun LazyListScope.lessonPathContent(
     }
     milestones.forEachIndexed { index, step ->
         when {
-            index == 0 && step.chapterIndex != null -> item("learn") { FuvestHeading("Aprender") }
-            step.exerciseIndex == 0 -> item("exercises") { FuvestHeading("Praticar") }
+            index == 0 && step.chapterIndex != null -> item("learn") { ExamHeading("Aprender") }
+            step.exerciseIndex == 0 -> item("exercises") { ExamHeading("Praticar") }
         }
         item(step.wire) {
-            MilestoneRow(step.title(lesson), index + 1, step.xp, step in completed, next == step, subject,
+            MilestoneRow(step.title(lesson), index + 1, step.xp, step in completed, next == step, subjectLabel,
                 enabled, open = { open(step) })
         }
     }
     if (reference != null) {
-        item("exam-title") { FuvestHeading("Na prova") }
+        item("exam-title") { ExamHeading("Na prova") }
         item("exam") {
-            val accent = subject.accent()
+            val accent = subjectAccent(subjectLabel)
             LessonCard {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    FuvestEmblem(if (examTried) Icons.Outlined.Check else Icons.Outlined.EditNote, accent.container, accent.ink)
+                    ExamEmblem(if (examTried) Icons.Outlined.Check else Icons.Outlined.EditNote, accent.container, accent.ink)
                     Column(Modifier.weight(1f)) {
-                        Text("Questão da FUVEST", style = MaterialTheme.typography.titleLarge)
+                        Text("Questão da prova", style = MaterialTheme.typography.titleLarge)
                         Text(reference.label, style = MaterialTheme.typography.bodySmall)
                     }
-                    Text(if (examTried) "${FuvestOverview.QuestionXp} XP ganhos" else "+${FuvestOverview.QuestionXp} XP",
+                    Text(if (examTried) "${StudyOverview.QuestionXp} XP ganhos" else "+${StudyOverview.QuestionXp} XP",
                         color = accent.ink, style = MaterialTheme.typography.labelMedium)
                 }
                 Text("Escreva e justifique sua solução no quadro. Confira e avalie sua resposta para registrar a tentativa.",
@@ -121,10 +121,10 @@ internal fun LazyListScope.lessonPathContent(
     }
     item("mastery") {
         LessonCard {
-            FuvestHeading("Confira seu domínio")
+            ExamHeading("Confira seu domínio")
             lesson.checklist.forEach { criterion ->
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Icon(Icons.Outlined.Check, null, Modifier.size(18.dp), tint = subject.accent().ink)
+                    Icon(Icons.Outlined.Check, null, Modifier.size(18.dp), tint = subjectAccent(subjectLabel).ink)
                     Column(Modifier.weight(1f)) { LessonText(criterion) }
                 }
             }
@@ -136,8 +136,8 @@ internal fun LazyListScope.lessonPathContent(
 
 @Composable
 private fun MilestoneRow(title: String, position: Int, xp: Int, done: Boolean, next: Boolean,
-    subject: FuvestSubject, enabled: Boolean, open: () -> Unit) {
-    val accent = subject.accent()
+    subjectLabel: String, enabled: Boolean, open: () -> Unit) {
+    val accent = subjectAccent(subjectLabel)
     val colors = MaterialTheme.colorScheme
     Surface(onClick = open, enabled = enabled, shape = RoundedCornerShape(20.dp),
         color = if (next) accent.container else colors.surfaceContainerLowest) {
@@ -165,19 +165,19 @@ private fun MilestoneRow(title: String, position: Int, xp: Int, done: Boolean, n
 }
 
 internal fun LazyListScope.lessonMilestoneContent(
-    lesson: FuvestLesson,
-    subject: FuvestSubject,
-    step: FuvestMilestone,
+    lesson: ExamLesson,
+    subjectLabel: String,
+    step: StudyMilestone,
     done: Boolean,
     enabled: Boolean,
-    overview: FuvestOverview,
+    overview: StudyOverview,
     onComplete: () -> Unit,
     onNext: () -> Unit,
     onPath: () -> Unit,
 ) {
     item("milestone") {
         val steps = lesson.milestones()
-        val accent = subject.accent()
+        val accent = subjectAccent(subjectLabel)
         val colors = MaterialTheme.colorScheme
         val chapter = step.chapterIndex?.let(lesson.sections::get)
         val exercise = step.exerciseIndex?.let(lesson.exercises::get)
@@ -197,7 +197,7 @@ internal fun LazyListScope.lessonMilestoneContent(
             }
             if (chapter != null) LessonCard { LessonText(chapter.body) }
             LessonCard {
-                FuvestHeading(if (chapter != null) "Teste seu entendimento" else "Sua vez de resolver")
+                ExamHeading(if (chapter != null) "Teste seu entendimento" else "Sua vez de resolver")
                 LessonText(chapter?.check ?: requireNotNull(exercise).prompt)
                 if (!done && !showAnswer) Text(
                     if (chapter != null) "Tente responder com suas palavras antes de conferir."
@@ -231,12 +231,12 @@ internal fun LazyListScope.lessonMilestoneContent(
                     contentColor = colors.onTertiaryContainer) {
                     Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        FuvestEmblem(Icons.Outlined.Star, colors.surface.copy(alpha = .7f), colors.onTertiaryContainer)
+                        ExamEmblem(Icons.Outlined.Star, colors.surface.copy(alpha = .7f), colors.onTertiaryContainer)
                         Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                             Text("Etapa concluída · +${step.xp} XP", style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.ExtraBold)
                             if (overview.level > priorLevel) Text("Nível ${overview.level} alcançado!", style = MaterialTheme.typography.bodyMedium)
-                            if (priorToday < FuvestOverview.DailyGoal && overview.today >= FuvestOverview.DailyGoal)
+                            if (priorToday < StudyOverview.DailyGoal && overview.today >= StudyOverview.DailyGoal)
                                 Text("Meta de hoje concluída!", style = MaterialTheme.typography.bodyMedium)
                         }
                     }

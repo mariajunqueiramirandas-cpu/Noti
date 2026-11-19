@@ -231,7 +231,8 @@ data class Progress(
 ) {
     /** Correct, partly right or not yet, from a check, a choice or a rating; null if untried. */
     fun outcome(item: StudyItem): Verdict? = when {
-        item.kind == ItemKind.Choice && chosen >= 0 -> if (chosen == item.correctChoice) Verdict.Correct else Verdict.Incorrect
+        item.kind == ItemKind.Choice && chosen >= 0 && item.correctChoice >= 0 ->
+            if (chosen == item.correctChoice) Verdict.Correct else Verdict.Incorrect
         selfAssessment != null -> selfAssessment
         grade != null -> grade.verdict
         item.kind == ItemKind.Flash && srs != null -> when (srs.lastRating) {

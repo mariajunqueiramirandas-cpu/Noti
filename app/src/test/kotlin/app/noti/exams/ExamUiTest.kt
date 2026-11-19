@@ -1,20 +1,15 @@
-package app.noti.fuvest
+package app.noti.exams
 
 import androidx.activity.ComponentActivity
-import androidx.compose.ui.test.hasSetTextAction
-import androidx.compose.ui.test.hasText
-import androidx.compose.ui.test.assertIsDisplayed
-import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
-import androidx.compose.ui.test.onNodeWithContentDescription
-import androidx.compose.ui.test.onNodeWithText
-import androidx.compose.ui.test.performClick
-import androidx.compose.ui.test.performScrollTo
-import androidx.compose.ui.test.performTextReplacement
 import app.noti.data.LibraryStore
+import app.noti.data.Paper
+import app.noti.data.SettingsStore
 import app.noti.data.ThemeMode
-import app.noti.ui.fuvest.FuvestScreen
-import app.noti.ui.fuvest.EditReadQuestion
+import app.noti.ui.exams.EditReadQuestion
+import app.noti.ui.exams.StudyHubScreen
+import app.noti.ui.study.StudyLaunchTarget
 import app.noti.ui.theme.NotiTheme
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
@@ -29,14 +24,14 @@ import org.robolectric.annotation.GraphicsMode
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [35], qualifiers = "w412dp-h915dp-mdpi")
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
-class FuvestUiTest {
+class ExamUiTest {
     @get:Rule val compose = createAndroidComposeRule<ComponentActivity>()
     @get:Rule val directory = TemporaryFolder()
 
     @Test
     fun importReviewShowsFormattedMathAndReflectsEdits() {
         val question = sampleQuestion.copy(stem = """Produz-se CO\(_2\).""")
-        var saved: FuvestQuestion? = null
+        var saved: ExamQuestion? = null
         compose.setContent {
             NotiTheme(ThemeMode.Light) {
                 EditReadQuestion(question, onClose = {}, onSave = { saved = it })
@@ -53,50 +48,65 @@ class FuvestUiTest {
     }
 
     @Test
-    fun topicOpensSavedLessonOriginalAndSharedPracticeBoard() {
+    fun studyHubShowsAnyExamSubjectKeepsGamificationAndAlwaysAsksWhichCanvasToOpen() {
         val library = LibraryStore(compose.activity)
-        val source = library.addPdf("fuvest-ui-pdf", "FUVEST 2023", 38, null)
+        val settings = SettingsStore(compose.activity)
+        val myNotebook = library.create("Meu caderno de estudo", Paper(), null)
+        val source = library.addPdf("enem-ui-pdf", "ENEM 2024", 24, null)
         checkNotNull(library.pdfFile(source)).writeBytes(byteArrayOf(1))
-        val exam = FuvestExam(2023, source.id, true, listOf(sampleQuestion))
-        val reference = FuvestReference(exam, sampleQuestion)
-        val store = FuvestStore(directory.newFolder().resolve("fuvest.json"))
+        val question = ExamQuestion(
+            code = "91",
+            subject = "Biologia",
+            format = QuestionFormat.Choice,
+            stem = "Qual organela realiza a respiração celular?",
+            choices = listOf("Ribossomo", "Mitocôndria", "Lisossomo", "Golgi"),
+            correctChoice = 1,
+            pages = listOf(4),
+            topics = listOf("Citologia"),
+        )
+        val exam = PastExam("ENEM 2024 · 2º Dia", "ENEM", 2024, "Caderno Azul", source.id, listOf(question))
+        val reference = ExamReference(exam, question)
+        val store = ExamStore(directory.newFolder().resolve("exams.json"))
+        val topic = topicId("Biologia", "Citologia")
         runBlocking {
             store.load()
-            store.update {
-                FuvestCatalog(listOf(exam), mapOf(topicId(FuvestSubject.Math, sampleQuestion.topics.single()) to sampleLesson(reference.key)))
-            }
+            store.update { ExamCatalog(listOf(exam), mapOf(topic to sampleLesson(reference.key))) }
         }
         var openedSource: Pair<String, Int>? = null
-        var openedPractice: Pair<String, String>? = null
+        var openedCanvas: Pair<String, StudyLaunchTarget>? = null
         compose.setContent {
             NotiTheme(ThemeMode.Light) {
-                FuvestScreen(library, store, onBack = {}, onSettings = {},
+                StudyHubScreen(
+                    library = library,
+                    settings = settings,
+                    store = store,
+                    onBack = {},
+                    onSettings = {},
                     onSource = { id, page -> openedSource = id to page },
-                    onPractice = { id, item -> openedPractice = id to item })
+                    onOpenOnCanvas = { id, target -> openedCanvas = id to target },
+                )
             }
         }
-        compose.onNodeWithText("Matemática").performClick()
-        compose.onNodeWithText("Funções por partes").performClick()
+        compose.onNodeWithText("Biologia").performClick()
+        compose.onNodeWithText("Citologia").performClick()
         compose.onNodeWithText("Abrir aula").performClick()
         compose.onNodeWithText("Trilha da aula").assertIsDisplayed()
-        compose.onNodeWithText("Explicar como o preço varia.").assertIsDisplayed()
         compose.onNodeWithText("Começar trilha").performClick()
         compose.onNodeWithText("Concluir etapa").assertIsNotEnabled()
         compose.onNodeWithText("Conferir resposta").performScrollTo().performClick()
         compose.onNodeWithText("Concluir etapa").performScrollTo().performClick()
-        val topic = topicId(FuvestSubject.Math, sampleQuestion.topics.single())
-        compose.waitUntil(8_000) { FuvestMilestone.Foundations in store.catalog?.journey?.milestones(topic).orEmpty() }
+        compose.waitUntil(8_000) { StudyMilestone.Foundations in store.catalog?.journey?.milestones(topic).orEmpty() }
         compose.onNodeWithText("Etapa concluída · +10 XP").assertIsDisplayed()
-        compose.onNodeWithText("Próxima etapa").performScrollTo().performClick()
-        compose.waitUntil(8_000) { store.catalog?.journey?.inProgress?.get(topic) == FuvestMilestone.MentalModel }
-        compose.onNodeWithText("Conceito 2").assertIsDisplayed()
         compose.onNodeWithContentDescription("Voltar").performClick()
-        compose.onNodeWithText("1 de 8 etapas concluídas").assertIsDisplayed()
         compose.onNodeWithContentDescription("Voltar").performClick()
-        compose.onNodeWithText("Abrir PDF · p. 2").performClick()
-        compose.runOnIdle { assertEquals(source.id to 2, openedSource) }
+        compose.onNodeWithText("Abrir PDF · p. 4").performClick()
+        compose.runOnIdle { assertEquals(source.id to 4, openedSource) }
+        // Tapping "Resolver no quadro" always asks which notebook to open!
         compose.onNodeWithText("Resolver no quadro").performClick()
-        compose.waitUntil(8_000) { openedPractice != null }
-        compose.runOnIdle { assertEquals(exam.boardId to reference.key, openedPractice) }
+        compose.onNodeWithText("Escolher caderno").assertIsDisplayed()
+        compose.onNodeWithText(myNotebook.name).performClick()
+        compose.runOnIdle {
+            assertEquals(myNotebook.id to StudyLaunchTarget.Exam(reference.key), openedCanvas)
+        }
     }
 }

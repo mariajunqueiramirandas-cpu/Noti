@@ -33,14 +33,16 @@ import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntRect
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
-import app.noti.fuvest.FuvestOverview
+import app.noti.exams.StudyOverview
 import app.noti.pdf.PagePlacement
 import app.noti.study.CardFace
 import app.noti.study.ItemKind
@@ -91,9 +93,8 @@ internal class SheetGeometry {
 private val Halo = 10.dp
 
 /**
- * The floating study sheet: the current item over the board, which stays live underneath.
- * Drag its header to move it. It never covers ink with a writing area: you work on the
- * board and compare your work with the saved answer when you are ready.
+ * The floating study sheet: Deck, Assaad, and Past Exams over any canvas, which stays live
+ * underneath. Drag its header to move it.
  */
 @Composable
 internal fun BoxScope.StudySheet(
@@ -159,8 +160,8 @@ private fun CollapsedSheet(study: StudyController, drag: Modifier) {
 }
 
 private fun positionLabel(study: StudyController): String {
-    val total = study.order.size
-    return if (total == 0) "Study" else "Q ${study.position + 1} of $total"
+    val total = study.activeOrder.size
+    return if (total == 0) study.effectiveTab.label else "Q ${study.position + 1} of $total"
 }
 
 @Composable
@@ -170,8 +171,10 @@ private fun ExpandedSheet(
 ) {
     val colors = MaterialTheme.colorScheme
     val density = LocalDensity.current
+    val tab = study.effectiveTab
     val item = study.current
     val exam = study.exam
+    val showTabs = exam == null && (study.remote != null || study.examFeed != null)
     SheetSurface(Modifier.width(width).heightIn(max = maxHeight)) {
         // Header: drag to move; previous, where you are, next; menu; collapse; close.
         Row(drag.fillMaxWidth().padding(start = 4.dp, end = 4.dp, top = 4.dp).semantics { contentDescription = "Study sheet. Drag to move." },
@@ -179,26 +182,37 @@ private fun ExpandedSheet(
             SmallIcon(Icons.AutoMirrored.Outlined.KeyboardArrowLeft, "Previous", enabled = study.position > 0) { study.step(-1) }
             if (exam != null) ExamClock(study, exam.endsAt) else
                 Text(positionLabel(study), style = MaterialTheme.typography.labelLarge, color = colors.onSurface)
-            SmallIcon(Icons.AutoMirrored.Outlined.KeyboardArrowRight, "Next", enabled = study.position < study.order.lastIndex) { study.step(1) }
+            SmallIcon(Icons.AutoMirrored.Outlined.KeyboardArrowRight, "Next", enabled = study.position < study.activeOrder.lastIndex) { study.step(1) }
             Spacer(Modifier.weight(1f))
             SheetMenu(study)
             SmallIcon(Icons.Outlined.CloseFullscreen, "Collapse the study sheet") { study.collapsed = true }
             SmallIcon(Icons.Outlined.Close, "Close the study sheet") { study.hide() }
         }
-        study.remote?.let { remote ->
-            remote.connectionNote?.let { note ->
-                Banner(note, Icons.Outlined.CloudOff, colors.surfaceContainerHigh) {
-                    BannerAction("Open") { remote.openPlatform() }
+        if (showTabs) SourceSwitcher(study, tab)
+        if (tab == StudySourceTab.Assaad) {
+            study.remote?.let { r ->
+                if (r.filters.size > 1) FilterStrip("All sets", r.filters, r.selectedFilterId, r::selectFilter)
+                r.connectionNote?.let { note ->
+                    Banner(note, Icons.Outlined.CloudOff, colors.surfaceContainerHigh) {
+                        BannerAction("Open") { r.openPlatform() }
+                    }
                 }
+            }
+        } else if (tab == StudySourceTab.Exams) {
+            study.examFeed?.let { feed ->
+                if (feed.filters.size > 1) FilterStrip("All exams", feed.filters, feed.selectedFilterId, feed::selectFilter)
             }
         }
         if (item == null) {
-            EmptyDeck(study, Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()))
+            EmptyTabState(study, tab, Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()))
             return@SheetSurface
         }
-        val progress = study.data.progressOf(item.id)
-        val number = study.data.items.indexOf(item) + 1
-        val source = study.data.source(item.sourceId)?.name
+        val progress = study.progressOf(item)
+        val number = when (tab) {
+            StudySourceTab.Deck -> study.data.items.indexOf(item) + 1
+            else -> study.position + 1
+        }
+        val source = study.sourceNameOf(item)
         val widthDp = width.value
         val mode = if (exam != null && item.id in exam.itemIds) CardFace.Mode.Exam else CardFace.Mode.Sheet
         val remote = study.remote?.takeIf { it.owns(item.id) }
@@ -212,7 +226,9 @@ private fun ExpandedSheet(
         RemoteBanner(remote, item.id, remoteState)
         val scroll = key(item.id) { rememberScrollState() }
         Column(Modifier.weight(1f, fill = false).verticalScroll(scroll)) {
-            val choose = if (item.kind == ItemKind.Choice && remoteState?.locked != true && (mode == CardFace.Mode.Exam || progress.chosen < 0)) study::choose else null
+            val canChoose = item.kind == ItemKind.Choice && remoteState?.locked != true &&
+                (mode == CardFace.Mode.Exam || progress.chosen < 0 || item.correctChoice < 0)
+            val choose = if (canChoose) study::choose else null
             Box(Modifier.size(face.widthDp.dp, face.heightDp.dp).onGloballyPositioned { geometry.face = it }) {
                 Canvas(Modifier.matchParentSize().semantics {
                     contentDescription = plain(item.prompt) +
@@ -235,14 +251,92 @@ private fun ExpandedSheet(
                 }
             }
         }
-        Actions(study, item, mode == CardFace.Mode.Exam, remote, remoteState, picked) {
+        val canPrint = study.board != null
+        Actions(study, item, progress, mode == CardFace.Mode.Exam, remote, remoteState, picked, canPrint) {
             val at = geometry.faceInEditor() ?: return@Actions
             val sheet = placement()?.visiblePages?.firstOrNull() ?: return@Actions
             study.print(at.x, at.y, face.widthDp, density.density, sheet)
         }
-        if (item.credit == "FUVEST" && item.kind in writtenKinds && progress.attempts > 0 && exam == null) {
+        val isExamItem = tab == StudySourceTab.Exams || study.isPastExam(item.id) || item.credit == "FUVEST"
+        if (isExamItem && remote == null && progress.attempts > 0 && exam == null) {
             Box(Modifier.padding(bottom = 6.dp).semantics { liveRegion = LiveRegionMode.Polite }) {
-                Banner("Tentativa registrada · ${FuvestOverview.QuestionXp} XP ganhos", Icons.Outlined.Star, colors.tertiaryContainer)
+                Banner("Tentativa registrada · ${StudyOverview.QuestionXp} XP ganhos", Icons.Outlined.Star, colors.tertiaryContainer)
+            }
+        }
+    }
+}
+
+@Composable
+private fun SourceSwitcher(study: StudyController, active: StudySourceTab) {
+    val colors = MaterialTheme.colorScheme
+    val tabs = buildList {
+        add(StudySourceTab.Deck)
+        if (study.remote != null) add(StudySourceTab.Assaad)
+        if (study.examFeed != null) add(StudySourceTab.Exams)
+    }
+    Row(
+        Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp)
+            .clip(CircleShape).background(colors.surfaceContainerLow).padding(3.dp),
+        horizontalArrangement = Arrangement.spacedBy(3.dp),
+    ) {
+        tabs.forEach { tab ->
+            val selected = tab == active
+            Box(
+                Modifier.weight(1f).heightIn(min = 34.dp).clip(CircleShape)
+                    .background(if (selected) colors.primaryContainer else androidx.compose.ui.graphics.Color.Transparent)
+                    .clickable { study.switchTab(tab) }
+                    .semantics { this.selected = selected },
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    tab.label,
+                    style = MaterialTheme.typography.labelMedium.copy(fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium),
+                    color = if (selected) colors.onPrimaryContainer else colors.onSurfaceVariant,
+                    maxLines = 1,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun FilterStrip(allLabel: String, options: List<StudyFilterOption>, selectedId: String?, onSelect: (String?) -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    val colors = MaterialTheme.colorScheme
+    val current = options.firstOrNull { it.id == selectedId }
+    Box(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 2.dp)) {
+        Row(
+            Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(colors.surfaceContainerLow)
+                .clickable { open = true }.padding(horizontal = 12.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                current?.label ?: allLabel,
+                style = MaterialTheme.typography.labelMedium,
+                color = colors.onSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+            Icon(Icons.Outlined.ExpandMore, null, Modifier.size(18.dp), tint = colors.onSurfaceVariant)
+        }
+        if (open) app.noti.ui.common.NotiDropdownMenu(expanded = true, onDismissRequest = { open = false }) {
+            app.noti.ui.common.NotiMenuItem(
+                text = { Text(allLabel) },
+                trailingIcon = if (selectedId == null) ({ Icon(Icons.Outlined.Check, null, Modifier.size(18.dp)) }) else null,
+                onClick = { open = false; onSelect(null) },
+            )
+            options.forEach { opt ->
+                app.noti.ui.common.NotiMenuItem(
+                    text = {
+                        Column {
+                            Text(opt.label, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            if (opt.detail.isNotBlank()) Text(opt.detail, style = MaterialTheme.typography.labelSmall, color = colors.onSurfaceVariant)
+                        }
+                    },
+                    trailingIcon = if (opt.id == selectedId) ({ Icon(Icons.Outlined.Check, null, Modifier.size(18.dp)) }) else null,
+                    onClick = { open = false; onSelect(opt.id) },
+                )
             }
         }
     }
@@ -304,25 +398,53 @@ private fun BannerAction(label: String, onClick: () -> Unit) {
 }
 
 @Composable
-private fun EmptyDeck(study: StudyController, modifier: Modifier) {
+private fun EmptyTabState(study: StudyController, tab: StudySourceTab, modifier: Modifier) {
     Column(modifier.fillMaxWidth().padding(20.dp), horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Text("Nothing to study yet", style = MaterialTheme.typography.titleMedium)
-        Text("Add flash cards and practice questions to build your deck.",
-            style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            app.noti.ui.common.NotiButton(onClick = { study.editItem(ItemKind.Flash) }) { Text("Add flash card") }
-            app.noti.ui.common.NotiOutlinedButton(onClick = { study.editItem(ItemKind.Short) }) { Text("Add question") }
+        when (tab) {
+            StudySourceTab.Deck -> {
+                Text("Nothing to study yet", style = MaterialTheme.typography.titleMedium)
+                Text("Add flash cards and practice questions to build your deck.",
+                    style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    app.noti.ui.common.NotiButton(onClick = { study.editItem(ItemKind.Flash) }) { Text("Add flash card") }
+                    app.noti.ui.common.NotiOutlinedButton(onClick = { study.editItem(ItemKind.Short) }) { Text("Add question") }
+                }
+            }
+            StudySourceTab.Assaad -> {
+                val remote = study.remote
+                Text("No Assaad questions yet", style = MaterialTheme.typography.titleMedium)
+                Text("Find questions in Plataforma Assaad and study them right here on this canvas.",
+                    style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (remote != null) FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    app.noti.ui.common.NotiButton(onClick = remote::openPlatform) { Text("Open ${remote.name}") }
+                    app.noti.ui.common.NotiOutlinedButton(onClick = remote::openConnection) { Text("Connection") }
+                }
+            }
+            StudySourceTab.Exams -> {
+                Text("No past exams imported yet", style = MaterialTheme.typography.titleMedium)
+                Text("Import any exam PDF — AI identifies the exam, subjects, and questions automatically.",
+                    style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                study.examFeed?.let { feed ->
+                    app.noti.ui.common.NotiButton(onClick = feed::openHub) { Text("Open Past Exams") }
+                }
+            }
         }
-        val remote = study.remote
-        if (remote != null) Pill(Icons.Outlined.TravelExplore, "Open ${remote.name}") { remote.openPlatform() }
     }
 }
 
 @Composable
-private fun Actions(study: StudyController, item: StudyItem, exam: Boolean,
-    remote: RemoteChoices?, remoteState: RemoteState?, picked: Int, onPrint: () -> Unit) {
-    val p = study.data.progressOf(item.id)
+private fun Actions(
+    study: StudyController,
+    item: StudyItem,
+    p: app.noti.study.Progress,
+    exam: Boolean,
+    remote: RemoteChoices?,
+    remoteState: RemoteState?,
+    picked: Int,
+    canPrint: Boolean,
+    onPrint: () -> Unit,
+) {
     val uriHandler = LocalUriHandler.current
     FlowRow(Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, top = 6.dp, bottom = 12.dp),
         horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -330,7 +452,7 @@ private fun Actions(study: StudyController, item: StudyItem, exam: Boolean,
             remote != null -> {
                 val phase = remoteState?.phase
                 when (phase) {
-                    RemoteState.Phase.Done -> if (study.position < study.order.lastIndex)
+                    RemoteState.Phase.Done -> if (study.position < study.activeOrder.lastIndex)
                         Pill(Icons.AutoMirrored.Outlined.KeyboardArrowRight, "Next question", primary = true) { study.step(1) }
                     RemoteState.Phase.Checking -> Pill(null, "Checking…", enabled = false, primary = true) {}
                     RemoteState.Phase.Unknown -> Pill(Icons.Outlined.Replay, "Allow another attempt") { remote.retry(item.id) }
@@ -341,7 +463,7 @@ private fun Actions(study: StudyController, item: StudyItem, exam: Boolean,
                         else -> Pill(Icons.Outlined.Check, "Check with ${remote.name}", primary = true) { remote.submit(item.id) }
                     }
                 }
-                Pill(Icons.Outlined.PushPin, "Print", primary = false) { onPrint() }
+                if (canPrint) Pill(Icons.Outlined.PushPin, "Print", primary = false) { onPrint() }
             }
             exam -> {
                 if (item.kind in writtenKinds && p.grade == null) {
@@ -356,13 +478,14 @@ private fun Actions(study: StudyController, item: StudyItem, exam: Boolean,
                 else {
                     Rating.entries.forEach { r -> Pill(null, r.label, primary = r == Rating.Good) { study.rate(r) } }
                 }
-                Pill(Icons.Outlined.PushPin, "Print") { onPrint() }
+                if (canPrint) Pill(Icons.Outlined.PushPin, "Print") { onPrint() }
             }
             else -> {
+                val selfAssessable = item.kind in writtenKinds || (item.kind == ItemKind.Choice && item.correctChoice < 0)
                 if (item.hints.isNotEmpty() && p.hintsShown < item.hints.size && !p.answerShown)
                     Pill(Icons.Outlined.Lightbulb, if (p.hintsShown == 0) "Hint" else "Hint ${p.hintsShown + 1}") { study.hint() }
-                if (!p.answerShown) Pill(Icons.Outlined.Visibility, "Answer", primary = item.kind in writtenKinds) { study.reveal() }
-                if (item.kind in writtenKinds && p.answerShown && p.selfAssessment == null) {
+                if (!p.answerShown) Pill(Icons.Outlined.Visibility, "Answer", primary = selfAssessable) { study.reveal() }
+                if (selfAssessable && p.answerShown && p.selfAssessment == null) {
                     Verdict.entries.forEach { verdict ->
                         Pill(null, verdict.label) { study.assessWrittenAnswer(verdict) }
                     }
@@ -376,7 +499,7 @@ private fun Actions(study: StudyController, item: StudyItem, exam: Boolean,
                     }
                 }
                 if (item.pages.isNotEmpty() && item.sourceId != null) Pill(Icons.Outlined.MenuBook, "Source") { study.sourceOf = item }
-                Pill(Icons.Outlined.PushPin, "Print", primary = p.grade != null || p.chosen >= 0 || p.answerShown) { onPrint() }
+                if (canPrint) Pill(Icons.Outlined.PushPin, "Print", primary = p.grade != null || p.chosen >= 0 || p.answerShown) { onPrint() }
             }
         }
     }
@@ -406,32 +529,42 @@ private fun SmallIcon(icon: ImageVector, label: String, enabled: Boolean = true,
 private fun SheetMenu(study: StudyController) {
     var open by remember { mutableStateOf(false) }
     val item = study.current
+    val tab = study.effectiveTab
     Box {
         SmallIcon(Icons.Outlined.MoreHoriz, "Study options") { open = true }
         if (open) app.noti.ui.common.NotiDropdownMenu(expanded = true, onDismissRequest = { open = false }) {
             @Composable fun entry(label: String, icon: ImageVector, enabled: Boolean = true, destructive: Boolean = false, action: () -> Unit) =
                 app.noti.ui.common.NotiMenuItem(text = { Text(label) }, leadingIcon = { Icon(icon, null) }, enabled = enabled,
                     destructive = destructive, onClick = { open = false; action() })
-            entry("Deck", Icons.Outlined.Style) { study.deckOpen = true }
-            if (study.exam == null) {
-                entry("Add flash card", Icons.AutoMirrored.Outlined.NoteAdd) { study.editItem(ItemKind.Flash) }
-                entry("Add question", Icons.Outlined.Add) { study.editItem(ItemKind.Short) }
-                if (item != null && !study.isRemote(item.id)) entry(if (item.kind == ItemKind.Flash) "Edit flash card" else "Edit question", Icons.Outlined.Edit) {
-                    study.editItem(item.kind, item)
+            if (tab == StudySourceTab.Deck) {
+                entry("Deck", Icons.Outlined.Style) { study.deckOpen = true }
+                if (study.exam == null) {
+                    entry("Add flash card", Icons.AutoMirrored.Outlined.NoteAdd) { study.editItem(ItemKind.Flash) }
+                    entry("Add question", Icons.Outlined.Add) { study.editItem(ItemKind.Short) }
+                    if (item != null && !study.isRemote(item.id) && !study.isPastExam(item.id)) entry(
+                        if (item.kind == ItemKind.Flash) "Edit flash card" else "Edit question", Icons.Outlined.Edit,
+                    ) { study.editItem(item.kind, item) }
                 }
+                if (study.exam == null) {
+                    entry("Start an exam…", Icons.Outlined.Timer,
+                        enabled = study.data.items.any { it.kind != ItemKind.Flash && !study.isRemote(it.id) }) { study.examSetupOpen = true }
+                    study.data.exams.lastOrNull { it.finishedAt != null }?.let { exam ->
+                        entry("Last exam results", Icons.Outlined.Assessment) { study.examResults = exam.id }
+                    }
+                } else entry("Finish the exam", Icons.Outlined.Flag) { study.finishExam() }
             }
-            if (study.exam == null) {
-                entry("Start an exam…", Icons.Outlined.Timer,
-                    enabled = study.data.items.any { it.kind != ItemKind.Flash && !study.isRemote(it.id) }) { study.examSetupOpen = true }
-                study.data.exams.lastOrNull { it.finishedAt != null }?.let { exam ->
-                    entry("Last exam results", Icons.Outlined.Assessment) { study.examResults = exam.id }
-                }
-            } else entry("Finish the exam", Icons.Outlined.Flag) { study.finishExam() }
-            entry("Arrange cards by topic", Icons.Outlined.ViewColumn, enabled = study.data.cards.isNotEmpty()) { study.arrangeByTopic() }
-            if (item != null && study.exam == null && !study.isRemote(item.id)) entry("Try this one again", Icons.Outlined.Replay) { study.reset(item.id) }
+            if (study.board != null) {
+                entry("Arrange cards by topic", Icons.Outlined.ViewColumn, enabled = study.data.cards.isNotEmpty()) { study.arrangeByTopic() }
+            }
+            if (item != null && study.exam == null && !study.isRemote(item.id)) {
+                entry("Try this one again", Icons.Outlined.Replay) { study.reset(item.id) }
+            }
             study.remote?.let { r ->
                 entry("Open ${r.name}", Icons.Outlined.TravelExplore) { r.openPlatform() }
-                entry("Saved sets and connection", Icons.Outlined.Devices) { r.openConnection() }
+                entry("Assaad sets & connection", Icons.Outlined.Devices) { r.openConnection() }
+            }
+            study.examFeed?.let { feed ->
+                entry("Manage past exams", Icons.Outlined.School) { feed.openHub() }
             }
         }
     }

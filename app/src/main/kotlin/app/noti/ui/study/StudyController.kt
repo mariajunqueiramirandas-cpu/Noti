@@ -18,14 +18,15 @@ import app.noti.study.Progress
 import app.noti.study.Rating
 import app.noti.study.Srs
 import app.noti.study.StudyItem
+import app.noti.study.StudySource
 import app.noti.study.StudyStore
 import app.noti.study.Verdict
 import java.util.UUID
 
 /**
- * Everything a Study board does around its ink: the floating sheet (which item, where it
- * floats), local review, printing onto the board, exams and the topic layout.
- * State lives in [store] (saved) and here (this visit). Main thread.
+ * Everything a canvas does around its ink for studying: the floating sheet (Deck, Assaad,
+ * or Past Exams), local review, printing onto the canvas, practice exams, and topic layout.
+ * State lives in [store] (saved per canvas), global feeds ([remote], [examFeed]), and here.
  */
 @Stable
 class StudyController(
@@ -42,15 +43,55 @@ class StudyController(
     var collapsed by mutableStateOf(false)
     /** The sheet's top-left in the editor, px; null puts it at its usual spot. */
     var offset by mutableStateOf<IntOffset?>(null)
-    /** The order the sheet walks this visit: a snapshot, so answering doesn't reshuffle it. */
+    /** Which source the sheet is showing: this canvas's Deck, Assaad, or Past Exams. */
+    var activeTab by mutableStateOf(StudySourceTab.Deck)
+    /** Current item id while browsing Assaad or Past Exams tabs. */
+    private var assaadCurrentId by mutableStateOf<String?>(null)
+    private var examCurrentId by mutableStateOf<String?>(null)
+
+    /** The order the sheet walks for the Deck tab: a snapshot, so answering doesn't reshuffle it. */
     var order by mutableStateOf<List<String>>(emptyList())
         private set
 
     val data: BoardStudy get() = store.data
     val exam: Exam? get() = data.exams.lastOrNull { it.finishedAt == null }
-    val current: StudyItem? get() = data.item(data.current) ?: order.firstNotNullOfOrNull { data.item(it) }
-    val position: Int get() = current?.let { order.indexOf(it.id) } ?: -1
+
+    /** Items checked elsewhere (Plataforma Assaad), attached on every canvas. */
+    var remote by mutableStateOf<RemoteChoices?>(null)
+    /** Imported past exam questions, attached on every canvas. */
+    var examFeed by mutableStateOf<ExamFeed?>(null)
+
+    val effectiveTab: StudySourceTab get() = if (exam != null) StudySourceTab.Deck else activeTab
+
+    val activeOrder: List<String> get() = when (effectiveTab) {
+        StudySourceTab.Deck -> order
+        StudySourceTab.Assaad -> remote?.items?.map { it.id }.orEmpty()
+        StudySourceTab.Exams -> examFeed?.items?.map { it.id }.orEmpty()
+    }
+
+    val current: StudyItem? get() = when (effectiveTab) {
+        StudySourceTab.Deck -> data.item(data.current) ?: order.firstNotNullOfOrNull { data.item(it) }
+        StudySourceTab.Assaad -> remote?.let { r ->
+            assaadCurrentId?.let { id -> r.items.firstOrNull { it.id == id } ?: r.item(id) } ?: r.items.firstOrNull()
+        }
+        StudySourceTab.Exams -> examFeed?.let { e ->
+            examCurrentId?.let { id -> e.items.firstOrNull { it.id == id } ?: e.item(id) } ?: e.items.firstOrNull()
+        }
+    }
+
+    val position: Int get() = current?.let { activeOrder.indexOf(it.id) } ?: -1
     val dueCount: Int get() = data.dueCount(now())
+
+    fun progressOf(item: StudyItem): Progress = when (effectiveTab) {
+        StudySourceTab.Deck -> data.progressOf(item.id)
+        StudySourceTab.Assaad -> remote?.progressOf(item.id) ?: Progress()
+        StudySourceTab.Exams -> examFeed?.progressOf(item.id) ?: Progress()
+    }
+
+    fun sourceNameOf(item: StudyItem): String? = when (effectiveTab) {
+        StudySourceTab.Exams -> examFeed?.sourceOf(item.id)?.name ?: library.notebook(item.sourceId ?: "")?.name
+        else -> data.source(item.sourceId)?.name ?: library.notebook(item.sourceId ?: "")?.name
+    }
 
     var editorKind by mutableStateOf<ItemKind?>(null)
         private set
@@ -62,21 +103,26 @@ class StudyController(
     var examResults by mutableStateOf<String?>(null)
     /** Item whose source pages to preview. */
     var sourceOf by mutableStateOf<StudyItem?>(null)
-    /** The board's drawing layer (heights of printed cards), set by the editor. */
+    /** The canvas's drawing layer (heights of printed cards), set by the editor on Endless canvases. */
     var board: BoardLayer? = null
 
-    /** Items checked elsewhere (Plataforma Assaad on its board), set by the editor. */
-    var remote by mutableStateOf<RemoteChoices?>(null)
-
     fun isRemote(id: String?) = id != null && remote?.owns(id) == true
+    fun isPastExam(id: String?) = id != null && examFeed?.owns(id) == true
 
     /** Something on the board that was tapped, and where (editor px). */
     var menu by mutableStateOf<Pair<BoardLayer.Hit, IntOffset>?>(null)
 
     // ------------------------------------------------------------------------------
 
-    /** Opens the sheet on [id] (when it's on the board), else on what's next. */
+    fun switchTab(tab: StudySourceTab) {
+        if (exam != null) return
+        activeTab = tab
+        if (tab == StudySourceTab.Deck && order.isEmpty()) refreshOrder()
+    }
+
+    /** Opens the sheet on [id] in the Deck tab (or on what's next). */
     fun showItem(id: String?) {
+        activeTab = StudySourceTab.Deck
         if (id == null || data.item(id) == null) { show(); return }
         refreshOrder()
         select(id)
@@ -84,17 +130,60 @@ class StudyController(
         open = true
     }
 
-    /** Opens the sheet on what to study next: what's due, else what's new, else where you were. */
-    fun show() {
-        refreshOrder()
-        val d = data
-        val next = exam?.let { run ->
-            run.itemIds.firstOrNull { id -> id !in run.submitted && d.progressOf(id).let { p -> p.grade == null && p.chosen < 0 } }
-                ?: run.itemIds.firstOrNull()
+    /** Opens the sheet on the Assaad tab, optionally focusing a specific Assaad item id. */
+    fun showAssaad(itemId: String? = null) {
+        if (exam != null) return
+        activeTab = StudySourceTab.Assaad
+        if (itemId != null) {
+            val r = remote
+            if (r != null && r.items.none { it.id == itemId }) r.selectFilter(null)
+            assaadCurrentId = itemId
         }
-            ?: d.studyOrder(now()).firstOrNull { d.isNew(it.id) || d.progressOf(it.id).srs?.let { s -> s.due <= now() } == true }?.id
-            ?: d.current ?: order.firstOrNull()
-        if (next != null) select(next)
+        collapsed = false
+        open = true
+    }
+
+    /** Opens the sheet on the Past Exams tab, optionally focusing a specific exam question key. */
+    fun showExam(questionKey: String? = null) {
+        if (exam != null) return
+        activeTab = StudySourceTab.Exams
+        if (questionKey != null) {
+            val e = examFeed
+            if (e != null && e.items.none { it.id == questionKey }) e.selectFilter(null)
+            examCurrentId = questionKey
+        }
+        collapsed = false
+        open = true
+    }
+
+    /** Opens a printed card from the canvas in whichever tab owns it. */
+    fun openFromBoard(itemId: String) {
+        when {
+            exam == null && isRemote(itemId) -> showAssaad(itemId)
+            exam == null && isPastExam(itemId) -> showExam(itemId)
+            else -> {
+                activeTab = StudySourceTab.Deck
+                select(itemId)
+                collapsed = false
+                open = true
+            }
+        }
+    }
+
+    /** Opens the sheet on what to study next (preserving current tab unless a timed exam is running). */
+    fun show() {
+        if (exam != null) activeTab = StudySourceTab.Deck
+        if (activeTab == StudySourceTab.Deck) {
+            refreshOrder()
+            val d = data
+            val next = exam?.let { run ->
+                run.itemIds.firstOrNull { id -> id !in run.submitted && d.progressOf(id).let { p -> p.grade == null && p.chosen < 0 } }
+                    ?: run.itemIds.firstOrNull()
+            }
+                ?: d.studyOrder(now()).firstOrNull { d.isNew(it.id) || d.progressOf(it.id).srs?.let { s -> s.due <= now() } == true }?.id
+                ?: d.current ?: order.firstOrNull()
+            if (next != null) select(next)
+        }
         collapsed = false
         open = true
     }
@@ -106,6 +195,11 @@ class StudyController(
     }
 
     fun select(id: String) {
+        when (effectiveTab) {
+            StudySourceTab.Assaad -> { assaadCurrentId = id; return }
+            StudySourceTab.Exams -> { examCurrentId = id; return }
+            StudySourceTab.Deck -> Unit
+        }
         if (data.item(id) == null || exam?.let { id !in it.itemIds } == true) return
         if (order.isEmpty()) refreshOrder()
         if (id !in order) order = order + id
@@ -122,7 +216,8 @@ class StudyController(
     private val preparedReviews = mutableMapOf<String, Long>()
 
     fun editItem(kind: ItemKind, item: StudyItem? = null) {
-        if (exam != null || isRemote(item?.id)) return
+        if (exam != null || isRemote(item?.id) || isPastExam(item?.id)) return
+        activeTab = StudySourceTab.Deck
         editingItem = item
         editorKind = kind
     }
@@ -134,6 +229,7 @@ class StudyController(
 
     fun saveItem(draft: StudyItem) {
         if (draft.prompt.isBlank() || draft.answer.isBlank() || exam != null) return
+        activeTab = StudySourceTab.Deck
         val item = if (draft.id.isEmpty()) draft.copy(id = UUID.randomUUID().toString(), createdAt = now()) else draft
         store.update { deck ->
             deck.copy(items = if (draft.id.isEmpty()) deck.items + item else deck.items.map { if (it.id == item.id) item else it })
@@ -145,9 +241,11 @@ class StudyController(
     }
 
     fun step(delta: Int) {
-        if (order.isEmpty()) refreshOrder()
+        if (effectiveTab == StudySourceTab.Deck && order.isEmpty()) refreshOrder()
+        val list = activeOrder
+        if (list.isEmpty()) return
         val i = position
-        val next = order.getOrNull(if (i < 0) 0 else (i + delta).coerceIn(0, order.lastIndex)) ?: return
+        val next = list.getOrNull(if (i < 0) 0 else (i + delta).coerceIn(0, list.lastIndex)) ?: return
         select(next)
     }
 
@@ -155,29 +253,32 @@ class StudyController(
 
     fun hint() {
         val item = current ?: return
+        if (effectiveTab == StudySourceTab.Exams) { examFeed?.hint(item.id); return }
         progress(item.id) { it.copy(hintsShown = (it.hintsShown + 1).coerceAtMost(item.hints.size)) }
     }
 
     fun reveal() {
         val item = current ?: return
+        if (effectiveTab == StudySourceTab.Exams) { examFeed?.reveal(item.id); return }
         progress(item.id) { it.copy(answerShown = true) }
     }
 
     fun flip() {
         val item = current ?: return
+        if (effectiveTab != StudySourceTab.Deck) return
         progress(item.id) { it.copy(flipped = !it.flipped) }
     }
 
     /** Flash card: how well you knew it. */
     fun rate(rating: Rating) {
         val item = current ?: return
-        if (item.kind != ItemKind.Flash || !data.progressOf(item.id).flipped || exam != null) return
+        if (effectiveTab != StudySourceTab.Deck || item.kind != ItemKind.Flash || !data.progressOf(item.id).flipped || exam != null) return
         progress(item.id) { it.copy(flipped = false, attempts = it.attempts + 1, srs = Srs.review(it.srs, rating, now())) }
         if (position < order.lastIndex) step(1)
         else toast("Review saved.")
     }
 
-    /** Multiple choice: checked here, no network. In an exam it can change until the end. */
+    /** Multiple choice: checked here, remotely for Assaad, or in ExamStore for past exams. */
     fun choose(index: Int) {
         val item = current ?: return
         if (item.kind != ItemKind.Choice || index !in item.choices.indices) return
@@ -185,23 +286,42 @@ class StudyController(
             if (r.state(item.id)?.locked != true) r.pick(item.id, index)
             return
         }
+        if (effectiveTab == StudySourceTab.Exams) {
+            examFeed?.choose(item.id, index)
+            return
+        }
         val e = exam
         progress(item.id) { p ->
-            if (e == null && p.chosen >= 0) return@progress p
+            if (e == null && p.chosen >= 0 && item.correctChoice >= 0) return@progress p
+            val graded = item.correctChoice >= 0
             val verdict = if (index == item.correctChoice) Verdict.Correct else Verdict.Incorrect
-            p.copy(chosen = index, attempts = p.attempts + 1,
-                srs = if (e != null) p.srs else Srs.review(p.srs, Srs.ratingFor(verdict, p.hintsShown, p.answerShown, item.difficulty), now()))
+            p.copy(
+                chosen = index,
+                attempts = if (graded) p.attempts + 1 else p.attempts,
+                srs = if (e != null || !graded) p.srs else Srs.review(p.srs, Srs.ratingFor(verdict, p.hintsShown, p.answerShown, item.difficulty), now()),
+            )
         }
     }
 
     /** Try again: hides your answer, hints and the check (the review schedule stays). */
     fun reset(id: String) {
+        if (effectiveTab == StudySourceTab.Exams || isPastExam(id)) {
+            examFeed?.reset(id)
+            if (data.item(id) != null) progress(id) { Progress(attempts = it.attempts, srs = it.srs) }
+            return
+        }
         progress(id) { Progress(attempts = it.attempts, srs = it.srs) }
     }
 
     fun assessWrittenAnswer(verdict: Verdict) {
         val item = current ?: return
-        if (exam != null || item.kind !in writtenKinds) return
+        if (exam != null) return
+        val canAssess = item.kind in writtenKinds || (item.kind == ItemKind.Choice && item.correctChoice < 0)
+        if (!canAssess) return
+        if (effectiveTab == StudySourceTab.Exams) {
+            examFeed?.assessWritten(item.id, verdict)
+            return
+        }
         val time = now()
         progress(item.id) { p ->
             if (!p.answerShown || p.selfAssessment != null) p else p.copy(
@@ -229,8 +349,10 @@ class StudyController(
         store.update { deck ->
             deck.copy(exams = deck.exams.map { if (it.id == examId) it.copy(results = results) else it })
                 .withProgress(itemId) { p ->
-                    p.copy(attempts = p.attempts + 1,
-                        srs = Srs.review(p.srs, Srs.ratingFor(verdict, 0, false, item.difficulty), reviewTime))
+                    p.copy(
+                        attempts = p.attempts + 1,
+                        srs = Srs.review(p.srs, Srs.ratingFor(verdict, 0, false, item.difficulty), reviewTime),
+                    )
                 }
         }
     }
@@ -240,15 +362,29 @@ class StudyController(
     /**
      * Pins the current item where the sheet shows it: its face's top-left at ([leftPx],
      * [topPx]) in the editor, [widthDp] wide at [density] px per dp, keeping its size on
-     * screen. The sheet goes away until the Study button brings it back.
+     * screen. Works for Deck, Assaad, and Past Exam items on any Endless canvas.
      */
     fun print(leftPx: Float, topPx: Float, widthDp: Float, density: Float, sheet: PagePlacement) {
         val item = current ?: return
         val k = sheet.width / 1000f
         if (!(k > 0f)) return
-        val card = PinnedCard(UUID.randomUUID().toString(), item.id, (leftPx - sheet.left) / k, (topPx - sheet.top) / k,
-            widthDp, density / k, now())
-        store.update { d -> d.copy(cards = d.cards.filterNot { it.itemId == item.id } + card) }
+        val liveProgress = progressOf(item)
+        val sourceInfo: StudySource? = if (effectiveTab == StudySourceTab.Exams) examFeed?.sourceOf(item.id) else null
+        val card = PinnedCard(
+            UUID.randomUUID().toString(), item.id, (leftPx - sheet.left) / k, (topPx - sheet.top) / k,
+            widthDp, density / k, now(),
+        )
+        store.update { d ->
+            val items = if (d.item(item.id) == null) d.items + item else d.items.map { if (it.id == item.id) item else it }
+            val sources = if (sourceInfo == null) d.sources else d.sources.filterNot { it.id == sourceInfo.id } + sourceInfo
+            val nextProgress = if (effectiveTab == StudySourceTab.Deck) d.progress else d.progress + (item.id to liveProgress)
+            d.copy(
+                sources = sources,
+                items = items,
+                progress = nextProgress,
+                cards = d.cards.filterNot { it.itemId == item.id } + card,
+            )
+        }
         open = false
     }
 
@@ -260,9 +396,7 @@ class StudyController(
         val k = sheet.width / 1000f
         store.update { d -> d.copy(cards = d.cards.filterNot { it.id == card.id }) }
         offset = IntOffset((sheet.left + card.x * k).toInt() - face.x, (sheet.top + card.y * k).toInt() - face.y)
-        select(card.itemId)
-        collapsed = false
-        open = true
+        openFromBoard(card.itemId)
     }
 
     fun remove(hit: BoardLayer.Hit) = store.update { d ->
@@ -319,8 +453,12 @@ class StudyController(
 
     fun deleteItem(id: String) {
         store.update { d ->
-            d.copy(items = d.items.filterNot { it.id == id }, progress = d.progress - id, cards = d.cards.filterNot { it.itemId == id },
-                current = if (d.current == id) null else d.current)
+            d.copy(
+                items = d.items.filterNot { it.id == id },
+                progress = d.progress - id,
+                cards = d.cards.filterNot { it.itemId == id },
+                current = if (d.current == id) null else d.current,
+            )
         }
         order = order - id
     }
@@ -333,6 +471,7 @@ class StudyController(
         val pool = d.studyOrder(now()).filter { topics.isEmpty() || it.topic in topics }.filter { it.kind != ItemKind.Flash && !isRemote(it.id) }
         if (pool.isEmpty()) { toast("No questions to make an exam from yet."); return }
         val picked = (pool.take(count * 2).shuffled().take(count)).map { it.id }
+        activeTab = StudySourceTab.Deck
         // Start each from scratch, keeping the review schedule.
         store.update { s ->
             var next = s.copy(exams = s.exams + Exam(UUID.randomUUID().toString(), picked, minutes, now()))

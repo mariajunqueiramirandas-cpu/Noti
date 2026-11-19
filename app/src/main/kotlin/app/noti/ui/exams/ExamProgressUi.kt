@@ -1,4 +1,4 @@
-package app.noti.ui.fuvest
+package app.noti.ui.exams
 
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.Canvas
@@ -9,12 +9,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowForward
 import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
-import androidx.compose.material.icons.outlined.Bolt
-import androidx.compose.material.icons.outlined.Check
-import androidx.compose.material.icons.outlined.Functions
-import androidx.compose.material.icons.outlined.Science
-import androidx.compose.material.icons.outlined.Star
-import androidx.compose.material.icons.outlined.TrackChanges
+import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -33,40 +28,79 @@ import androidx.compose.ui.semantics.progressBarRangeInfo
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import app.noti.fuvest.FuvestOverview
-import app.noti.fuvest.FuvestSubject
+import app.noti.exams.StudyOverview
+import app.noti.exams.normalizeTopic
 import app.noti.ui.brand.DotiMascot
 
-internal data class FuvestAccent(val container: Color, val ink: Color, val icon: ImageVector)
+internal data class ExamAccent(val container: Color, val ink: Color, val icon: ImageVector)
 
 @Composable
-internal fun FuvestSubject.accent(): FuvestAccent {
+internal fun subjectAccent(subject: String): ExamAccent {
     val dark = MaterialTheme.colorScheme.background.luminance() < 0.3
-    return when (this) {
-        FuvestSubject.Math -> FuvestAccent(
+    val key = normalizeTopic(subject)
+    return when {
+        key.contains("matemat") || key.contains("calculo") || key.contains("algebra") || key.contains("geometr") -> ExamAccent(
             if (dark) Color(0xFF463466) else Color(0xFFECE1FF),
-            if (dark) Color(0xFFE3CBFF) else Color(0xFF5C378B), Icons.Outlined.Functions,
+            if (dark) Color(0xFFE3CBFF) else Color(0xFF5C378B),
+            Icons.Outlined.Functions,
         )
-        FuvestSubject.Physics -> FuvestAccent(
+        key.contains("fisic") || key.contains("mecanic") || key.contains("eletric") -> ExamAccent(
             if (dark) Color(0xFF233F65) else Color(0xFFDFEDFF),
-            if (dark) Color(0xFFBEDBFF) else Color(0xFF234E87), Icons.Outlined.Bolt,
+            if (dark) Color(0xFFBEDBFF) else Color(0xFF234E87),
+            Icons.Outlined.Bolt,
         )
-        FuvestSubject.Chemistry -> FuvestAccent(
+        key.contains("quimic") -> ExamAccent(
             if (dark) Color(0xFF224B46) else Color(0xFFD8F4EB),
-            if (dark) Color(0xFFABEDDA) else Color(0xFF155C50), Icons.Outlined.Science,
+            if (dark) Color(0xFFABEDDA) else Color(0xFF155C50),
+            Icons.Outlined.Science,
         )
+        key.contains("biolog") || key.contains("ecolog") || key.contains("genet") -> ExamAccent(
+            if (dark) Color(0xFF244930) else Color(0xFFDCF2E0),
+            if (dark) Color(0xFFB3E8BD) else Color(0xFF1E5D33),
+            Icons.Outlined.Biotech,
+        )
+        key.contains("histor") || key.contains("filosof") || key.contains("sociolog") -> ExamAccent(
+            if (dark) Color(0xFF543C26) else Color(0xFFFBE9D5),
+            if (dark) Color(0xFFF5CEA7) else Color(0xFF7D4816),
+            Icons.Outlined.AccountBalance,
+        )
+        key.contains("geograf") -> ExamAccent(
+            if (dark) Color(0xFF1E4852) else Color(0xFFD9F0F6),
+            if (dark) Color(0xFFAEE2EE) else Color(0xFF155564),
+            Icons.Outlined.Public,
+        )
+        key.contains("portug") || key.contains("literat") || key.contains("lingu") || key.contains("ingles") || key.contains("espanhol") || key.contains("redac") -> ExamAccent(
+            if (dark) Color(0xFF593142) else Color(0xFFFCE2EB),
+            if (dark) Color(0xFFF7BDD2) else Color(0xFF832D4D),
+            Icons.Outlined.MenuBook,
+        )
+        else -> {
+            val palette = listOf(
+                Triple(Color(0xFFECE1FF), Color(0xFF463466), Color(0xFF5C378B) to Color(0xFFE3CBFF)),
+                Triple(Color(0xFFDFEDFF), Color(0xFF233F65), Color(0xFF234E87) to Color(0xFFBEDBFF)),
+                Triple(Color(0xFFD8F4EB), Color(0xFF224B46), Color(0xFF155C50) to Color(0xFFABEDDA)),
+                Triple(Color(0xFFFBE9D5), Color(0xFF543C26), Color(0xFF7D4816) to Color(0xFFF5CEA7)),
+                Triple(Color(0xFFFCE2EB), Color(0xFF593142), Color(0xFF832D4D) to Color(0xFFF7BDD2)),
+            )
+            val pick = palette[Math.floorMod(key.hashCode(), palette.size)]
+            ExamAccent(
+                if (dark) pick.second else pick.first,
+                if (dark) pick.third.second else pick.third.first,
+                Icons.Outlined.School,
+            )
+        }
     }
 }
 
 @Composable
-internal fun FuvestEmblem(icon: ImageVector, container: Color, ink: Color, modifier: Modifier = Modifier) {
+internal fun ExamEmblem(icon: ImageVector, container: Color, ink: Color, modifier: Modifier = Modifier) {
     Box(modifier.size(46.dp).background(container, RoundedCornerShape(15.dp)), contentAlignment = Alignment.Center) {
         Icon(icon, null, Modifier.size(24.dp), tint = ink)
     }
 }
 
 @Composable
-internal fun FuvestProgressRail(fraction: Float, color: Color, track: Color, modifier: Modifier = Modifier) {
+internal fun ExamProgressRail(fraction: Float, color: Color, track: Color, modifier: Modifier = Modifier) {
     val clamped = fraction.coerceIn(0f, 1f)
     val animated by animateFloatAsState(clamped, label = "study progress")
     Box(modifier.height(6.dp).clip(CircleShape).background(track).semantics {
@@ -77,7 +111,7 @@ internal fun FuvestProgressRail(fraction: Float, color: Color, track: Color, mod
 }
 
 @Composable
-internal fun FuvestHomeHero(overview: FuvestOverview, title: String, detail: String, action: String, onAction: () -> Unit) {
+internal fun ExamHomeHero(overview: StudyOverview, title: String, detail: String, action: String, onAction: () -> Unit) {
     val white = Color(0xFFFCF8FF)
     val mint = Color(0xFFB8F2DB)
     val muted = Color(0xFFE2D4F6)
@@ -111,8 +145,8 @@ internal fun FuvestHomeHero(overview: FuvestOverview, title: String, detail: Str
                 if (showMascot) DotiMascot(Modifier.size(mascotSize))
             }
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                FuvestProgressRail(overview.levelProgress, mint, white.copy(alpha = .18f), Modifier.fillMaxWidth())
-                Text("${FuvestOverview.LevelXp - (overview.xp % FuvestOverview.LevelXp)} XP para o nível ${overview.level + 1}",
+                ExamProgressRail(overview.levelProgress, mint, white.copy(alpha = .18f), Modifier.fillMaxWidth())
+                Text("${StudyOverview.LevelXp - (overview.xp % StudyOverview.LevelXp)} XP para o nível ${overview.level + 1}",
                     color = muted, style = MaterialTheme.typography.labelMedium)
             }
             Button(onClick = onAction, shape = RoundedCornerShape(16.dp),
@@ -126,14 +160,14 @@ internal fun FuvestHomeHero(overview: FuvestOverview, title: String, detail: Str
 }
 
 @Composable
-internal fun FuvestDailyGoal(today: Int) {
-    val target = FuvestOverview.DailyGoal
+internal fun ExamDailyGoal(today: Int) {
+    val target = StudyOverview.DailyGoal
     val achieved = today >= target
     val colors = MaterialTheme.colorScheme
     Surface(shape = RoundedCornerShape(22.dp), color = colors.tertiaryContainer, contentColor = colors.onTertiaryContainer) {
         Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                FuvestEmblem(if (achieved) Icons.Outlined.Check else Icons.Outlined.TrackChanges,
+                ExamEmblem(if (achieved) Icons.Outlined.Check else Icons.Outlined.TrackChanges,
                     colors.surface.copy(alpha = .65f), colors.onTertiaryContainer)
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                     Text(if (achieved) "Meta de hoje concluída" else "Meta de hoje", style = MaterialTheme.typography.titleMedium,
@@ -156,19 +190,19 @@ internal fun FuvestDailyGoal(today: Int) {
 }
 
 @Composable
-internal fun FuvestSubjectCard(subject: FuvestSubject, tried: Int, count: Int, modifier: Modifier = Modifier, open: () -> Unit) {
-    val accent = subject.accent()
+internal fun ExamSubjectCard(subjectLabel: String, tried: Int, count: Int, modifier: Modifier = Modifier, open: () -> Unit) {
+    val accent = subjectAccent(subjectLabel)
     Surface(onClick = open, modifier = modifier, shape = RoundedCornerShape(23.dp), color = accent.container,
         contentColor = accent.ink) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                FuvestEmblem(accent.icon, accent.ink.copy(alpha = .1f), accent.ink)
-                Text(subject.label, Modifier.weight(1f), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.ExtraBold)
+                ExamEmblem(accent.icon, accent.ink.copy(alpha = .1f), accent.ink)
+                Text(subjectLabel, Modifier.weight(1f), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.ExtraBold)
                 Icon(Icons.AutoMirrored.Outlined.KeyboardArrowRight, null, Modifier.size(21.dp))
             }
             Text(if (count == 0) "Nenhuma questão importada" else "$tried de $count ${if (count == 1) "questão praticada" else "questões praticadas"}",
                 style = MaterialTheme.typography.bodySmall)
-            if (count > 0) FuvestProgressRail(tried.toFloat() / count, accent.ink, accent.ink.copy(alpha = .14f), Modifier.fillMaxWidth())
+            if (count > 0) ExamProgressRail(tried.toFloat() / count, accent.ink, accent.ink.copy(alpha = .14f), Modifier.fillMaxWidth())
         }
     }
 }

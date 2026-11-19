@@ -136,7 +136,6 @@ private sealed interface Filter {
     data object Recent : Filter
     data object Favorites : Filter
     data object Pdfs : Filter
-    data object Boards : Filter
     data class InFolder(val id: String) : Filter
     data object Trash : Filter
 }
@@ -148,7 +147,6 @@ private val filterSaver = Saver<Filter, String>(
             Filter.Recent -> "recent"
             Filter.Favorites -> "favorites"
             Filter.Pdfs -> "pdfs"
-            Filter.Boards -> "boards"
             Filter.Trash -> "trash"
             is Filter.InFolder -> "folder:${it.id}"
         }
@@ -158,7 +156,6 @@ private val filterSaver = Saver<Filter, String>(
             "recent" -> Filter.Recent
             "favorites" -> Filter.Favorites
             "pdfs" -> Filter.Pdfs
-            "boards" -> Filter.Boards
             "trash" -> Filter.Trash
             else -> if (it.startsWith("folder:")) Filter.InFolder(it.removePrefix("folder:")) else Filter.All
         }
@@ -173,7 +170,7 @@ fun LibraryScreen(
     settings: SettingsStore,
     onOpen: (String) -> Unit,
     onSettings: () -> Unit,
-    onFuvest: (() -> Unit)? = null,
+    onStudy: (() -> Unit)? = null,
 ) {
     var filter by rememberSaveable(stateSaver = filterSaver) { mutableStateOf<Filter>(Filter.All) }
     var query by rememberSaveable { mutableStateOf("") }
@@ -183,7 +180,6 @@ fun LibraryScreen(
     val listView = settings.libraryList
     var selection by remember { mutableStateOf(emptySet<String>()) }
     var creating by remember { mutableStateOf(false) }
-    var creatingBoard by remember { mutableStateOf(false) }
     var creatingFolder by remember { mutableStateOf(false) }
     var renamingNotebook by remember { mutableStateOf<Notebook?>(null) }
     var renamingFolder by remember { mutableStateOf<Folder?>(null) }
@@ -333,11 +329,15 @@ fun LibraryScreen(
         }
     }
 
-    val boards = library.notebooks.filter { it.board && it.trashedAt == null }
-    val due by produceState(emptyMap<String, Int>(), boards.map { it.id }) {
+    val studyCandidates = library.notebooks.filter { !it.isPdf && it.trashedAt == null }
+    val due by produceState(emptyMap<String, Int>(), studyCandidates.map { it.id }) {
         value = withContext(Dispatchers.IO) {
             val now = System.currentTimeMillis()
-            boards.associate { it.id to app.noti.study.StudyStore.dueCount(library.studyFile(it), now) }
+            studyCandidates.mapNotNull { nb ->
+                val f = library.studyFile(nb)
+                if (!f.exists() && !File(f.path + ".bak").exists()) null
+                else nb.id to app.noti.study.StudyStore.dueCount(f, now)
+            }.toMap()
         }
     }
 
@@ -349,7 +349,6 @@ fun LibraryScreen(
         else nb.trashedAt == null && when (val active = filter) {
             Filter.Favorites -> nb.favorite
             Filter.Pdfs -> nb.isPdf
-            Filter.Boards -> nb.board
             is Filter.InFolder -> nb.folderId == active.id
             else -> true
         }
@@ -373,7 +372,6 @@ fun LibraryScreen(
         Filter.Recent -> "Recent"
         Filter.Favorites -> "Favorites"
         Filter.Pdfs -> "PDFs"
-        Filter.Boards -> "Study boards"
         is Filter.InFolder -> library.folders.firstOrNull { it.id == f.id }?.name ?: "Folder"
         Filter.Trash -> "Trash"
     }
@@ -381,8 +379,7 @@ fun LibraryScreen(
     val subtitle = when {
         terms.isNotEmpty() -> count(visible.size, "result")
         filter == Filter.Pdfs -> count(visible.size, "PDF")
-        filter == Filter.Boards -> count(visible.size, "study board")
-        visible.all { !it.isPdf && !it.board } && !inTrash -> count(visible.size, "notebook")
+        visible.all { !it.isPdf } && !inTrash -> count(visible.size, "notebook")
         else -> count(visible.size, "document")
     }
 
@@ -399,13 +396,12 @@ fun LibraryScreen(
                     onRenameFolder = { renamingFolder = it; scope.launch { drawer.close() } },
                     onDeleteFolder = { deletingFolder = it; scope.launch { drawer.close() } },
                     onSettings = { scope.launch { drawer.close(); onSettings() } },
-                    onFuvest = onFuvest?.let { open -> { scope.launch { drawer.close(); open() }; Unit } },
+                    onStudy = onStudy?.let { open -> { scope.launch { drawer.close(); open() }; Unit } },
                 )
             }
             val content: @Composable () -> Unit = {
                 Box(Modifier.fillMaxSize()) {
                     Column(Modifier.fillMaxSize()) {
-                        app.noti.ui.assaad.AssaadLibraryEntry()
                         if (selection.isEmpty()) {
                             TopBar(
                                 title = title,
@@ -421,10 +417,8 @@ fun LibraryScreen(
                                 onToggleLayout = { settings.libraryList = !listView },
                                 inTrash = inTrash,
                                 trashNotEmpty = filtered.isNotEmpty(),
-                                onNew = { creatingBoard = false; creating = true },
-                                onNewBoard = { creatingBoard = true; creating = true },
+                                onNew = { creating = true },
                                 onImportPdf = onImportPdf,
-                                onFuvest = onFuvest,
                                 onEmptyTrash = { confirmDeleteForever = filtered.mapTo(mutableSetOf()) { it.id } },
                             )
                         } else {
@@ -440,10 +434,8 @@ fun LibraryScreen(
                         }
 
                         if (visible.isEmpty()) {
-                            EmptyState(filter, terms.isNotEmpty(), onNew = {
-                                creatingBoard = filter == Filter.Boards
-                                creating = true
-                            }, onImportPdf = onImportPdf, onClearSearch = { changeQuery("") })
+                            EmptyState(filter, terms.isNotEmpty(), onNew = { creating = true },
+                                onImportPdf = onImportPdf, onClearSearch = { changeQuery("") })
                         } else {
                             val gutter = if (compact) 16.dp else 32.dp
                             LazyVerticalGrid(
@@ -603,11 +595,7 @@ private fun Set<String>.toggle(id: String) = if (id in this) this - id else this
 
 private fun count(n: Int, singular: String, plural: String = "${singular}s") = "$n ${if (n == 1) singular else plural}"
 
-private val Notebook.kind: String get() = when {
-    isPdf -> "PDF"
-    board -> "Study board"
-    else -> "Notebook"
-}
+private val Notebook.kind: String get() = if (isPdf) "PDF" else "Notebook"
 
 // ---- sidebar ----
 
@@ -620,7 +608,7 @@ private fun Sidebar(
     onRenameFolder: (Folder) -> Unit,
     onDeleteFolder: (Folder) -> Unit,
     onSettings: () -> Unit,
-    onFuvest: (() -> Unit)?,
+    onStudy: (() -> Unit)?,
 ) {
     val colors = MaterialTheme.colorScheme
     Column(
@@ -637,8 +625,7 @@ private fun Sidebar(
         SideItem("Recent", Icons.Outlined.History, filter == Filter.Recent) { onFilter(Filter.Recent) }
         SideItem("Favorites", Icons.Outlined.StarBorder, filter == Filter.Favorites) { onFilter(Filter.Favorites) }
         SideItem("PDFs", Icons.Outlined.PictureAsPdf, filter == Filter.Pdfs) { onFilter(Filter.Pdfs) }
-        SideItem("Study boards", Icons.Outlined.School, filter == Filter.Boards) { onFilter(Filter.Boards) }
-        onFuvest?.let { SideItem("FUVEST", Icons.Outlined.School, false, onClick = it) }
+        onStudy?.let { SideItem("Study", Icons.Outlined.School, false, onClick = it) }
 
         Row(Modifier.padding(start = 14.dp, top = 24.dp, bottom = 2.dp), verticalAlignment = Alignment.CenterVertically) {
             Text("Folders", style = MaterialTheme.typography.labelLarge, color = colors.onSurfaceVariant,
@@ -737,9 +724,7 @@ private fun TopBar(
     inTrash: Boolean,
     trashNotEmpty: Boolean,
     onNew: () -> Unit,
-    onNewBoard: () -> Unit,
     onImportPdf: () -> Unit,
-    onFuvest: (() -> Unit)?,
     onEmptyTrash: () -> Unit,
 ) {
     var viewMenu by remember { mutableStateOf(false) }
@@ -803,22 +788,10 @@ private fun TopBar(
                             onClick = { newMenu = false; onNew() },
                         )
                         DropdownMenuItem(
-                            text = { Text("Study board") },
-                            leadingIcon = { Icon(Icons.Outlined.School, null) },
-                            onClick = { newMenu = false; onNewBoard() },
-                        )
-                        DropdownMenuItem(
                             text = { Text("Import PDF") },
                             leadingIcon = { Icon(Icons.Outlined.PictureAsPdf, null) },
                             onClick = { newMenu = false; onImportPdf() },
                         )
-                        onFuvest?.let { open ->
-                            DropdownMenuItem(
-                                text = { Text("FUVEST") },
-                                leadingIcon = { Icon(Icons.Outlined.School, null) },
-                                onClick = { newMenu = false; open() },
-                            )
-                        }
                     }
                 }
             }
@@ -990,7 +963,6 @@ private fun DocumentCover(nb: Notebook, thumbnail: File?, inTrash: Boolean, sele
 private fun DocumentDetails(nb: Notebook, folderName: String?, inTrash: Boolean, due: Int, modifier: Modifier) {
     val colors = MaterialTheme.colorScheme
     val type = when {
-        nb.board -> nb.kind
         nb.isCanvas -> "Endless notebook"
         else -> "${nb.kind} · ${count(nb.pageCount, "page")}"
     }
@@ -1048,7 +1020,6 @@ private fun EmptyState(filter: Filter, searching: Boolean, onNew: () -> Unit, on
     val (headline, body) = when {
         searching -> "Nothing found" to "Try a document name, folder, or type."
         filter == Filter.Pdfs -> "No PDFs yet" to "Import a PDF to write on it."
-        filter == Filter.Boards -> "No study boards yet" to "Make one to practice with flash cards and questions."
         filter == Filter.Trash -> "Trash is empty" to "Deleted notebooks wait here until you delete them forever."
         filter == Filter.Favorites -> "No favorites yet" to "Open a document’s options and choose Favorite."
         filter is Filter.InFolder -> "This folder is empty" to "Create a notebook here, or move notebooks in from All."
@@ -1080,7 +1051,7 @@ private fun EmptyState(filter: Filter, searching: Boolean, onNew: () -> Unit, on
             Button(onClick = onNew) {
                 Icon(Icons.Outlined.Add, null, Modifier.size(20.dp))
                 Spacer(Modifier.width(8.dp))
-                Text(if (filter == Filter.Boards) "New study board" else "New notebook")
+                Text("New notebook")
             }
         }
     }
@@ -1089,23 +1060,19 @@ private fun EmptyState(filter: Filter, searching: Boolean, onNew: () -> Unit, on
 // ---- dialogs ----
 
 @Composable
-private fun NewNotebookDialog(initialPaper: Paper, initialBoard: Boolean, onDismiss: () -> Unit,
-    onCreate: (String, Paper, Boolean) -> Unit) {
+private fun NewNotebookDialog(initialPaper: Paper, onDismiss: () -> Unit, onCreate: (String, Paper) -> Unit) {
     var name by rememberSaveable { mutableStateOf("") }
-    val board = initialBoard
-    var paper by remember { mutableStateOf(if (board) initialPaper.copy(template = PaperTemplate.Grid) else initialPaper) }
+    var paper by remember { mutableStateOf(initialPaper) }
     app.noti.ui.common.NotiDialogFrame(onDismiss,
-        title = { Text(if (board) "New study board" else "New notebook") }, icon = { DotiMascot(Modifier.size(40.dp)) }, maxWidth = 540.dp,
+        title = { Text("New notebook") }, icon = { DotiMascot(Modifier.size(40.dp)) }, maxWidth = 540.dp,
         actions = {
             TextButton(onClick = onDismiss) { Text("Cancel") }
-            Button(onClick = { onCreate(name.trim(), paper, board) }) { Text(if (board) "Create board" else "Create notebook") }
+            Button(onClick = { onCreate(name.trim(), paper) }) { Text("Create notebook") }
         }) {
-        if (board) Text("Create flash cards and practice questions on an endless canvas.",
-            style = MaterialTheme.typography.bodyMedium)
         OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("Name") },
-            placeholder = { Text(if (board) "Physics 1, Calculus II…" else "What’s on your mind?") }, singleLine = true,
+            placeholder = { Text("What’s on your mind?") }, singleLine = true,
             shape = MaterialTheme.shapes.small, modifier = Modifier.fillMaxWidth())
-        PaperPicker(paper, onChange = { paper = it }, showSize = !board)
+        PaperPicker(paper, onChange = { paper = it }, showSize = true)
     }
 }
 

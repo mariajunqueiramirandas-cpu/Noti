@@ -5,7 +5,6 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -54,76 +53,116 @@ private fun StatusDot(color: Color, modifier: Modifier = Modifier) {
     Box(modifier.size(10.dp).clip(CircleShape).background(color))
 }
 
+/**
+ * Embedded Assaad management panel used inside the unified Study hub.
+ * [onOpenCanvas] receives a suggested notebook title and optional focused question id.
+ */
 @Composable
-fun AssaadLibraryEntry() {
-    val session = LocalAssaadSession.current ?: return
-    val colors = MaterialTheme.colorScheme
-    val status = session.status()
-    Surface(onClick = { session.dialogOpen = true }, shape = MaterialTheme.shapes.large, color = colors.surfaceContainerLow,
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 6.dp)) {
-        Row(Modifier.padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.size(40.dp).clip(CircleShape).background(colors.primaryContainer), contentAlignment = Alignment.Center) {
-                Icon(Icons.Outlined.School, null, Modifier.size(20.dp), tint = colors.onPrimaryContainer)
+fun AssaadHubPanel(
+    session: AssaadSession,
+    onOpenCanvas: (suggestedName: String, questionId: String?) -> Unit,
+) {
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        AssaadConnectionBody(
+            session = session,
+            onStudySet = { batch ->
+                session.selectBatch(batch.id)
+                val qid = batch.questions.firstOrNull()?.id
+                val title = batch.questions.firstOrNull()?.tags?.firstOrNull()?.takeIf { it.isNotBlank() } ?: "Plataforma Assaad"
+                onOpenCanvas(title, qid)
+            },
+        )
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (session.useTabletBrowser) {
+                NotiButton(onClick = session::openTabletBrowser) { Text("Open Assaad") }
+                NotiTonalButton(onClick = { onOpenCanvas("Plataforma Assaad", session.current?.id) }) { Text("Open on canvas") }
+            } else {
+                NotiButton(onClick = { onOpenCanvas("Plataforma Assaad", session.current?.id) }) { Text("Open on canvas") }
             }
-            Spacer(Modifier.width(14.dp))
-            Column(Modifier.weight(1f)) {
-                Text("Plataforma Assaad", style = MaterialTheme.typography.titleSmall)
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    StatusDot(status.color, Modifier.size(8.dp)); Spacer(Modifier.width(6.dp))
-                    Text(status.headline + if (session.savedQuestionCount > 0) " · ${session.savedQuestionCount} questions" else "",
-                        style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                }
-            }
-            Icon(Icons.AutoMirrored.Outlined.KeyboardArrowRight, null, tint = colors.onSurfaceVariant)
         }
     }
 }
 
-/** Connection, saved sets and the answer queue. [onOpenBoard] opens the Assaad study board. */
+/**
+ * Connection, saved sets and browser pairing dialog (opened from any canvas's Study sheet).
+ * [onOpenCanvas] focuses Assaad on the current canvas (or prompts to choose a canvas if none is open).
+ */
 @Composable
-fun AssaadPairingDialog(session: AssaadSession, onOpenBoard: (String) -> Unit) {
+fun AssaadPairingDialog(session: AssaadSession, onOpenCanvas: (questionId: String?) -> Unit) {
     if (!session.dialogOpen) return
-    val goToBoard = { session.dialogOpen = false; onOpenBoard(session.openBoard()) }
-    NotiDialogFrame(onDismissRequest = { session.dialogOpen = false }, title = { Text("Plataforma Assaad") }, maxWidth = 520.dp,
+    NotiDialogFrame(
+        onDismissRequest = { session.dialogOpen = false },
+        title = { Text("Plataforma Assaad") },
+        maxWidth = 520.dp,
         actions = {
             NotiTextButton(onClick = { session.dialogOpen = false }) { Text("Close") }
             if (session.useTabletBrowser) {
-                NotiTonalButton(onClick = { session.studyNext(); goToBoard() }) { Text("Open canvas") }
+                NotiTonalButton(onClick = { session.dialogOpen = false; onOpenCanvas(null) }) { Text("Open canvas") }
                 NotiButton(onClick = session::openTabletBrowser) { Text("Open Assaad") }
-            } else NotiButton(onClick = { session.studyNext(); goToBoard() }) { Text("Open canvas") }
-        }) {
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            NotiFilterChip(selected = session.useTabletBrowser, onClick = { session.useTablet(true) }, enabled = !session.hasPendingAnswer,
-                label = { Text("On this tablet") }, leadingIcon = { Icon(Icons.Outlined.TabletAndroid, null, Modifier.size(18.dp)) })
-            NotiFilterChip(selected = !session.useTabletBrowser, onClick = { session.useTablet(false) }, enabled = !session.hasPendingAnswer,
-                label = { Text("Edge or Chrome") }, leadingIcon = { Icon(Icons.Outlined.Laptop, null, Modifier.size(18.dp)) })
-        }
-        val status = session.status()
-        NotiGroup {
-            Row(Modifier.padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                StatusDot(status.color)
-                Spacer(Modifier.width(12.dp))
-                Column(Modifier.weight(1f)) {
-                    Text(status.headline, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurface)
-                    Text(status.detail, style = MaterialTheme.typography.bodySmall)
-                }
+            } else {
+                NotiButton(onClick = { session.dialogOpen = false; onOpenCanvas(null) }) { Text("Open canvas") }
             }
-            if (!session.useTabletBrowser && !session.paired) PairingCode(session)
-        }
-        if (session.batches.isNotEmpty()) {
-            Text("Saved question sets", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurface)
-            SavedAssaadSets(session) { id ->
-                session.selectBatch(id)
-                session.focus = session.batches.find { it.id == id }?.questions?.firstOrNull()?.id ?: ""
-                goToBoard()
+        },
+    ) {
+        AssaadConnectionBody(
+            session = session,
+            onStudySet = { batch ->
+                session.selectBatch(batch.id)
+                session.dialogOpen = false
+                onOpenCanvas(batch.questions.firstOrNull()?.id)
+            },
+        )
+    }
+}
+
+@Composable
+private fun ColumnScope.AssaadConnectionBody(
+    session: AssaadSession,
+    onStudySet: (AssaadBatch) -> Unit,
+) {
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        NotiFilterChip(
+            selected = session.useTabletBrowser,
+            onClick = { session.useTablet(true) },
+            enabled = !session.hasPendingAnswer,
+            label = { Text("On this tablet") },
+            leadingIcon = { Icon(Icons.Outlined.TabletAndroid, null, Modifier.size(18.dp)) },
+        )
+        NotiFilterChip(
+            selected = !session.useTabletBrowser,
+            onClick = { session.useTablet(false) },
+            enabled = !session.hasPendingAnswer,
+            label = { Text("Edge or Chrome") },
+            leadingIcon = { Icon(Icons.Outlined.Laptop, null, Modifier.size(18.dp)) },
+        )
+    }
+    val status = session.status()
+    NotiGroup {
+        Row(Modifier.padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+            StatusDot(status.color)
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text(status.headline, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurface)
+                Text(status.detail, style = MaterialTheme.typography.bodySmall)
             }
-            OfflineImages(session)
-        } else if (session.useTabletBrowser) {
-            Text("Open Assaad and sign in. Use Noti's filters to find questions, then tap Study this page on canvas.")
         }
-        session.problem?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-        if (session.hasSession && !session.useTabletBrowser) NotiTextButton(onClick = session::disconnect, enabled = !session.busy, destructive = true,
-            contentPadding = PaddingValues(horizontal = 0.dp)) { Text("Disconnect devices") }
+        if (!session.useTabletBrowser && !session.paired) PairingCode(session)
+    }
+    if (session.batches.isNotEmpty()) {
+        Text("Saved question sets", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurface)
+        SavedAssaadSets(session, onStudySet)
+        OfflineImages(session)
+    } else if (session.useTabletBrowser) {
+        Text("Open Assaad and sign in. Use Noti's filters to find questions, then study them on any canvas.")
+    }
+    session.problem?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+    if (session.hasSession && !session.useTabletBrowser) {
+        NotiTextButton(
+            onClick = session::disconnect,
+            enabled = !session.busy,
+            destructive = true,
+            contentPadding = PaddingValues(horizontal = 0.dp),
+        ) { Text("Disconnect devices") }
     }
 }
 
@@ -149,12 +188,12 @@ private fun PairingCode(session: AssaadSession) {
 }
 
 @Composable
-private fun SavedAssaadSets(session: AssaadSession, onStudy: (String) -> Unit) {
+private fun SavedAssaadSets(session: AssaadSession, onStudy: (AssaadBatch) -> Unit) {
     NotiGroup {
         session.batches.asReversed().forEachIndexed { i, batch ->
             if (i > 0) NotiGroupDivider()
             val answered = batch.questions.count { session.answerFor(it.id)?.status == "confirmed" }
-            Row(Modifier.fillMaxWidth().clip(MaterialTheme.shapes.small).clickable(onClickLabel = "Study this set") { onStudy(batch.id) }
+            Row(Modifier.fillMaxWidth().clip(MaterialTheme.shapes.small).clickable(onClickLabel = "Study this set") { onStudy(batch) }
                 .padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text(batch.questions.firstOrNull()?.tags?.joinToString(" · ")?.takeIf { it.isNotBlank() } ?: "Assaad questions", maxLines = 1,

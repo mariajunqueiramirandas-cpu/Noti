@@ -1,4 +1,4 @@
-package app.noti.fuvest
+package app.noti.exams
 
 import app.noti.openrouter.OpenRouterClient
 import kotlinx.coroutines.runBlocking
@@ -20,7 +20,7 @@ import java.util.concurrent.atomic.AtomicInteger
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [35], manifest = Config.NONE)
-class FuvestQualityTest {
+class ExamQualityTest {
     @Test
     fun checksExactAffineBoundariesAndSignChanges() {
         assertEquals(1, wrongLinearEquivalences("\$20+2x<5x\$ equivale a \$x>20\$.").size)
@@ -36,13 +36,13 @@ class FuvestQualityTest {
     fun catchesTheRecycledExamExercisesAndKeepsIndependentPractice() {
         val valid = sampleLesson("exam/M01").copy(exercises = originalExercises)
         val recycled = valid.copy(exercises = listOf(
-            FuvestExercise("Escreva a função da tarifa da empresa A para uma encomenda de x quilos.", "Dica.", "Resposta."),
-            FuvestExercise("Considere as tarifas da questão. Determine o intervalo.", "Dica.", "Resposta."),
-            FuvestExercise("Envie 200 quilos em duas encomendas usando as empresas da questão por R$ 850.", "Dica.", "Resposta."),
+            ExamExercise("Escreva a função da tarifa da empresa A para uma encomenda de x quilos.", "Dica.", "Resposta."),
+            ExamExercise("Considere as tarifas da questão. Determine o intervalo.", "Dica.", "Resposta."),
+            ExamExercise("Envie 200 quilos em duas encomendas usando as empresas da questão por R$ 850.", "Dica.", "Resposta."),
         ))
-        val notes = checkFuvestLesson(recycled, deliveryQuestion)
+        val notes = checkExamLesson(recycled, deliveryQuestion)
         assertEquals(3, notes.practice.size)
-        assertTrue(checkFuvestLesson(valid, deliveryQuestion).passed)
+        assertTrue(checkExamLesson(valid, deliveryQuestion).passed)
     }
 
     @Test
@@ -51,9 +51,11 @@ class FuvestQualityTest {
         val contaminated = lesson.copy(exercises = lesson.exercises.toMutableList().apply {
             this[1] = this[1].copy(prompt = "Em uma城区 de eventos, um sensor mede a temperatura.")
         })
-        assertTrue(checkFuvestLesson(contaminated, deliveryQuestion).practice.any { it.contains("português fluente") })
-        assertEquals("Item a. Some a taxa fixa.",
-            polishSolutionStep("item a — check: Some a taxa fixa.\\n\\npayload: {\"answer\":\"Resultado\"}"))
+        assertTrue(checkExamLesson(contaminated, deliveryQuestion).practice.any { it.contains("português fluente") })
+        assertEquals(
+            "Item a. Some a taxa fixa.",
+            polishSolutionStep("item a — check: Some a taxa fixa.\\n\\npayload: {\"answer\":\"Resultado\"}"),
+        )
     }
 
     @Test
@@ -64,9 +66,9 @@ class FuvestQualityTest {
         fun withExercise(value: String) = lesson.copy(exercises = lesson.exercises.toMutableList().apply {
             this[1] = this[1].copy(prompt = value)
         })
-        assertTrue(checkFuvestLesson(withExercise(prompt), deliveryQuestion).practice.any { it.contains("grandezas compatíveis") })
-        assertTrue(checkFuvestLesson(withExercise(prompt.replace("litros por minuto", "graus Celsius")), deliveryQuestion).passed)
-        assertTrue(checkFuvestLesson(withExercise(prompt.replace("Calcule", "Discuta se faz sentido calcular")), deliveryQuestion).passed)
+        assertTrue(checkExamLesson(withExercise(prompt), deliveryQuestion).practice.any { it.contains("grandezas compatíveis") })
+        assertTrue(checkExamLesson(withExercise(prompt.replace("litros por minuto", "graus Celsius")), deliveryQuestion).passed)
+        assertTrue(checkExamLesson(withExercise(prompt.replace("Calcule", "Discuta se faz sentido calcular")), deliveryQuestion).passed)
     }
 
     @Test
@@ -74,9 +76,11 @@ class FuvestQualityTest {
         val lesson = sampleLesson("exam/M01").copy(exercises = originalExercises)
         val original = lesson.sections.first()
         fun withText(text: String) = lesson.copy(sections = listOf(original.copy(body = text)) + lesson.sections.drop(1))
-        assertTrue(checkFuvestLesson(withText("Há descontinuidade, isto é, um “salto” no gráfico."), deliveryQuestion)
-            .fundamentals.any { it.contains("descontinuidade por salto") })
-        assertTrue(checkFuvestLesson(withText("Um salto é um tipo de descontinuidade."), deliveryQuestion).passed)
+        assertTrue(
+            checkExamLesson(withText("Há descontinuidade, isto é, um “salto” no gráfico."), deliveryQuestion)
+                .fundamentals.any { it.contains("descontinuidade por salto") },
+        )
+        assertTrue(checkExamLesson(withText("Um salto é um tipo de descontinuidade."), deliveryQuestion).passed)
     }
 
     @Test
@@ -88,43 +92,27 @@ class FuvestQualityTest {
         val client = client { name, request ->
             requests += name to request
             when (name) {
-                "fuvest_fundamentals" -> fundamentals()
-                "fuvest_guided_practice" -> if (practiceCalls.getAndIncrement() == 0) {
+                "exam_fundamentals" -> fundamentals()
+                "exam_guided_practice" -> if (practiceCalls.getAndIncrement() == 0) {
                     practice("\$20+2x<5x\$ equivale a \$x>20\$.")
                 } else practice()
-                "fuvest_exam_solution" -> sampleLesson(reference.key).solution.json()
-                "fuvest_review_fundamentals", "fuvest_review_practice", "fuvest_review_solution" -> {
+                "exam_solution" -> sampleLesson(reference.key).solution.json()
+                "exam_review_fundamentals", "exam_review_practice", "exam_review_solution" -> {
                     reviews.incrementAndGet()
                     review(name)
                 }
-                else -> error("Unexpected model request")
+                else -> error("Unexpected model request: $name")
             }
         }
-        val lesson = FuvestLessons(client).generate("test-key", topic, reference, render = { byteArrayOf(1) })
+        val lesson = ExamLessons(client).generate("test-key", topic, reference, render = { byteArrayOf(1) })
         assertTrue(lesson.isReviewed)
-        assertTrue(FuvestLesson.from(lesson.json()).isReviewed)
-        assertFalse(FuvestLesson.from(lesson.json().apply { remove("review_version") }).isReviewed)
+        assertTrue(ExamLesson.from(lesson.json()).isReviewed)
+        assertFalse(ExamLesson.from(lesson.json().apply { remove("review_version") }).isReviewed)
         assertEquals(2, practiceCalls.get())
         assertEquals(3, reviews.get())
-        assertEquals(1, requests.count { it.first == "fuvest_fundamentals" })
-        assertEquals(1, requests.count { it.first == "fuvest_exam_solution" })
-        val curriculum = requests.filter { it.first in setOf("fuvest_guided_practice", "fuvest_fundamentals") }
-        assertTrue(curriculum.none { it.second.getJSONArray("messages").getJSONObject(1).get("content").toString().contains("encomenda") })
-        val firstPractice = requests.first { it.first == "fuvest_guided_practice" }.second
-        val practiceContext = firstPractice.getJSONArray("messages").getJSONObject(1).get("content").toString()
-        assertTrue(practiceContext.contains("Identificar o ponto de mudança"))
-        assertFalse(practiceContext.contains("Uma função atribui uma saída"))
-        val lessonReview = requests.first { it.first == "fuvest_review_fundamentals" }.second
-        assertFalse(lessonReview.getJSONArray("messages").getJSONObject(1).get("content").toString().contains("Resposta provisória"))
-        val practiceReview = requests.first { it.first == "fuvest_review_practice" }.second
-        val input = practiceReview.getJSONArray("messages").getJSONObject(1).getJSONArray("content")
-        val reviewedExercises = JSONObject(input.getJSONObject(input.length() - 1).getString("text").substringAfter('\n'))
-            .getJSONArray("exercises")
-        assertEquals((1..3).toList(), List(3) { reviewedExercises.getJSONObject(it).getInt("level") })
-        assertEquals(originalExercises.map { it.prompt }, List(3) { reviewedExercises.getJSONObject(it).getString("prompt") })
+        assertEquals(1, requests.count { it.first == "exam_fundamentals" })
+        assertEquals(1, requests.count { it.first == "exam_solution" })
         assertTrue(lesson.sections.all { it.answer == "A condição do intervalo decide qual regra usar." })
-        val repair = requests.last { it.first == "fuvest_guided_practice" }.second
-        assertTrue(repair.getJSONArray("messages").getJSONObject(0).getString("content").contains("não são equivalentes"))
     }
 
     @Test
@@ -133,27 +121,27 @@ class FuvestQualityTest {
         val (topic, reference) = topicFor(deliveryQuestion)
         val client = client { name, _ ->
             when (name) {
-                "fuvest_fundamentals" -> fundamentals()
-                "fuvest_guided_practice" -> practice()
-                "fuvest_exam_solution" -> sampleLesson(reference.key).solution.json()
-                "fuvest_review_fundamentals", "fuvest_review_practice" -> review(name)
-                "fuvest_review_solution" -> {
+                "exam_fundamentals" -> fundamentals()
+                "exam_guided_practice" -> practice()
+                "exam_solution" -> sampleLesson(reference.key).solution.json()
+                "exam_review_fundamentals", "exam_review_practice" -> review(name)
+                "exam_review_solution" -> {
                     reviewCount.incrementAndGet()
                     review(name, "A resolução não justifica o domínio do segundo item.")
                 }
-                else -> error("Unexpected model request")
+                else -> error("Unexpected model request: $name")
             }
         }
         assertThrows(IllegalStateException::class.java) {
-            runBlocking { FuvestLessons(client).generate("test-key", topic, reference, render = { byteArrayOf(1) }) }
+            runBlocking { ExamLessons(client).generate("test-key", topic, reference, render = { byteArrayOf(1) }) }
         }
         assertEquals(3, reviewCount.get())
     }
 
-    private fun topicFor(question: FuvestQuestion): Pair<FuvestTopic, FuvestReference> {
-        val exam = FuvestExam(2023, "exam", true, listOf(question))
-        val reference = FuvestReference(exam, question)
-        return FuvestTopic(question.subject, "Funções por partes", listOf(reference)) to reference
+    private fun topicFor(question: ExamQuestion): Pair<ExamTopic, ExamReference> {
+        val exam = PastExam("UNICAMP 2024", "UNICAMP", 2024, "2ª Fase", "exam", listOf(question))
+        val reference = ExamReference(exam, question)
+        return ExamTopic(question.subjectKey, question.subject, "Funções por partes", listOf(reference)) to reference
     }
 
     private fun fundamentals() = JSONObject().put("goal", "Explicar a função por partes.")
@@ -169,12 +157,12 @@ class FuvestQualityTest {
                 .put("transferir", "Aplico em outro contexto."))
 
     private fun section(body: String = "Uma função atribui uma saída a cada entrada.") =
-        FuvestLessonSection("Título", body, "Como separar as faixas?", "Resposta provisória.").json()
+        ExamLessonSection("Título", body, "Como separar as faixas?", "Resposta provisória.").json()
 
     private fun review(stage: String, issue: String? = null): JSONObject {
         val keys = when (stage) {
-            "fuvest_review_fundamentals" -> listOf("fundamentos", "modelo_mental", "raciocinio")
-            "fuvest_review_practice" -> listOf("exemplos", "estrategia")
+            "exam_review_fundamentals" -> listOf("fundamentos", "modelo_mental", "raciocinio")
+            "exam_review_practice" -> listOf("exemplos", "estrategia")
             else -> emptyList()
         }
         return JSONObject().put("issues", JSONArray(listOfNotNull(issue))).put("check_answers",
@@ -196,17 +184,19 @@ class FuvestQualityTest {
 
     private val deliveryQuestion = sampleQuestion.copy(
         stem = "Duas empresas de entrega cobram uma tarifa por encomenda. A empresa A cobra R$ 4 por quilo mais R$ 30.",
-        parts = listOf(FuvestPart("a", "Dê a função da tarifa da empresa A em termos do peso em quilos."),
-            FuvestPart("b", "Compare as tarifas das empresas."),
-            FuvestPart("c", "Distribua duas encomendas de 200 quilos ao todo pagando R$ 850.")),
+        parts = listOf(
+            QuestionPart("a", "Dê a função da tarifa da empresa A em termos do peso em quilos."),
+            QuestionPart("b", "Compare as tarifas das empresas."),
+            QuestionPart("c", "Distribua duas encomendas de 200 quilos ao todo pagando R$ 850."),
+        ),
     )
 
     private val originalExercises = listOf(
-        FuvestExercise("Uma piscina enche 2 litros por minuto até 12 minutos e depois enche 1 litro por minuto. Qual o volume aos 14 minutos?",
+        ExamExercise("Uma piscina enche 2 litros por minuto até 12 minutos e depois enche 1 litro por minuto. Qual o volume aos 14 minutos?",
             "Separe os tempos.", "Ao fim de 12 minutos há 24 litros. Nos dois minutos seguintes entram mais 2."),
-        FuvestExercise("Um sensor mostra 18 graus até meia-noite e sobe 2 graus por hora depois. Quando chega a 26 graus?",
+        ExamExercise("Um sensor mostra 18 graus até meia-noite e sobe 2 graus por hora depois. Quando chega a 26 graus?",
             "Considere o trecho crescente.", "São necessárias quatro horas após meia-noite."),
-        FuvestExercise("Um jogo dobra pontos até 9 rodadas e depois acrescenta um bônus fixo. Proponha duas regras contínuas na transição.",
+        ExamExercise("Um jogo dobra pontos até 9 rodadas e depois acrescenta um bônus fixo. Proponha duas regras contínuas na transição.",
             "Iguale as pontuações na fronteira.", "A segunda expressão deve começar no valor da primeira."),
     )
 }

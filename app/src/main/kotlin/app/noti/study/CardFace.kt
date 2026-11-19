@@ -164,10 +164,11 @@ class CardFace private constructor(
                     val r = RectF(PAD, y, w - PAD, y + h)
                     options += RectF(r)
                     val answered = progress.chosen >= 0 && !exam
+                    val graded = answered && item.correctChoice >= 0
                     val chosen = progress.chosen == i || (!answered && picked == i)
                     val bg = when {
-                        answered && i == item.correctChoice -> MINT
-                        answered && chosen -> PEACH
+                        graded && i == item.correctChoice -> MINT
+                        graded && chosen -> PEACH
                         chosen -> LILAC
                         else -> 0
                     }
