@@ -34,8 +34,8 @@ object DocumentExport {
         if (notebook.isCanvas) {
             // A notebook never opened since Endless became a canvas still has page-shaped ink.
             val ink = if (notebook.canvasInk) bytes else EndlessCanvas.fromPages(bytes)
-            // A Study board also prints its cards, headings, score cards and source pages.
-            val board = if (!notebook.board) null else app.noti.study.BoardExport.read(library.studyFile(notebook))?.let { study ->
+            // Any Endless canvas with pinned cards, headings, score cards or source pages exports them too.
+            val board = app.noti.study.BoardExport.read(library.studyFile(notebook))?.let { study ->
                 app.noti.study.BoardExport.of(library.appContext, study) { id -> library.notebook(id)?.let(library::pdfFile)?.takeIf { it.exists() } }
             }
             val output = android.graphics.pdf.PdfDocument()

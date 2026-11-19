@@ -1,24 +1,24 @@
-package app.noti.fuvest
+package app.noti.exams
 
 import app.noti.study.mathSpans
 import java.math.BigDecimal
 
-internal data class FuvestReview(
+internal data class ExamReview(
     val fundamentals: List<String> = emptyList(),
     val practice: List<String> = emptyList(),
     val solution: List<String> = emptyList(),
 ) {
     val passed get() = fundamentals.isEmpty() && practice.isEmpty() && solution.isEmpty()
 
-    operator fun plus(other: FuvestReview) = FuvestReview(
+    operator fun plus(other: ExamReview) = ExamReview(
         fundamentals + other.fundamentals,
         practice + other.practice,
         solution + other.solution,
     )
 }
 
-internal fun checkFuvestLesson(lesson: FuvestLesson, question: FuvestQuestion): FuvestReview {
-    fun checkSections(sections: List<FuvestLessonSection>): List<String> =
+internal fun checkExamLesson(lesson: ExamLesson, question: ExamQuestion): ExamReview {
+    fun checkSections(sections: List<ExamLessonSection>): List<String> =
         sections.flatMap { section ->
             listOf(section.body, section.check, section.answer).flatMap { text ->
                 contentIssues(text).map { "${section.title}: $it" }
@@ -41,7 +41,7 @@ internal fun checkFuvestLesson(lesson: FuvestLesson, question: FuvestQuestion): 
             practice += contentIssues(text).map { "Exercício ${index + 1}: $it" }
         }
     }
-    return FuvestReview(
+    return ExamReview(
         (contentIssues(lesson.goal) + checkSections(lesson.sections.take(3))).distinct(),
         (practice + lesson.checklist.flatMap(::contentIssues)).distinct(),
         (listOf(lesson.solution.answer) + lesson.solution.hints + lesson.solution.steps).flatMap(::contentIssues).distinct(),
@@ -102,7 +102,7 @@ internal fun polishSolutionStep(value: String): String = value
     .replace(stepPayload, "").replace(stepFieldLabel) { "Item ${it.groupValues[1]}. " }.trim()
 
 private val sourceDependent = Regex(
-    """\b(?:dados|valores|tarifas|empresas|figura|enunciado|questao|item)\s+(?:da|do|desta|deste)\s+(?:questao|prova|enunciado|fuvest)\b""",
+    """\b(?:dados|valores|tarifas|empresas|figura|enunciado|questao|item)\s+(?:da|do|desta|deste)\s+(?:questao|prova|enunciado|fuvest|enem|unicamp|unesp|ita)\b""",
 )
 
 private val teachingWords = setOf(
@@ -137,8 +137,10 @@ internal fun wrongLinearEquivalences(text: String): List<String> {
 }
 
 private data class Ratio(val numerator: BigDecimal, val denominator: BigDecimal = BigDecimal.ONE) {
-    operator fun plus(other: Ratio) = Ratio(numerator * other.denominator + other.numerator * denominator,
-        denominator * other.denominator)
+    operator fun plus(other: Ratio) = Ratio(
+        numerator * other.denominator + other.numerator * denominator,
+        denominator * other.denominator,
+    )
     operator fun unaryMinus() = Ratio(-numerator, denominator)
     operator fun div(other: Ratio): Ratio =
         Ratio(numerator * other.denominator * BigDecimal(other.numerator.signum()), denominator * other.numerator.abs())

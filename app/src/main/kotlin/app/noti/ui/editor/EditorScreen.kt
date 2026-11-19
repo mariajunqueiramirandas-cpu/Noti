@@ -68,8 +68,15 @@ private fun openInk(notebook: Notebook, library: LibraryStore): OpenedInk {
 }
 
 @Composable
-fun EditorScreen(notebook: Notebook, library: LibraryStore, settings: SettingsStore,
-    initialStudyItem: String? = null, onBack: () -> Unit) {
+internal fun EditorScreen(
+    notebook: Notebook,
+    library: LibraryStore,
+    settings: SettingsStore,
+    examStore: app.noti.exams.ExamStore? = null,
+    initialStudyTarget: app.noti.ui.study.StudyLaunchTarget? = null,
+    onOpenStudyHub: (() -> Unit)? = null,
+    onBack: () -> Unit,
+) {
     val opened by produceState<Result<OpenedInk>?>(null, notebook.id) {
         val result = withContext(Dispatchers.IO) { runCatching { openInk(notebook, library) } }
         if (result.isSuccess && notebook.isCanvas && !notebook.canvasInk) library.setCanvasInk(notebook.id)
@@ -92,13 +99,24 @@ fun EditorScreen(notebook: Notebook, library: LibraryStore, settings: SettingsSt
             confirmButton = { app.noti.ui.common.NotiButton(onClick = onBack) { Text("Back to library") } })
     } else {
         val ink = result.getOrThrow()
-        key(notebook.id) { EditorContent(notebook, library, settings, ink.file, ink.sheetAspect, initialStudyItem, onBack) }
+        key(notebook.id) {
+            EditorContent(notebook, library, settings, ink.file, ink.sheetAspect, examStore, initialStudyTarget, onOpenStudyHub, onBack)
+        }
     }
 }
 
 @Composable
-private fun EditorContent(notebook: Notebook, library: LibraryStore, settings: SettingsStore, inkFile: InkFile,
-    sheetAspect: Float?, initialStudyItem: String?, onBack: () -> Unit) {
+private fun EditorContent(
+    notebook: Notebook,
+    library: LibraryStore,
+    settings: SettingsStore,
+    inkFile: InkFile,
+    sheetAspect: Float?,
+    examStore: app.noti.exams.ExamStore?,
+    initialStudyTarget: app.noti.ui.study.StudyLaunchTarget?,
+    onOpenStudyHub: (() -> Unit)?,
+    onBack: () -> Unit,
+) {
     var pagesOpen by remember { mutableStateOf(false) }
     var jumping by rememberSaveable { mutableStateOf(false) }
     var fullScreen by remember { mutableStateOf(false) }
@@ -211,10 +229,20 @@ private fun EditorContent(notebook: Notebook, library: LibraryStore, settings: S
         current?.setPenDial(if (!dialGesture) null else { action, x, y -> dial.onPen(action, x, y)?.let(settings::applyDialSegment) })
         onDispose { current?.setPenDial(null) }
     }
-    // A Study board: its sheet, printed cards and the loops the sheet asks for.
+    // Unified study tools: Deck, Assaad, and Past Exams available on every notebook.
     val study = app.noti.ui.study.rememberStudyBoard(notebook, library)
-    LaunchedEffect(study, initialStudyItem) {
-        if (initialStudyItem != null) study?.controller?.showItem(initialStudyItem)
+    app.noti.ui.assaad.AssaadStudyBridge(study?.controller)
+    if (examStore != null) {
+        app.noti.ui.exams.ExamStudyBridge(examStore, library, study?.controller, onOpenHub = { onOpenStudyHub?.invoke() })
+    }
+    LaunchedEffect(study, initialStudyTarget) {
+        val controller = study?.controller ?: return@LaunchedEffect
+        when (val target = initialStudyTarget) {
+            is app.noti.ui.study.StudyLaunchTarget.Deck -> controller.showItem(target.itemId)
+            is app.noti.ui.study.StudyLaunchTarget.Assaad -> controller.showAssaad(target.questionId?.let { app.noti.assaad.assaadItemId(it) })
+            is app.noti.ui.study.StudyLaunchTarget.Exam -> controller.showExam(target.questionKey)
+            null -> Unit
+        }
     }
     val dialLocked = dial.phase == PenDialState.Phase.Locked
     LaunchedEffect(layer, dialLocked) { layer?.setDialLocked(dialLocked) }
@@ -266,7 +294,6 @@ private fun EditorContent(notebook: Notebook, library: LibraryStore, settings: S
             if (study != null) BoxWithConstraints(Modifier.fillMaxSize()) {
                 StudyOverlay(study, { pages.placement }, maxWidth, maxHeight, hidden = settingsOpen || fullScreen)
             }
-            app.noti.ui.assaad.AssaadStudyBridge(notebook.id, study?.controller)
             if (pagesOpen && !fullScreen && !notebook.isCanvas && !notebook.isPdf) {
                 androidx.compose.ui.window.Popup(alignment = Alignment.TopStart,
                     offset = with(androidx.compose.ui.platform.LocalDensity.current) { androidx.compose.ui.unit.IntOffset(2.dp.roundToPx(), 62.dp.roundToPx()) },

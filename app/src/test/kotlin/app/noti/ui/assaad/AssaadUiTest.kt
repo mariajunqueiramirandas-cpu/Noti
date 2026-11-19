@@ -4,7 +4,9 @@ import android.graphics.Bitmap
 import android.view.View
 import androidx.activity.ComponentActivity
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.SideEffect
 import androidx.compose.ui.Modifier
@@ -12,8 +14,6 @@ import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
-import androidx.compose.foundation.layout.BoxWithConstraints
-import androidx.compose.foundation.layout.size
 import androidx.compose.ui.unit.dp
 import app.noti.R
 import app.noti.assaad.AssaadLocalBrowser
@@ -21,16 +21,17 @@ import app.noti.assaad.AssaadSession
 import app.noti.assaad.assaadItemId
 import app.noti.data.*
 import app.noti.study.*
+import app.noti.ui.captureRenderedView
 import app.noti.ui.study.SheetGeometry
 import app.noti.ui.study.StudyController
 import app.noti.ui.study.StudySheet
-import app.noti.ui.captureRenderedView
+import app.noti.ui.study.StudySourceTab
 import app.noti.ui.theme.NotiTheme
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.cancel
 import org.json.JSONObject
-import org.junit.Assert.*
 import org.junit.After
+import org.junit.Assert.*
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -51,35 +52,39 @@ class AssaadUiTest {
     private lateinit var view: View
     @After fun close() { if (::session.isInitialized) session.dispose(); scope.cancel() }
 
-    @Test fun libraryShowsLiveSessionAndOpensPairing() {
+    @Test fun studyHubPanelShowsLiveSessionAndAsksForCanvas() {
         context.getSharedPreferences("platform_keys", 0).edit().clear().commit()
         context.getSharedPreferences("platform_preferences", 0).edit().clear().commit()
         session = AssaadSession(context, LibraryStore(context), scope)
         session.receive("""{"type":"session","payload":{"paired":true,"peerOnline":true,"presence":{"active":true,"path":"/"}}}""")
+        var requestedCanvas = false
         compose.setContent {
             SideEffect { view = compose.activity.window.decorView }
-            NotiTheme(ThemeMode.Light) { CompositionLocalProvider(LocalAssaadSession provides session) {
-                Box(Modifier.fillMaxSize().testTag("platform")) { AssaadLibraryEntry() }
-                AssaadPairingDialog(session) {}
-            } }
+            NotiTheme(ThemeMode.Light) {
+                CompositionLocalProvider(LocalAssaadSession provides session) {
+                    Box(Modifier.fillMaxSize().testTag("platform")) {
+                        AssaadHubPanel(session) { _, _ -> requestedCanvas = true }
+                    }
+                }
+            }
         }
         compose.onNodeWithText("Active in your browser", substring = true).assertIsDisplayed()
-        compose.onNodeWithText("Plataforma Assaad").performClick()
-        compose.onNodeWithText("Open canvas").assertIsDisplayed()
         compose.onNodeWithText("Assaad is active in your browser.").assertIsDisplayed()
+        compose.onNodeWithText("Open on canvas").performClick()
+        compose.runOnIdle { assertTrue(requestedCanvas) }
     }
 
     private lateinit var study: StudyController
 
-    /** The Assaad board with its study sheet, inline, and the bridge that puts the saved questions on it. */
-    private fun board(w: Int, h: Int) {
+    /** Any ordinary notebook with its study sheet, inline, and the board-agnostic Assaad bridge. */
+    private fun notebookWithAssaad(w: Int, h: Int) {
         context.getSharedPreferences("platform_keys", 0).edit().clear().commit()
         context.getSharedPreferences("platform_preferences", 0).edit().clear().commit()
-        java.io.File(context.filesDir, "assaad_session.json").delete()
+        File(context.filesDir, "assaad_session.json").delete()
         val library = LibraryStore(context)
         session = AssaadSession(context, library, scope) { true }
-        val id = session.openBoard()
-        val notebook = library.notebook(id)!!
+        // Create an ordinary notebook (NOT session.openBoard()) to prove Assaad works on ANY canvas.
+        val notebook = library.create("Physics Notes", Paper(PaperTemplate.Grid), null, board = false)
         val file = library.studyFile(notebook).apply { parentFile?.mkdirs(); delete() }
         val store = StudyStore.load(file)
         study = StudyController(library, store, {})
@@ -88,30 +93,36 @@ class AssaadUiTest {
         compose.setContent {
             val currentView = LocalView.current
             SideEffect { view = currentView }
-            NotiTheme(ThemeMode.Light) { CompositionLocalProvider(LocalAssaadSession provides session) {
-                BoxWithConstraints(Modifier.size(w.dp, h.dp).testTag("platform")) {
-                    AssaadStudyBridge(id, study)
-                    StudySheet(study, SheetGeometry(), fonts, { null }, maxWidth, maxHeight, floating = false)
+            NotiTheme(ThemeMode.Light) {
+                CompositionLocalProvider(LocalAssaadSession provides session) {
+                    BoxWithConstraints(Modifier.size(w.dp, h.dp).testTag("platform")) {
+                        AssaadStudyBridge(study)
+                        StudySheet(study, SheetGeometry(), fonts, { null }, maxWidth, maxHeight, floating = false)
+                    }
                 }
-            } }
+            }
         }
         compose.waitUntil(5_000) { compose.runOnIdle { session.libraryLoaded } }
         session.receive(JSONObject().put("type", "questions").put("payload", JSONObject(javaClass.getResource("/assaad-batch.json")!!.readText())).toString())
     }
+
     private fun choose(letter: Char) = compose.onAllNodes(SemanticsMatcher("click label Choose $letter") {
         androidx.compose.ui.semantics.SemanticsActions.OnClick in it.config && it.config[androidx.compose.ui.semantics.SemanticsActions.OnClick].label == "Choose $letter"
     }).onFirst().performClick()
 
     @Test
     @Config(qualifiers = "w1280dp-h900dp-mdpi")
-    fun assaadQuestionsUseTheStudySheetAndAssaadChecksTheAnswer() {
-        board(1280, 900)
-        // A new set opens the ordinary study sheet on its first question.
-        compose.waitUntil(5_000) { compose.runOnIdle { study.open && study.current?.id == assaadItemId("q-1") } }
+    fun assaadQuestionsWorkOnAnyNotebookAndAssaadChecksTheAnswer() {
+        notebookWithAssaad(1280, 900)
+        // A new set opens the study sheet on its Assaad tab, on any notebook.
+        compose.waitUntil(5_000) { compose.runOnIdle { study.open && study.effectiveTab == StudySourceTab.Assaad && study.current?.id == assaadItemId("q-1") } }
         compose.onNodeWithContentDescription("Study sheet. Drag to move.").assertIsDisplayed()
         compose.onNodeWithText("Pick an option").assertIsNotEnabled()
         choose('A')
-        compose.runOnIdle { assertEquals("a-1", session.draftFor("q-1")); assertEquals(-1, study.data.progressOf(assaadItemId("q-1")).chosen) }
+        compose.runOnIdle {
+            assertEquals("a-1", session.draftFor("q-1"))
+            assertEquals(-1, study.progressOf(study.current!!).chosen)
+        }
         // Not connected: nothing queues up to go later.
         compose.onNodeWithText("Connect Assaad to check").assertIsDisplayed()
         compose.runOnIdle {
@@ -125,12 +136,12 @@ class AssaadUiTest {
         // Assaad's answer comes back: the card is checked like any other.
         val command = compose.runOnIdle { session.answerFor("q-1")!!.commandId }
         session.receive("""{"type":"answer-result","payload":{"commandId":"$command","status":"confirmed","correct":false,"correctAlternativeId":"a-2","feedback":"Resposta incorreta."}}""")
-        compose.waitUntil(5_000) { compose.runOnIdle { study.data.progressOf(assaadItemId("q-1")).chosen == 0 } }
+        compose.waitUntil(5_000) { compose.runOnIdle { study.progressOf(study.current!!).chosen == 0 } }
         compose.runOnIdle {
-            val item = study.data.item(assaadItemId("q-1"))!!
+            val item = study.current!!
             assertEquals(1, item.correctChoice)
-            assertEquals(Verdict.Incorrect, study.data.progressOf(item.id).outcome(item))
-            assertNotNull("a checked answer is scheduled for review", study.data.progressOf(item.id).srs)
+            assertEquals(Verdict.Incorrect, study.progressOf(item).outcome(item))
+            assertNotNull("a checked answer is scheduled for review", study.progressOf(item).srs)
         }
         screenshot("assaad-sheet-checked")
     }
@@ -138,7 +149,7 @@ class AssaadUiTest {
     @Test
     @Config(qualifiers = "w412dp-h915dp-mdpi")
     fun phoneBoardShowsAssaadQuestionsInTheDockedSheet() {
-        board(412, 915)
+        notebookWithAssaad(412, 915)
         compose.waitUntil(5_000) { compose.runOnIdle { study.open } }
         compose.onNodeWithText("Pick an option").assertIsDisplayed()
         screenshot("assaad-sheet-phone")

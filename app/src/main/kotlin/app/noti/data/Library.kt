@@ -158,7 +158,7 @@ class LibraryStore(context: Context) {
         val positions = readingPositions.edit()
         deleted.forEach { nb ->
             InkFile.delete(inkFile(nb))
-            if (nb.board) app.noti.study.StudyStore.delete(studyFile(nb))
+            if (!nb.isPdf) app.noti.study.StudyStore.delete(studyFile(nb))
             pdfFile(nb)?.delete()
             thumbnailFile(nb)?.delete()
             positions.remove(nb.id)
@@ -183,11 +183,11 @@ class LibraryStore(context: Context) {
                         thumbnailFile(nb)?.takeIf(File::exists)?.copyTo(thumbnailFile(copy)!!)
                     }
                     InkFile.open(inkFile(nb)).initial?.let { InkFile.replace(inkFile(copy), it) }
-                    if (nb.board) app.noti.study.StudyStore.copy(studyFile(nb), studyFile(copy))
+                    if (!nb.isPdf) app.noti.study.StudyStore.copy(studyFile(nb), studyFile(copy))
                     copy
                 }.getOrElse {
                     InkFile.delete(inkFile(copy))
-                    if (nb.board) app.noti.study.StudyStore.delete(studyFile(copy))
+                    if (!nb.isPdf) app.noti.study.StudyStore.delete(studyFile(copy))
                     pdfFile(copy)?.delete()
                     thumbnailFile(copy)?.delete()
                     null

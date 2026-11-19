@@ -277,7 +277,7 @@ private fun SourceDialog(study: StudyController, item: StudyItem, geometry: Shee
     }
     NotiDialogFrame(onClose, title = { Text(source?.name ?: "Source") }, maxWidth = 620.dp, actions = {
         NotiTextButton(onClick = onClose) { Text("Close") }
-        NotiButton(enabled = source != null, onClick = {
+        if (study.board != null) NotiButton(enabled = source != null, onClick = {
             val sheet = placement()?.visiblePages?.firstOrNull() ?: return@NotiButton
             val origin = geometry.sheetInEditor()
             val width = 360f
@@ -316,13 +316,15 @@ private fun BoardMenu(study: StudyController, hit: BoardLayer.Hit, at: IntOffset
                         onClick = { onClose(); action() })
                 when (hit) {
                     is BoardLayer.Hit.Card -> {
-                        entry("Open on the sheet", Icons.Outlined.OpenInNew) { study.select(hit.card.itemId); study.collapsed = false; study.open = true }
+                        entry("Open on the sheet", Icons.Outlined.OpenInNew) { study.openFromBoard(hit.card.itemId) }
                         entry("Move", Icons.Outlined.OpenWith) {
                             val sheet = placement()?.visiblePages?.firstOrNull() ?: return@entry
                             study.unpin(hit.card, sheet, geometry.faceInSheet().takeIf { it != IntOffset.Zero } ?: IntOffset(DefaultFaceX, DefaultFaceY))
                         }
-                        entry("Try it again", Icons.Outlined.Replay) {
-                            study.reset(hit.card.itemId); study.select(hit.card.itemId); study.collapsed = false; study.open = true
+                        if (!study.isRemote(hit.card.itemId)) {
+                            entry("Try it again", Icons.Outlined.Replay) {
+                                study.reset(hit.card.itemId); study.openFromBoard(hit.card.itemId)
+                            }
                         }
                         entry("Remove from the board", Icons.Outlined.DeleteOutline, destructive = true) { study.remove(hit) }
                     }

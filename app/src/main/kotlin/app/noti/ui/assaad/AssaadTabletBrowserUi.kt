@@ -234,6 +234,6 @@ private fun stepDetail(step: Step, session: AssaadSession) = when (step) {
     Step.SignIn -> "Use the form above. Noti connects as soon as you're in."
     Step.Problem -> session.tabletStatus
     Step.FindQuestions -> session.tabletNotice ?: "Open the question bank and run a search."
-    Step.Ready -> session.tabletNotice ?: "Search, then send this page's questions to your study board."
+    Step.Ready -> session.tabletNotice ?: "Search, then study this page's questions on your canvas."
     Step.Saving -> session.tabletStatus
 }
