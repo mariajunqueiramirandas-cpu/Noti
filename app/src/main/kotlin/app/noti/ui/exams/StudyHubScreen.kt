@@ -108,6 +108,7 @@ internal fun StudyHubScreen(
     }
 
     val subjects = remember(catalog?.exams) { catalog?.subjects().orEmpty() }
+    val allTopics = remember(catalog?.exams) { catalog?.allTopics().orEmpty() }
     val currentSubject = subjects.firstOrNull { it.key == selectedSubjectKey }
     val selectedExam = catalog?.exams?.firstOrNull { it.sourceId == selectedExamId }
     val subjectTopics = remember(catalog?.exams, currentSubject?.key) {
@@ -407,7 +408,6 @@ internal fun StudyHubScreen(
                     }
                 }
                 else -> {
-                    val allTopics = remember(catalog.exams) { catalog.allTopics() }
                     val unfinished = allTopics.filter { candidate ->
                         catalog.lessons[candidate.key]?.milestones()?.any { it !in catalog.journey.milestones(candidate.key) } == true
                     }
