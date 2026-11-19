@@ -119,13 +119,14 @@ private enum class Section(val label: String, val icon: ImageVector) {
     Palm("Palm rejection", Icons.Outlined.PanTool),
     Pages("Pages", Icons.Outlined.Description),
     Appearance("Appearance", Icons.Outlined.Palette),
+    OpenRouter("OpenRouter", Icons.Outlined.School),
     About("About", Icons.Outlined.Info),
 }
 
 @Composable
-fun SettingsScreen(settings: SettingsStore, onBack: () -> Unit) {
+fun SettingsScreen(settings: SettingsStore, openRouter: Boolean = false, onBack: () -> Unit) {
     StylusDialogKeys(settings.penButtonsEnabled && settings.penLegacyKeys)
-    var section by rememberSaveable { mutableStateOf(Section.Pen) }
+    var section by rememberSaveable { mutableStateOf(if (openRouter) Section.OpenRouter else Section.Pen) }
     var sectionMenu by remember { mutableStateOf(false) }
     BackHandler(onBack = onBack)
     val colors = MaterialTheme.colorScheme
@@ -150,6 +151,7 @@ fun SettingsScreen(settings: SettingsStore, onBack: () -> Unit) {
                             SectionIntro("A little change of scenery.", "Find the light that feels right.")
                             AppearanceSection(settings)
                         }
+                        Section.OpenRouter -> Pane { OpenRouterSettings() }
                         Section.About -> Pane { AboutSection() }
                     }
                 }

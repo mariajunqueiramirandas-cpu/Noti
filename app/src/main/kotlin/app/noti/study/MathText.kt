@@ -12,8 +12,8 @@ import kotlin.math.min
  * Typesetting for study material: prose with LaTeX math, drawn straight onto a Canvas, so
  * the floating sheet and a printed card on the board look exactly alike, at any zoom.
  *
- * Text is split into paragraphs by newlines. `$…$` or `\(…\)` is inline math, `$$…$$` or
- * `\[…\]` is display math (its own centered line), `**…**` is bold prose.
+ * `$…$` and `\(…\)` are inline math. `$$…$$` and `\[…\]` are centered display math
+ * and can contain newlines. `**…**` is bold prose.
  *
  * The math is a practical subset of LaTeX for math and physics: letters, digits, Greek,
  * operators and relations with TeX spacing; `^` `_`; `\frac` `\dfrac` `\tfrac` `\binom`;
@@ -30,7 +30,7 @@ object MathText {
         val prose: Typeface = Typeface.DEFAULT,
         val proseBold: Typeface = Typeface.DEFAULT_BOLD,
         val lineSpacing: Float = 1.35f,
-        /** Paragraphs are this many line heights apart (on top of the line). */
+        /** Extra spacing between paragraphs, specified in em units. */
         val paragraphGap: Float = 0.35f,
     )
 
@@ -46,112 +46,159 @@ object MathText {
     internal class Line(val items: List<Placed>, val baseline: Float)
 
     fun layout(source: String, width: Float, style: Style): Block {
-        val maxW = max(width, style.size * 4)
+        val maxWidth = width.coerceAtLeast(1f)
         val prose = paint(style.prose, style.size, style.color)
-        val fm = prose.fontMetrics
-        val lineAsc = -fm.ascent
-        val lineDesc = fm.descent
-        val lines = ArrayList<Line>()
+        val lineAsc = -prose.fontMetrics.ascent
+        val lineDesc = prose.fontMetrics.descent
         var y = 0f
-        var first = true
-        for (paragraph in source.replace("\r", "").split('\n')) {
-            if (paragraph.isBlank()) { if (!first) y += style.size * style.paragraphGap; continue }
-            if (!first) y += style.size * style.paragraphGap
-            first = false
-            for (row in wrap(runs(paragraph, style), maxW, style)) {
-                val asc = max(lineAsc, row.maxOfOrNull { it.box.asc } ?: 0f)
-                val desc = max(lineDesc, row.maxOfOrNull { it.box.desc } ?: 0f)
-                // Natural line pitch, plus whatever tall math needs beyond it.
-                val pitch = max(style.size * style.lineSpacing, asc + desc + style.size * 0.15f)
-                val extraAbove = max(0f, asc - lineAsc)
-                val baseline = y + extraAbove + lineAsc + (pitch - (lineAsc + lineDesc) - extraAbove - max(0f, desc - lineDesc)).coerceAtLeast(0f) / 2
-                lines += Line(row, baseline)
-                y = baseline + max(lineDesc, desc) + (pitch - lineAsc - lineDesc).coerceAtLeast(0f) / 2
-            }
+        val lines = wrap(runs(source, maxWidth, style), maxWidth, style).map { row ->
+            y += row.spaceAbove
+            val asc = max(lineAsc, row.items.maxOfOrNull { it.box.asc } ?: 0f)
+            val desc = max(lineDesc, row.items.maxOfOrNull { it.box.desc } ?: 0f)
+            val leading = max(style.size * style.lineSpacing - asc - desc, style.size * 0.12f)
+            val baseline = y + asc + leading / 2
+            y = baseline + desc + leading / 2
+            Line(row.items, baseline)
         }
-        val usedW = lines.maxOfOrNull { l -> l.items.maxOfOrNull { it.x + it.box.w } ?: 0f } ?: 0f
-        return Block(min(maxW, usedW), y, lines)
+        val usedWidth = lines.maxOfOrNull { line -> line.items.maxOfOrNull { it.x + it.box.w } ?: 0f } ?: 0f
+        return Block(min(maxWidth, usedWidth), y, lines)
     }
-
-    // ---- prose and math runs ----
 
     private sealed interface Run
     private class Word(val box: Box) : Run
-    private class Gap(val w: Float) : Run
-    private class Display(val box: Box) : Run
+    private class Gap(val width: Float) : Run
+    private class Display(val chunks: List<Math.Chunk>) : Run
+    private data object Newline : Run
 
-    private fun runs(paragraph: String, style: Style): List<Run> {
+    private fun runs(source: String, width: Float, style: Style): List<Run> {
         val out = ArrayList<Run>()
-        val space = paint(style.prose, style.size, style.color).measureText(" ")
-        var i = 0
+        val regular = paint(style.prose, style.size, style.color)
+        val boldPaint = paint(style.proseBold, style.size, style.color)
+        val space = regular.measureText(" ")
+        val pieces = ArrayList<Box>()
         var bold = false
-        val text = StringBuilder()
-        fun flushText() {
-            if (text.isEmpty()) return
-            val p = paint(if (bold) style.proseBold else style.prose, style.size, style.color)
-            var start = 0
-            val s = text.toString()
-            while (start < s.length) {
-                if (s[start] == ' ') { out += Gap(space); while (start < s.length && s[start] == ' ') start++; continue }
-                var end = start
-                while (end < s.length && s[end] != ' ') end++
-                out += Word(TextBox(s.substring(start, end), p))
-                start = end
-            }
-            text.clear()
+        fun flushWord() {
+            if (pieces.isEmpty()) return
+            out += Word(if (pieces.size == 1) pieces.single() else HBox(pieces.toList()))
+            pieces.clear()
         }
-        while (i < paragraph.length) {
-            val c = paragraph[i]
-            when {
-                paragraph.startsWith("$$", i) || paragraph.startsWith("\\[", i) -> {
-                    val close = if (c == '$') "$$" else "\\]"
-                    val end = paragraph.indexOf(close, i + 2).let { if (it < 0) paragraph.length else it }
-                    flushText()
-                    out += Display(Math.layout(paragraph.substring(i + 2, end), style.size * 1.08f, style.color, display = true))
-                    i = min(paragraph.length, end + 2)
+        fun addProse(from: Int, until: Int) {
+            var i = from
+            while (i < until) {
+                when {
+                    source[i] == '\r' -> i++
+                    source[i] == '\n' -> { flushWord(); out += Newline; i++ }
+                    source[i] == ' ' || source[i] == '\t' -> {
+                        flushWord()
+                        if (out.lastOrNull() !is Gap) out += Gap(space)
+                        i++
+                    }
+                    i + 1 < until && source.startsWith("**", i) -> { bold = !bold; i += 2 }
+                    else -> {
+                        val text = StringBuilder()
+                        while (i < until && source[i] !in " \t\r\n" &&
+                            (i + 1 >= until || !source.startsWith("**", i))) {
+                            if (source[i] == '\\' && i + 1 < until && source[i + 1] == '$') i++
+                            text.append(source[i++])
+                        }
+                        pieces += TextBox(text.toString(), if (bold) boldPaint else regular)
+                    }
                 }
-                c == '$' || paragraph.startsWith("\\(", i) -> {
-                    val close = if (c == '$') "$" else "\\)"
-                    val from = i + if (c == '$') 1 else 2
-                    val end = paragraph.indexOf(close, from).let { if (it < 0) paragraph.length else it }
-                    flushText()
-                    Math.layoutChunks(paragraph.substring(from, end), style.size * 1.05f, style.color).forEach { out += Word(it) }
-                    i = min(paragraph.length, end + close.length)
-                    // Punctuation right after math stays on its line.
-                }
-                paragraph.startsWith("**", i) -> { flushText(); bold = !bold; i += 2 }
-                c == '\\' && i + 1 < paragraph.length && paragraph[i + 1] == '$' -> { text.append('$'); i += 2 }
-                else -> { text.append(c); i++ }
             }
         }
-        flushText()
+        var end = 0
+        for (span in mathSpans(source)) {
+            addProse(end, span.start)
+            end = span.end
+            val nodes = Parser(span.latex).parseAll()
+            val display = span.display || nodes.any(Node::hasStackedRows)
+            val scale = if (display) 1.08f else 1.05f
+            val chunks = Math.layoutChunks(nodes, style.size * scale, style.color, display)
+            if (display) {
+                flushWord()
+                val punctuationStart = end
+                while (end < source.length && source[end] in ".,;:!?") end++
+                if (end > punctuationStart) {
+                    val last = chunks.last()
+                    val punctuation = TextBox(source.substring(punctuationStart, end), regular)
+                    out += Display(chunks.dropLast(1) + last.copy(box = HBox(listOf(last.box, punctuation))))
+                } else {
+                    out += Display(chunks)
+                }
+            } else if (chunks.sumOf { (it.box.w + it.gap).toDouble() } <= width * 0.62f) {
+                pieces += HBox(chunks.map { it.box }, FloatArray(chunks.size) { chunks[it].gap })
+            } else {
+                chunks.forEachIndexed { index, chunk ->
+                    if (index > 0) {
+                        flushWord()
+                        out += Gap(chunk.gap)
+                    }
+                    pieces += chunk.box
+                }
+            }
+        }
+        addProse(end, source.length)
+        flushWord()
         return out
     }
 
-    private fun wrap(runs: List<Run>, width: Float, style: Style): List<List<Placed>> {
-        val rows = ArrayList<List<Placed>>()
+    private class Row(val items: List<Placed>, val spaceAbove: Float)
+
+    private fun wrap(runs: List<Run>, width: Float, style: Style): List<Row> {
+        val rows = ArrayList<Row>()
         var row = ArrayList<Placed>()
         var x = 0f
         var pendingGap = 0f
-        fun newRow() { if (row.isNotEmpty()) rows += row; row = ArrayList(); x = 0f; pendingGap = 0f }
-        for (r in runs) when (r) {
-            is Gap -> if (row.isNotEmpty()) pendingGap = r.w
-            is Display -> {
-                newRow()
-                val box = if (r.box.w > width) ScaledBox(r.box, width / r.box.w) else r.box
-                rows += listOf(Placed(box, (width - box.w) / 2))
+        var spaceAbove = 0f
+        var previous: Run? = null
+        fun newRow() {
+            if (row.isNotEmpty()) {
+                rows += Row(row, spaceAbove)
+                spaceAbove = 0f
             }
-            is Word -> {
-                val box = if (r.box.w > width) ScaledBox(r.box, width / r.box.w) else r.box
-                if (row.isNotEmpty() && x + pendingGap + box.w > width) newRow()
-                x += if (row.isEmpty()) 0f else pendingGap
-                row += Placed(box, x)
-                x += box.w
-                pendingGap = 0f
+            row = ArrayList()
+            x = 0f
+            pendingGap = 0f
+        }
+        fun add(box: Box, gap: Float) {
+            val fitted = if (box.w > width) ScaledBox(box, width / box.w) else box
+            if (row.isNotEmpty() && x + gap + fitted.w > width) newRow()
+            if (row.isNotEmpty()) x += gap
+            row += Placed(fitted, x)
+            x += fitted.w
+        }
+        fun centerRow() {
+            if (row.isEmpty()) return
+            val offset = ((width - x) / 2).coerceAtLeast(0f)
+            row = row.mapTo(ArrayList(row.size)) { Placed(it.box, it.x + offset) }
+            newRow()
+        }
+        for (run in runs) {
+            when (run) {
+                is Gap -> {
+                    if (row.isNotEmpty()) pendingGap = run.width
+                    continue
+                }
+                is Word -> { add(run.box, pendingGap); pendingGap = 0f }
+                Newline -> {
+                    newRow()
+                    if (previous == Newline && rows.isNotEmpty()) spaceAbove += style.size * style.paragraphGap
+                }
+                is Display -> {
+                    newRow()
+                    val displaySpace = style.size * 0.26f
+                    if (rows.isNotEmpty()) spaceAbove = max(spaceAbove, displaySpace)
+                    for (chunk in run.chunks) {
+                        if (row.isNotEmpty() && x + chunk.gap + chunk.box.w > width) centerRow()
+                        add(chunk.box, chunk.gap)
+                    }
+                    centerRow()
+                    spaceAbove = displaySpace
+                }
             }
+            previous = run
         }
         newRow()
-        if (rows.isEmpty()) rows += emptyList<Placed>()
         return rows
     }
 
@@ -281,39 +328,57 @@ internal class FuncName(val name: String, val limits: Boolean) : Node() { overri
 internal class Delimited(val left: String, val body: Node, val right: String) : Node() { override val cls get() = Cls.Inner }
 internal class Space(val em: Float) : Node()
 internal class Words(val text: String, val bold: Boolean) : Node()
-internal class Matrix(val rows: List<List<Node>>, val env: String) : Node() { override val cls get() = Cls.Inner }
+internal class Matrix(val rows: List<List<Node>>, val env: String, val columns: String) : Node() {
+    override val cls get() = Cls.Inner
+}
 internal class Boxed(val body: Node) : Node()
+internal class Annotation(val base: Node, val label: Node, val above: Boolean) : Node() {
+    override val cls get() = base.cls
+}
 
 internal object Math {
     fun layout(src: String, size: Float, color: Int, display: Boolean): Box =
         Layout(size, color).list(Parser(src).parseAll(), if (display) 0 else 1)
 
-    /** Inline math cut after top-level relations and binary operators, so a line may wrap there. */
-    fun layoutChunks(src: String, size: Float, color: Int): List<Box> {
-        val nodes = Parser(src).parseAll()
-        val layout = Layout(size, color)
-        val chunks = ArrayList<List<Node>>()
-        var current = ArrayList<Node>()
-        for ((i, n) in nodes.withIndex()) {
-            current += n
-            val breakable = (n.cls == Cls.Rel || n.cls == Cls.Bin) && i > 0 && i < nodes.lastIndex && nodes[i + 1].cls != Cls.Rel
-            if (breakable) { chunks += current; current = ArrayList() }
+    data class Chunk(val box: Box, val gap: Float)
+
+    /** Break at whole top-level operators. Keep grouped terms, scripts and stacked rows intact. */
+    fun layoutChunks(nodes: List<Node>, size: Float, color: Int, display: Boolean): List<Chunk> {
+        val atoms = Layout(size, color).atoms(nodes, if (display) 0 else 1)
+        if (atoms.isEmpty()) return listOf(Chunk(SpaceBox(0f), 0f))
+        val chunks = ArrayList<Chunk>()
+        var depth = 0
+        var start = 0
+        fun append(end: Int) {
+            val slice = atoms.subList(start, end)
+            val gaps = FloatArray(slice.size) { if (it == 0) 0f else slice[it].gap }
+            chunks += Chunk(HBox(slice.map { it.box }, gaps), slice.first().gap)
         }
-        if (current.isNotEmpty() || chunks.isEmpty()) chunks += current
-        if (chunks.size == 1) return listOf(layout.list(chunks[0], 1))
-        // Lay each chunk out with the spacing it has in the whole formula: its first atom keeps the space before it.
-        val out = ArrayList<Box>()
-        var prev: Node? = null
-        for (chunk in chunks) {
-            out += layout.list(chunk, 1, before = prev)
-            prev = chunk.lastOrNull()
+        for ((i, atom) in atoms.withIndex()) {
+            if (i > start && i < atoms.lastIndex && depth == 0 && (atom.cls == Cls.Rel || atom.cls == Cls.Bin)) {
+                append(i)
+                start = i
+            }
+            depth = when (atom.cls) {
+                Cls.Open -> depth + 1
+                Cls.Close -> (depth - 1).coerceAtLeast(0)
+                else -> depth
+            }
         }
-        return out
+        append(atoms.size)
+        return chunks
     }
 }
 
+private fun Node.hasStackedRows(): Boolean = when (this) {
+    is Matrix -> rows.size > 1
+    is Group -> nodes.any(Node::hasStackedRows)
+    is Delimited -> body.hasStackedRows()
+    else -> false
+}
+
 /** Recursive-descent parser for the LaTeX subset. Never throws: bad input degrades. */
-internal class Parser(private val s: String) {
+internal class Parser(private val s: String, private var depth: Int = 0) {
     private var i = 0
 
     fun parseAll(): List<Node> = parseList(stopAt = null)
@@ -358,10 +423,16 @@ internal class Parser(private val s: String) {
     }
 
     private fun attachScript(base: Node, sup: Boolean, arg: Node): Node = when {
-        base is Scripts && sup && base.sup == null -> Scripts(base.base, arg, base.sub)
-        base is Scripts && !sup && base.sub == null -> Scripts(base.base, base.sup, arg)
+        base is Scripts && sup -> Scripts(base.base, joinScript(base.sup, arg), base.sub)
+        base is Scripts -> Scripts(base.base, base.sup, joinScript(base.sub, arg))
         sup -> Scripts(base, arg, null)
         else -> Scripts(base, null, arg)
+    }
+
+    private fun joinScript(previous: Node?, arg: Node): Node = when (previous) {
+        null -> arg
+        is Group -> Group(previous.nodes + arg)
+        else -> Group(listOf(previous, arg))
     }
 
     private fun peekCommand(): String {
@@ -385,9 +456,12 @@ internal class Parser(private val s: String) {
     private fun parseArg(): Node {
         skipSpaces()
         if (peek() == '{') {
+            if (depth >= 64) return Words(s.substring(i), false).also { i = s.length }
+            depth++
             i++
             val list = parseList('}')
             if (peek() == '}') i++
+            depth--
             return if (list.size == 1) list[0] else Group(list)
         }
         if (i >= s.length) return Group(emptyList())
@@ -409,6 +483,16 @@ internal class Parser(private val s: String) {
     }
 
     private fun parseAtom(): Node? {
+        if (depth >= 64) return Words(s.substring(i), false).also { i = s.length }
+        depth++
+        return try {
+            atom()
+        } finally {
+            depth--
+        }
+    }
+
+    private fun atom(): Node? {
         val c = s[i]
         when {
             c == '{' -> { i++; val l = parseList('}'); if (peek() == '}') i++; return Group(l) }
@@ -425,9 +509,12 @@ internal class Parser(private val s: String) {
                 while (i < s.length && (s[i].isDigit() || (s[i] == '.' && i + 1 < s.length && s[i + 1].isDigit()))) i++
                 Sym(s.substring(start, i), Cls.Ord, Face.Upright)
             }
-            c == '+' || c == '*' -> Sym(if (c == '*') "∗" else "+", Cls.Bin, Face.Upright)
-            c == '-' -> Sym("−", Cls.Bin, Face.Upright)
-            c == '=' || c == '<' || c == '>' || c == ':' -> Sym(c.toString(), Cls.Rel, Face.Upright)
+            c in "+-*−±∓×÷·" -> Sym(when (c) {
+                '-' -> "−"
+                '*' -> "∗"
+                else -> c.toString()
+            }, Cls.Bin, Face.Upright)
+            c in "=<>:≤≥≠≈≡∝∈∉⊂⊆→↔⇌⇒⇔" -> Sym(c.toString(), Cls.Rel, Face.Upright)
             c == '(' || c == '[' -> Sym(c.toString(), Cls.Open, Face.Upright)
             c == ')' || c == ']' -> Sym(c.toString(), Cls.Close, Face.Upright)
             c == ',' || c == ';' -> Sym(c.toString(), Cls.Punct, Face.Upright)
@@ -460,20 +547,26 @@ internal class Parser(private val s: String) {
             "vec", "hat", "bar", "overline", "dot", "ddot", "tilde", "widehat", "widetilde", "overrightarrow", "underline" ->
                 Accent(parseArg(), name)
             "boxed" -> Boxed(parseArg())
+            "overset", "stackrel", "underset" -> {
+                val label = parseArg()
+                Annotation(parseArg(), label, above = name != "underset")
+            }
             "text", "textrm", "mbox", "textit" -> Words(readBraced(), false)
             "textbf" -> Words(readBraced(), true)
-            "mathrm", "operatorname", "mathup" -> {
-                val text = readBraced()
-                if (name == "operatorname") FuncName(text, false) else Group(Parser(text).parseAll().map { upright(it, Face.Upright) })
+            "operatorname" -> {
+                val limits = peek() == '*'
+                if (limits) i++
+                FuncName(readBraced(), limits)
             }
+            "mathrm", "mathup" -> Group(Parser(readBraced(), depth).parseAll().map { upright(it, Face.Upright) })
             "mathbf", "bm", "boldsymbol", "mathbfit" -> {
                 val face = if (name == "mathbf") Face.Bold else Face.BoldItalic
-                Group(Parser(readBraced()).parseAll().map { upright(it, face) })
+                Group(Parser(readBraced(), depth).parseAll().map { upright(it, face) })
             }
             "mathit", "mathcal", "mathscr", "mathbb", "mathsf", "mathtt" -> {
                 val text = readBraced()
                 if (name == "mathbb") Group(text.map { Sym(BLACKBOARD[it] ?: it.toString(), Cls.Ord, Face.Upright) })
-                else Group(Parser(text).parseAll())
+                else Group(Parser(text, depth).parseAll())
             }
             "left" -> {
                 val left = delimiter()
@@ -510,7 +603,7 @@ internal class Parser(private val s: String) {
     private fun upright(n: Node, face: Face): Node = when (n) {
         is Sym -> if (n.face == Face.Italic || face == Face.Bold || face == Face.BoldItalic) Sym(n.text, n.cls, face) else n
         is Group -> Group(n.nodes.map { upright(it, face) }, n.cls)
-        is Scripts -> Scripts(upright(n.base, face), n.sup, n.sub)
+        is Scripts -> Scripts(upright(n.base, face), n.sup?.let { upright(it, face) }, n.sub?.let { upright(it, face) })
         else -> n
     }
 
@@ -530,6 +623,7 @@ internal class Parser(private val s: String) {
     }
 
     private fun environment(env: String): Node {
+        val columns = if (env == "array" || env == "alignedat") readBraced().filter { it in "lcr" } else ""
         val rows = ArrayList<List<Node>>()
         var row = ArrayList<Node>()
         while (i < s.length) {
@@ -538,14 +632,20 @@ internal class Parser(private val s: String) {
             skipSpaces()
             when {
                 peek() == '&' -> i++
-                s.startsWith("\\\\", i) -> { i += 2; rows += row; row = ArrayList() }
+                s.startsWith("\\\\", i) -> {
+                    i += 2
+                    skipSpaces()
+                    rowSpacing.matchAt(s, i)?.let { i = it.range.last + 1 }
+                    rows += row
+                    row = ArrayList()
+                }
                 peekCommand() == "end" -> { readCommand(); readBraced(); break }
                 i >= s.length -> break
                 else -> i++
             }
         }
         if (row.isNotEmpty() && !(row.size == 1 && (row[0] as Group).nodes.isEmpty())) rows += row
-        val m = Matrix(rows, env)
+        val m = Matrix(rows, env, columns)
         return when (env) {
             "pmatrix" -> Delimited("(", m, ")")
             "bmatrix" -> Delimited("[", m, "]")
@@ -558,6 +658,7 @@ internal class Parser(private val s: String) {
     }
 
     companion object {
+        private val rowSpacing = Regex("""\[\s*[+-]?[\d.]+\s*(?:em|ex|pt|px|mu)\s*]""")
         val GREEK_LOWER = setOf("alpha", "beta", "gamma", "delta", "epsilon", "varepsilon", "zeta", "eta", "theta", "vartheta",
             "iota", "kappa", "lambda", "mu", "nu", "xi", "pi", "varpi", "rho", "varrho", "sigma", "varsigma", "tau", "upsilon",
             "phi", "varphi", "chi", "psi", "omega")
@@ -617,24 +718,31 @@ internal class Layout(private val size: Float, private val color: Int) {
     private fun rule(style: Int) = max(1f, sizeOf(style) * 0.055f)
     private fun inkPaint(style: Int) = MathText.paint(MathText.SERIF, sizeOf(style), color)
 
-    fun list(nodes: List<Node>, style: Int, before: Node? = null): Box {
-        if (nodes.isEmpty()) return SpaceBox(0f)
-        val boxes = ArrayList<Box>(nodes.size)
-        val gaps = FloatArray(nodes.size)
-        var prev: Cls? = before?.cls
-        var prevNode: Node? = before
-        for ((idx, n) in nodes.withIndex()) {
-            var cls = n.cls
-            // A binary operator with nothing to its left (or after an operator) is unary.
-            if (cls == Cls.Bin && (prev == null || prev in setOf(Cls.Bin, Cls.Op, Cls.Rel, Cls.Open, Cls.Punct))) cls = Cls.Ord
-            if (cls == Cls.Bin && idx == nodes.lastIndex && before == null && nodes.size > 1) cls = Cls.Ord
-            gaps[idx] = if (prev == null) 0f else spacing(prev, cls, style, prevNode)
-            boxes += node(n, style)
-            prev = cls
-            prevNode = n
-        }
-        return HBox(boxes, gaps)
+    data class Atom(val box: Box, val gap: Float, val cls: Cls)
+
+    fun list(nodes: List<Node>, style: Int): Box {
+        val atoms = atoms(nodes, style)
+        return HBox(atoms.map { it.box }, FloatArray(atoms.size) { atoms[it].gap })
     }
+
+    fun atoms(nodes: List<Node>, style: Int): List<Atom> {
+        var previous: Cls? = null
+        var prevNode: Node? = null
+        return nodes.mapIndexed { i, node ->
+            if (node is Space) return@mapIndexed Atom(this.node(node, style), 0f, Cls.Ord)
+            var cls = node.cls
+            // A sign at the start of a term is unary, so it stays attached to that term.
+            if (cls == Cls.Bin && (previous == null || previous in unaryAfter ||
+                i == nodes.lastIndex || nodes[i + 1].cls in unaryBefore)) cls = Cls.Ord
+            val space = previous?.let { spacing(it, cls, style, prevNode) } ?: 0f
+            previous = cls
+            prevNode = node
+            Atom(this.node(node, style), space, cls)
+        }
+    }
+
+    private val unaryAfter = setOf(Cls.Bin, Cls.Op, Cls.Rel, Cls.Open, Cls.Punct)
+    private val unaryBefore = setOf(Cls.Rel, Cls.Close, Cls.Punct)
 
     private fun spacing(a: Cls, b: Cls, style: Int, prevNode: Node?): Float {
         val em = sizeOf(style)
@@ -665,6 +773,7 @@ internal class Layout(private val size: Float, private val color: Int) {
         is Delimited -> delimited(n, style)
         is Matrix -> matrix(n, style)
         is Boxed -> boxed(n, style)
+        is Annotation -> annotation(n, style)
     }
 
     private fun frac(n: Frac, style: Int): Box {
@@ -839,31 +948,47 @@ internal class Layout(private val size: Float, private val color: Int) {
         val cols = cells.maxOfOrNull { it.size } ?: 0
         if (cols == 0) return SpaceBox(0f)
         val em = sizeOf(style)
-        val colGap = if (n.env == "cases" || n.env.startsWith("align")) em * 0.9f else em * 0.8f
+        val aligned = n.env.startsWith("align") || n.env == "split"
+        val colGaps = FloatArray(cols - 1) { i ->
+            when {
+                aligned && i % 2 == 0 -> em * 0.16f
+                n.env == "cases" || aligned -> em * 0.9f
+                else -> em * 0.8f
+            }
+        }
         val widths = FloatArray(cols) { c -> cells.maxOf { r -> r.getOrNull(c)?.w ?: 0f } }
         val rowGap = em * 0.32f
         val heights = cells.map { r -> (r.maxOfOrNull { it.asc } ?: 0f) to (r.maxOfOrNull { it.desc } ?: 0f) }
         val total = heights.sumOf { (it.first + it.second).toDouble() }.toFloat() + rowGap * (cells.size - 1)
         var y = -total / 2 - axis(style)
         val rows = ArrayList<Pair<Box, Float>>()
-        val totalW = widths.sum() + colGap * (cols - 1)
+        val totalW = widths.sum() + colGaps.sum()
         cells.forEachIndexed { ri, r ->
             val (asc, desc) = heights[ri]
             val baseline = y + asc
             var x = 0f
             r.forEachIndexed { ci, b ->
-                // Left aligned for cases and aligned's odd columns, right for aligned's first; centred otherwise.
+                val column = n.columns.getOrNull(ci)
                 val align = when {
-                    n.env == "cases" -> 0f
-                    n.env.startsWith("align") -> if (ci % 2 == 0) widths[ci] - b.w else 0f
+                    column == 'l' || n.env == "cases" -> 0f
+                    column == 'r' || aligned && ci % 2 == 0 -> widths[ci] - b.w
+                    aligned -> 0f
                     else -> (widths[ci] - b.w) / 2
                 }
                 rows += ShiftBox(b, 0f, x + align) to baseline
-                x += widths[ci] + if (n.env.startsWith("align") && ci % 2 == 0) em * 0.15f else colGap
+                x += widths[ci] + (colGaps.getOrNull(ci) ?: 0f)
             }
             y = baseline + desc + rowGap
         }
         return StackBox(rows, width = totalW, align = -1)
+    }
+
+    private fun annotation(n: Annotation, style: Int): Box {
+        val base = node(n.base, style)
+        val label = node(n.label, (style + 1).coerceIn(2, 3))
+        val gap = sizeOf(style) * 0.12f
+        val baseline = if (n.above) -(base.asc + gap + label.desc) else base.desc + gap + label.asc
+        return StackBox(listOf(base to 0f, label to baseline))
     }
 
     private fun boxed(n: Boxed, style: Int): Box {

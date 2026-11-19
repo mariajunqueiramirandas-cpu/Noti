@@ -6,6 +6,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
@@ -27,20 +28,25 @@ import app.noti.data.LibraryStore
 import app.noti.data.SettingsStore
 import app.noti.data.ThemeMode
 import app.noti.ink.StylusKeyHost
+import app.noti.fuvest.FuvestStore
 import app.noti.ui.editor.EditorScreen
+import app.noti.ui.fuvest.FuvestScreen
 import app.noti.ui.library.LibraryScreen
 import app.noti.ui.settings.SettingsScreen
 import app.noti.ui.theme.NotiTheme
+import java.io.File
 
 private const val LIBRARY = "library"
 private const val SETTINGS = "settings"
 private const val EDITOR = "editor:"
+private const val FUVEST = "fuvest"
 
-/** Three destinations; plain state instead of a navigation library. */
+/** Plain route state instead of a navigation library. */
 @Composable
 fun NotiApp(library: LibraryStore, settings: SettingsStore) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val fuvest = remember(library) { FuvestStore(File(library.appContext.filesDir, "fuvest.json")) }
     val platform = remember(library) { AssaadSession(context.applicationContext, library, scope) }
     DisposableEffect(platform) {
         val lifecycle = (context as? ComponentActivity)?.lifecycle
@@ -57,25 +63,42 @@ fun NotiApp(library: LibraryStore, settings: SettingsStore) {
         SystemBarIcons(settings.theme)
         XiaomiStylusHostSync(settings.penButtonsEnabled && settings.penLegacyKeys)
         var route by rememberSaveable { mutableStateOfRoute() }
+        var returnTo by rememberSaveable { mutableStateOf(LIBRARY) }
+        var studyItem by rememberSaveable { mutableStateOf<String?>(null) }
         val destinations = rememberSaveableStateHolder()
-        AssaadPairingDialog(platform, onOpenBoard = { route = EDITOR + it })
+        fun openEditor(id: String, back: String = LIBRARY, item: String? = null) {
+            returnTo = back
+            studyItem = item
+            route = EDITOR + id
+        }
+        AssaadPairingDialog(platform, onOpenBoard = { openEditor(it) })
         when {
-            route == SETTINGS -> SettingsScreen(settings, onBack = { route = LIBRARY })
+            route == SETTINGS -> SettingsScreen(settings, openRouter = returnTo == FUVEST, onBack = { route = returnTo })
+            route == FUVEST -> destinations.SaveableStateProvider(FUVEST) {
+                FuvestScreen(library, fuvest, onBack = { route = LIBRARY },
+                    onSettings = { returnTo = FUVEST; route = SETTINGS },
+                    onSource = { id, page ->
+                        library.rememberPage(id, page - 1)
+                        openEditor(id, FUVEST)
+                    },
+                    onPractice = { id, item -> openEditor(id, FUVEST, item) })
+            }
             route.startsWith(EDITOR) -> {
                 val id = route.removePrefix(EDITOR)
                 val notebook = library.notebook(id)
                 if (notebook == null) {
-                    LaunchedEffect(id) { route = LIBRARY }
+                    LaunchedEffect(id) { route = returnTo }
                 } else {
                     LaunchedEffect(id) { library.markOpened(id) }
-                    EditorScreen(notebook, library, settings, onBack = { route = LIBRARY })
+                    EditorScreen(notebook, library, settings, initialStudyItem = studyItem, onBack = { route = returnTo })
                 }
             }
             else -> destinations.SaveableStateProvider(LIBRARY) {
-                LibraryScreen(library, settings, onOpen = { route = EDITOR + it }, onSettings = { route = SETTINGS })
+                LibraryScreen(library, settings, onOpen = { openEditor(it) },
+                    onSettings = { returnTo = LIBRARY; route = SETTINGS }, onFuvest = { route = FUVEST })
             }
         }
-        AssaadTabletBrowserHost(platform, onCanvas = { route = EDITOR + platform.openBoard() })
+        AssaadTabletBrowserHost(platform, onCanvas = { openEditor(platform.openBoard()) })
     }
     }
 }

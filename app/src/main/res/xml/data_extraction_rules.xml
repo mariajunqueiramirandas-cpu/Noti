@@ -1,14 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Device-bound pairing credentials and obsolete cloud keys are excluded from transfer. -->
+<!-- Device-bound credentials are excluded from backup and transfer. -->
 <data-extraction-rules>
     <cloud-backup>
         <exclude domain="sharedpref" path="study_keys.xml" />
         <exclude domain="sharedpref" path="platform_keys.xml" />
+        <exclude domain="sharedpref" path="openrouter_keys.xml" />
         <exclude domain="root" path="app_webview/" />
     </cloud-backup>
     <device-transfer>
         <exclude domain="sharedpref" path="study_keys.xml" />
         <exclude domain="sharedpref" path="platform_keys.xml" />
+        <exclude domain="sharedpref" path="openrouter_keys.xml" />
         <exclude domain="root" path="app_webview/" />
     </device-transfer>
 </data-extraction-rules>

@@ -35,6 +35,8 @@ import app.noti.study.StudyImages
 import app.noti.study.StudyItem
 import app.noti.study.Verdict
 import app.noti.ui.common.NotiButton
+import app.noti.study.readableStudyText
+import app.noti.ui.common.StudyText
 import app.noti.ui.common.NotiDialogFrame
 import app.noti.ui.common.NotiFilterChip
 import app.noti.ui.common.NotiIconButton
@@ -177,13 +179,8 @@ private fun DeckDialog(study: StudyController, onClose: () -> Unit) {
     }
 }
 
-/** LaTeX made readable enough for a one-line preview. */
-internal fun plain(s: String): String = s.replace("$$", " ").replace("$", "")
-    .replace(Regex("\\\\(frac|dfrac|tfrac)\\{([^{}]*)\\}\\{([^{}]*)\\}"), "($2)/($3)")
-    .replace(Regex("\\\\(mathrm|text|mathbf|vec|hat|bar|operatorname)\\{([^{}]*)\\}"), "$2")
-    .replace(Regex("\\\\(left|right|,|;|!|quad|qquad)"), " ")
-    .replace(Regex("\\\\([A-Za-z]+)")) { m -> app.noti.study.Parser.SYMBOLS[m.groupValues[1]]?.first ?: m.groupValues[1] }
-    .replace(Regex("[{}]"), "").replace(Regex("\\s+"), " ").trim()
+/** Compact preview in the deck and in completed exam results. */
+internal fun plain(s: String): String = readableStudyText(s).replace(Regex("\\s+"), " ").trim()
 
 // ---- exams ----
 
@@ -244,9 +241,9 @@ private fun ExamResultsDialog(study: StudyController, examId: String, geometry: 
         items.forEachIndexed { i, item ->
             if (exam.needsAssessment(item.id)) {
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text("${i + 1}. ${plain(item.prompt)}", style = MaterialTheme.typography.titleSmall)
-                    Text(plain(item.answer), style = MaterialTheme.typography.bodyMedium)
-                    item.solution.forEach { step -> Text(plain(step), style = MaterialTheme.typography.bodySmall) }
+                    StudyText("${i + 1}. ${item.prompt}", style = MaterialTheme.typography.titleSmall)
+                    StudyText(item.answer, style = MaterialTheme.typography.bodyMedium)
+                    item.solution.forEach { step -> StudyText(step, style = MaterialTheme.typography.bodySmall) }
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         Verdict.entries.forEach { verdict ->
                             NotiTextButton(onClick = { study.assessExamAnswer(examId, item.id, verdict) }) { Text(verdict.label) }
@@ -301,7 +298,7 @@ private fun SourceDialog(study: StudyController, item: StudyItem, geometry: Shee
             bitmap?.let { Image(it.asImageBitmap(), "Page $page", contentScale = ContentScale.Fit, modifier = Modifier.fillMaxSize()) }
                 ?: CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp)
         }
-        if (item.excerpt.isNotBlank()) Text(plain(item.excerpt), style = MaterialTheme.typography.bodySmall)
+        if (item.excerpt.isNotBlank()) StudyText(item.excerpt, style = MaterialTheme.typography.bodySmall)
     }
 }
 
