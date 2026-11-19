@@ -515,11 +515,10 @@ fun LibraryScreen(
     if (creating) {
         NewNotebookDialog(
             initialPaper = Paper(settings.defaultTemplate, settings.defaultColor),
-            initialBoard = creatingBoard,
             onDismiss = { creating = false },
-            onCreate = { name, paper, board ->
+            onCreate = { name, paper ->
                 creating = false
-                val nb = library.create(name, paper, (filter as? Filter.InFolder)?.id, board)
+                val nb = library.create(name, paper, (filter as? Filter.InFolder)?.id)
                 onOpen(nb.id)
             },
         )
