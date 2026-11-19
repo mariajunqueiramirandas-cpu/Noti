@@ -261,6 +261,18 @@ class StudyBoardUiTest {
         }
     }
 
+    @Test fun fuvestQuestionShowsXpAfterSelfAssessment() {
+        val question = items.first { it.id == "q4" }.copy(credit = "FUVEST")
+        study.store.update { BoardStudy(items = listOf(question), current = question.id) }
+        render(1280, 900)
+        compose.onNodeWithText("Answer").performClick()
+        val reward = compose.onNodeWithText("Tentativa registrada · 20 XP ganhos")
+        reward.assertDoesNotExist()
+        compose.onNodeWithText("Partly right").performClick()
+        reward.assertIsDisplayed()
+        compose.runOnIdle { assertEquals(1, study.data.progressOf(question.id).attempts) }
+    }
+
     @Test fun aManualMultipleChoiceQuestionUsesTheSelectedCorrectOption() {
         study.store.update { BoardStudy() }
         render(1280, 900, open = false)

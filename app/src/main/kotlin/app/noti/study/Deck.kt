@@ -144,6 +144,7 @@ data class StudyItem(
     val choiceFigures: List<List<String>> = emptyList(),
     /** Whose question this is (a platform, an author): credited on the card and marked across it. */
     val credit: String = "",
+    val officialSolutionUrl: String? = null,
 ) {
     fun json(): JSONObject = JSONObject()
         .put("id", id).put("kind", kind.wire).put("topic", topic).put("prompt", prompt)
@@ -155,6 +156,7 @@ data class StudyItem(
             if (figures.isNotEmpty()) put("figures", JSONArray(figures))
             if (choiceFigures.any { it.isNotEmpty() }) put("choiceFigures", JSONArray(choiceFigures.map { JSONArray(it) }))
             if (credit.isNotBlank()) put("credit", credit)
+            officialSolutionUrl?.let { put("officialSolutionUrl", it) }
         }
 
     companion object {
@@ -176,6 +178,7 @@ data class StudyItem(
             figures = o.optJSONArray("figures").strings(),
             choiceFigures = o.optJSONArray("choiceFigures")?.let { a -> (0 until a.length()).map { a.optJSONArray(it).strings() } } ?: emptyList(),
             credit = o.optString("credit"),
+            officialSolutionUrl = o.optString("officialSolutionUrl").ifBlank { null },
         )
     }
 }

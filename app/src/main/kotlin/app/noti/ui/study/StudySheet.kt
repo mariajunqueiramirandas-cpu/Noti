@@ -29,7 +29,10 @@ import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionOnScreen
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
@@ -37,6 +40,7 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntRect
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
+import app.noti.fuvest.FuvestOverview
 import app.noti.pdf.PagePlacement
 import app.noti.study.CardFace
 import app.noti.study.ItemKind
@@ -236,6 +240,11 @@ private fun ExpandedSheet(
             val sheet = placement()?.visiblePages?.firstOrNull() ?: return@Actions
             study.print(at.x, at.y, face.widthDp, density.density, sheet)
         }
+        if (item.credit == "FUVEST" && item.kind in writtenKinds && progress.attempts > 0 && exam == null) {
+            Box(Modifier.padding(bottom = 6.dp).semantics { liveRegion = LiveRegionMode.Polite }) {
+                Banner("Tentativa registrada · ${FuvestOverview.QuestionXp} XP ganhos", Icons.Outlined.Star, colors.tertiaryContainer)
+            }
+        }
     }
 }
 
@@ -314,6 +323,7 @@ private fun EmptyDeck(study: StudyController, modifier: Modifier) {
 private fun Actions(study: StudyController, item: StudyItem, exam: Boolean,
     remote: RemoteChoices?, remoteState: RemoteState?, picked: Int, onPrint: () -> Unit) {
     val p = study.data.progressOf(item.id)
+    val uriHandler = LocalUriHandler.current
     FlowRow(Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, top = 6.dp, bottom = 12.dp),
         horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
         when {
@@ -355,6 +365,14 @@ private fun Actions(study: StudyController, item: StudyItem, exam: Boolean,
                 if (item.kind in writtenKinds && p.answerShown && p.selfAssessment == null) {
                     Verdict.entries.forEach { verdict ->
                         Pill(null, verdict.label) { study.assessWrittenAnswer(verdict) }
+                    }
+                }
+                if (p.answerShown) item.officialSolutionUrl?.let { url ->
+                    Pill(Icons.Outlined.MenuBook, "Resolução oficial") {
+                        try { uriHandler.openUri(url) } catch (_: IllegalArgumentException) {
+                            android.widget.Toast.makeText(study.library.appContext, "Não foi possível abrir o PDF oficial.",
+                                android.widget.Toast.LENGTH_SHORT).show()
+                        }
                     }
                 }
                 if (item.pages.isNotEmpty() && item.sourceId != null) Pill(Icons.Outlined.MenuBook, "Source") { study.sourceOf = item }

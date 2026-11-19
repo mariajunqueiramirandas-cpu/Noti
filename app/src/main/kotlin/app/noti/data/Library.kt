@@ -101,11 +101,12 @@ class LibraryStore(context: Context) {
     }
 
     /** A [board] is always an Endless canvas. */
-    fun create(name: String, paper: Paper, folderId: String?, board: Boolean = false): Notebook {
+    fun create(name: String, paper: Paper, folderId: String?, board: Boolean = false, id: String = UUID.randomUUID().toString()): Notebook {
+        require(notebook(id) == null)
         val now = System.currentTimeMillis()
         val sheet = if (board) paper.copy(size = PaperSize.Endless) else paper
         val nb = Notebook(
-            id = UUID.randomUUID().toString(),
+            id = id,
             name = name.ifBlank { if (board) "Study board" else "Untitled" },
             paper = sheet,
             folderId = folderId,

@@ -38,15 +38,27 @@ class StudyStore private constructor(private val file: File, initial: BoardStudy
 
         /** IO. */
         fun load(file: File): StudyStore = writer.submit<StudyStore> {
-            val atomic = AtomicFile(file)
-            if (!file.exists() && !File(file.path + ".bak").exists()) return@submit StudyStore(file, BoardStudy(), false)
             try {
-                StudyStore(file, BoardStudy.decode(String(atomic.readFully(), Charsets.UTF_8)), false)
+                StudyStore(file, read(file), false)
             } catch (e: Exception) {
                 runCatching { file.copyTo(File(file.path + ".broken"), overwrite = true) }
                 StudyStore(file, BoardStudy(), true)
             }
         }.get()
+
+        /** IO. Update a closed board in order with its queued saves. Preserve unreadable data. */
+        fun editSaved(file: File, change: (BoardStudy) -> BoardStudy) {
+            writer.submit {
+                val current = read(file)
+                val next = change(current)
+                if (next != current) check(write(file, next.encode())) { "Não foi possível salvar o quadro." }
+            }.get()
+        }
+
+        private fun read(file: File): BoardStudy {
+            if (!file.exists() && !File(file.path + ".bak").exists()) return BoardStudy()
+            return BoardStudy.decode(String(AtomicFile(file).readFully(), Charsets.UTF_8))
+        }
 
         /** IO: what's due on a board, without keeping it open (library badges). */
         fun dueCount(file: File, now: Long): Int = writer.submit<Int> {

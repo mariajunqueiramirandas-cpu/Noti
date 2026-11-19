@@ -173,6 +173,7 @@ fun LibraryScreen(
     settings: SettingsStore,
     onOpen: (String) -> Unit,
     onSettings: () -> Unit,
+    onFuvest: (() -> Unit)? = null,
 ) {
     var filter by rememberSaveable(stateSaver = filterSaver) { mutableStateOf<Filter>(Filter.All) }
     var query by rememberSaveable { mutableStateOf("") }
@@ -398,6 +399,7 @@ fun LibraryScreen(
                     onRenameFolder = { renamingFolder = it; scope.launch { drawer.close() } },
                     onDeleteFolder = { deletingFolder = it; scope.launch { drawer.close() } },
                     onSettings = { scope.launch { drawer.close(); onSettings() } },
+                    onFuvest = onFuvest?.let { open -> { scope.launch { drawer.close(); open() }; Unit } },
                 )
             }
             val content: @Composable () -> Unit = {
@@ -422,6 +424,7 @@ fun LibraryScreen(
                                 onNew = { creatingBoard = false; creating = true },
                                 onNewBoard = { creatingBoard = true; creating = true },
                                 onImportPdf = onImportPdf,
+                                onFuvest = onFuvest,
                                 onEmptyTrash = { confirmDeleteForever = filtered.mapTo(mutableSetOf()) { it.id } },
                             )
                         } else {
@@ -617,6 +620,7 @@ private fun Sidebar(
     onRenameFolder: (Folder) -> Unit,
     onDeleteFolder: (Folder) -> Unit,
     onSettings: () -> Unit,
+    onFuvest: (() -> Unit)?,
 ) {
     val colors = MaterialTheme.colorScheme
     Column(
@@ -634,6 +638,7 @@ private fun Sidebar(
         SideItem("Favorites", Icons.Outlined.StarBorder, filter == Filter.Favorites) { onFilter(Filter.Favorites) }
         SideItem("PDFs", Icons.Outlined.PictureAsPdf, filter == Filter.Pdfs) { onFilter(Filter.Pdfs) }
         SideItem("Study boards", Icons.Outlined.School, filter == Filter.Boards) { onFilter(Filter.Boards) }
+        onFuvest?.let { SideItem("FUVEST", Icons.Outlined.School, false, onClick = it) }
 
         Row(Modifier.padding(start = 14.dp, top = 24.dp, bottom = 2.dp), verticalAlignment = Alignment.CenterVertically) {
             Text("Folders", style = MaterialTheme.typography.labelLarge, color = colors.onSurfaceVariant,
@@ -734,6 +739,7 @@ private fun TopBar(
     onNew: () -> Unit,
     onNewBoard: () -> Unit,
     onImportPdf: () -> Unit,
+    onFuvest: (() -> Unit)?,
     onEmptyTrash: () -> Unit,
 ) {
     var viewMenu by remember { mutableStateOf(false) }
@@ -806,6 +812,13 @@ private fun TopBar(
                             leadingIcon = { Icon(Icons.Outlined.PictureAsPdf, null) },
                             onClick = { newMenu = false; onImportPdf() },
                         )
+                        onFuvest?.let { open ->
+                            DropdownMenuItem(
+                                text = { Text("FUVEST") },
+                                leadingIcon = { Icon(Icons.Outlined.School, null) },
+                                onClick = { newMenu = false; open() },
+                            )
+                        }
                     }
                 }
             }

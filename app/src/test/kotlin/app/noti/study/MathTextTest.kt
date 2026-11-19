@@ -66,6 +66,57 @@ class MathTextTest {
         assertTrue(block.width <= 260.5f)
     }
 
+    @Test fun currenciesAndEscapedDelimitersPreserveTheFormula() {
+        val input = """Taxa de R$ 30,00 mais ${'$'}\mathrm{R}\$\,4{,}00$ por quilo, com \(x>0\)."""
+        assertEquals(listOf("""\mathrm{R}\$\,4{,}00""", "x>0"), mathSpans(input).map { it.latex })
+        assertEquals("Taxa de R$ 30,00 mais R$ 4,00 por quilo, com x>0.", readableStudyText(input))
+        val savedBoard = """O total é R\$ 850,00. Calcule \(x\)."""
+        assertEquals("O total é R$ 850,00. Calcule x.", readableStudyText(savedBoard))
+        assertEquals(listOf("R", "x"), mathSpans("""Meça ${'$'}R$ 4 vezes, depois \(x\).""").map { it.latex })
+    }
+
+    @Test fun multilineAlignedAndPiecewiseMathStayTogether() {
+        val aligned = """
+            \[
+            \begin{aligned}
+              f(x) &= \frac{x-1}{x+1} \\[.3em]
+              g(x) &= \sqrt{x}
+            \end{aligned}
+            \]
+        """.trimIndent()
+        val block = MathText.layout(aligned, 300f, style)
+        assertEquals(1, block.lineCount)
+        val matrix = Parser(mathSpans(aligned).single().latex).parseAll().single() as Matrix
+        assertEquals(2, matrix.rows.size)
+        assertTrue(matrix.rows.all { it.size == 2 })
+        assertTrue(block.height > 2 * style.size)
+        assertFalse(readableStudyText(aligned).contains(".3em"))
+
+        val cases = """Use \(h(t)=\begin{cases}t+4 & t<2 \\ 3t & 2\le t\le 5 \\ 20-t & t>5\end{cases}\). Calcule \(h(5)\)."""
+        assertEquals(3, MathText.layout(cases, 600f, style).lineCount)
+    }
+
+    @Test fun longEquationsWrapAtWholeTermsAndChemicalSubscriptsStayAttached() {
+        val long = """\[\frac{x-1}{x+1}+\frac{2x}{3}+\frac{5x}{6} = \frac{x^2+1}{x+1}+\frac{x^2-1}{x-1}\]"""
+        val wide = MathText.layout(long, 1000f, style)
+        val narrow = MathText.layout(long, 235f, style)
+        assertEquals(1, wide.lineCount)
+        assertTrue(narrow.lineCount > 1)
+        assertTrue(narrow.height > wide.height)
+        assertTrue(narrow.width <= 235.01f)
+        val nested = Parser("""(x+1)^2 = -2+3""").parseAll()
+        assertEquals(3, Math.layoutChunks(nested, style.size, Color.BLACK, display = true).size)
+
+        val compound = """CO\(_2\)."""
+        val full = MathText.layout(compound, 200f, style)
+        val fitted = MathText.layout(compound, full.width - 3, style)
+        assertEquals(1, fitted.lineCount)
+        assertEquals("CO₂.", readableStudyText(compound))
+        assertEquals("Ca²⁺ + CO₃²⁻ → CaCO₃", readableStudyText(
+            """\(\mathrm{Ca^{2+}}\) + \(\mathrm{CO_3^{2-}}\) \(\rightarrow\) \(\mathrm{CaCO_3}\)""",
+        ))
+    }
+
     /** Renders a sample sheet to app/build/reports/study-ui/math.png for a visual check. */
     @Test fun rendersASampleSheet() {
         val samples = listOf(
